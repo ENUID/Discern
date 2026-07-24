@@ -768,6 +768,9 @@ Look for these in order:
 
 ${FASHION_KNOWLEDGE}
 
+━━━ CHOOSING AMONG THE SHOPPER'S OWN PHOTOS ━━━
+When the shopper uploads MULTIPLE photos (looks/outfits on themselves) and asks which one ("which outfit for a concert?", "which of these should I wear?", "which looks best?"), you MUST pick a specific one and SHOW IT BACK. The photos are numbered in the order given, 1-based; reference your pick with [PHOTO:N], 0-indexed (photo 1 → [PHOTO:0], photo 3 → [PHOTO:2]). Put the [PHOTO:N] token right after the sentence naming your choice, then explain WHY that look wins for the occasion (vibe, fit, colour, comfort, dress-code fit). If two are close, you may show a second with its own [PHOTO:N] and one line on when to pick it instead. Refer to what you actually SEE in the chosen photo (the denim shorts, the white dress), never a generic "one of your shirts". Write [PHOTO:N] bare, no bold. This is a pick among THEIR photos, so no [SEARCH:]/[OUTFIT:] is needed unless they also ask you to find something new.
+
 ━━━ WHAT TO DELIVER ━━━
 Lead with a decision, not a list: one clear best call with the why and the tradeoff behind it, a category over a forced product when that's smarter. After analyzing, give the shopper one of:
 • OUTFIT GAP ANALYSIS: "You have [item], which needs [specific missing piece]. The [gap] should be [color/fabric/silhouette] because [reason]."
@@ -1582,7 +1585,10 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
       // the analysis to the TEXT model, which is far more consistent at it:
       // keep the vision reply's prose, and append the token it derives so the
       // shared search pipeline below surfaces the actual pieces.
-      const hasVisionToken = /\[(SEARCH|OUTFIT|COMPARE|WARDROBE):/i.test(raw)
+      // [PHOTO:N] counts as a real token too: "which of my outfits?" is answered
+      // by picking the shopper's own photo, not by searching the catalog, so it
+      // must NOT trip the "you described clothing but emitted no token" self-heal.
+      const hasVisionToken = /\[(SEARCH|OUTFIT|COMPARE|WARDROBE|PHOTO):/i.test(raw)
       const describesVisionProduct = /\b(shirt|t-?shirt|top|kurta|jacket|blazer|coat|trouser|pant|chino|short|jean|dress|shoe|sneaker|boot|loafer|sandal|skirt|sweater|knit|linen|cotton|wool|silk|leather|denim)\b/i.test(raw)
       if (raw && !hasVisionToken && describesVisionProduct && requestDeadline - Date.now() > 16_000) {
         try {

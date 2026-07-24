@@ -1361,30 +1361,43 @@ function getCheckoutUrl(p: Product, size: string | null, color: string | null): 
   catch { return p.store_url }
 }
 
-// ── Stylist text renderer — bold, list-strip, and [PRODUCT:N] tappable chips ──
+// ── Stylist text renderer — bold, list-strip, [PRODUCT:N] chips, [PHOTO:N] pics ──
 function renderStylistText(
   text: string,
   products: Product[],
   liveRates: ExchangeRates,
-  onProductClick: (p: Product) => void
+  onProductClick: (p: Product) => void,
+  photos: string[] = []
 ): React.ReactNode {
   const cleaned = text
     .replace(/^\s*\d+\.\s+/gm, '')
     .replace(/^\s*[-•]\s+/gm, '')
-    // The model sometimes bolds a product token (**[PRODUCT:0]**); since we
+    // The model sometimes bolds a product/photo token (**[PRODUCT:0]**); since we
     // split on the token first, those ** would be orphaned into literal "**"
-    // around the card. Unwrap any markup hugging a product token up front.
-    .replace(/\*{1,3}\s*(\[PRODUCT:\d+\])\s*\*{1,3}/g, '$1')
-    .replace(/\*{1,3}\s*(\[PRODUCT:\d+\])/g, '$1')
-    .replace(/(\[PRODUCT:\d+\])\s*\*{1,3}/g, '$1')
+    // around the card. Unwrap any markup hugging a token up front.
+    .replace(/\*{1,3}\s*(\[(?:PRODUCT|PHOTO):\d+\])\s*\*{1,3}/g, '$1')
+    .replace(/\*{1,3}\s*(\[(?:PRODUCT|PHOTO):\d+\])/g, '$1')
+    .replace(/(\[(?:PRODUCT|PHOTO):\d+\])\s*\*{1,3}/g, '$1')
     .trim()
 
-  // Split on [PRODUCT:N] tokens
-  const segments = cleaned.split(/(\[PRODUCT:\d+\])/g)
+  // Split on [PRODUCT:N] and [PHOTO:N] tokens
+  const segments = cleaned.split(/(\[(?:PRODUCT|PHOTO):\d+\])/g)
 
   return (
     <>
       {segments.map((seg, si) => {
+        // [PHOTO:N] — show one of the shopper's OWN uploaded photos back (the
+        // outfit Fabrics chose), so "which outfit for X?" shows the picked look.
+        const phm = seg.match(/^\[PHOTO:(\d+)\]$/)
+        if (phm) {
+          const url = photos[parseInt(phm[1], 10)]
+          if (!url) return null
+          return (
+            <div key={si} style={{ marginTop: 10, width: 150, borderRadius: 12, overflow: 'hidden', border: `1px solid ${BRD}`, background: BG2 }}>
+              <img src={url} alt="Your pick" style={{ width: '100%', display: 'block', objectFit: 'cover' }} />
+            </div>
+          )
+        }
         const pm = seg.match(/^\[PRODUCT:(\d+)\]$/)
         if (pm) {
           const idx = parseInt(pm[1], 10)
@@ -1436,7 +1449,7 @@ function renderStylistText(
 // appearing all at once. Reveals whole words (and whole [PRODUCT:N] tokens,
 // atomically, so a card never flickers through as raw bracket text) rather
 // than characters, which reads more natural at conversational speed. ────────
-function TypewriterText({ text, products, liveRates, onProductClick, animate, onDone, onReveal }: {
+function TypewriterText({ text, products, liveRates, onProductClick, animate, onDone, onReveal, photos }: {
   text: string
   products: Product[]
   liveRates: ExchangeRates
@@ -1444,8 +1457,9 @@ function TypewriterText({ text, products, liveRates, onProductClick, animate, on
   animate: boolean
   onDone?: () => void
   onReveal?: () => void
+  photos?: string[]
 }): React.ReactNode {
-  const tokens = useMemo(() => text.match(/\[PRODUCT:\d+\]|\S+|\s+/g) || [], [text])
+  const tokens = useMemo(() => text.match(/\[PRODUCT:\d+\]|\[PHOTO:\d+\]|\S+|\s+/g) || [], [text])
   const [count, setCount] = useState(animate ? 0 : tokens.length)
 
   useEffect(() => {
@@ -1474,7 +1488,7 @@ function TypewriterText({ text, products, liveRates, onProductClick, animate, on
   const revealed = tokens.slice(0, count).join('')
   return (
     <>
-      {renderStylistText(revealed, products, liveRates, onProductClick)}
+      {renderStylistText(revealed, products, liveRates, onProductClick, photos ?? [])}
       {animate && count < tokens.length && <span className="fr-type-caret" />}
     </>
   )
@@ -5290,6 +5304,7 @@ export default function DiscernApp({
                               ? (m.busy
                                   ? <span className="fr-shine">{m.content}</span>
                                   : <TypewriterText text={m.content} products={(m.pinnedProducts && m.pinnedProducts.length > 0) ? m.pinnedProducts : (m.foundProducts && m.foundProducts.length > 0) ? m.foundProducts : stylistProducts} liveRates={liveRates}
+                                      photos={stylistMsgs[i - 1]?.images}
                                       onProductClick={(p) => setSelected(p)}
                                       animate={i >= initialStylistMsgCount.current && !typedStylistIndices.current.has(i)}
                                       onReveal={stickStylistToBottom}
