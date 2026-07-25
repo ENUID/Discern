@@ -2032,14 +2032,42 @@ Use concrete garment, colour, and material words only, never a brand or product 
       }
     }
 
+    // SHOW THE OUTFIT'S PIECES even when the model wrote them as prose. Asking
+    // for "three outfits" doesn't fit the single-[OUTFIT:] grammar, so the model
+    // describes them in text and surfaces nothing — the shopper asked to SEE the
+    // pieces, not read them. When a heavy reply names 2+ garments but no token
+    // put anything on screen, extract the distinct garments it described and
+    // search them so they render as labelled strips alongside the text.
+    let surfacedFromReply = false
+    if (!searchQuery && (!outfitQueries || outfitQueries.length === 0)
+        && (!foundProducts || foundProducts.length === 0) && !foundProductGroups && !outfitSlots
+        && isProductIntent(question) && requestDeadline - Date.now() > 10_000) {
+      const replyGarmentKeys = Array.from(new Set(decomposeQuery(reply2).garmentKeys)).slice(0, 5)
+      if (replyGarmentKeys.length >= 2) {
+        const surfaceQuery = applyGenderDefault(replyGarmentKeys.map(k => GARMENT_VOCAB[k]?.query[0] || k).join(' '))
+        try {
+          send('outfit', 'Pulling the pieces', `catalog.multi(${replyGarmentKeys.join(', ')})`)
+          const groups = await withDeadline(multiCategorySearch(
+            surfaceQuery, undefined, countryCode, buyerCurrency, memorySummary, sizeForQuery, onSearchProgress,
+          ), requestDeadline, null)
+          if (groups && groups.length > 0) {
+            foundProductGroups = groups
+            foundProducts = dedupeById(groups.flatMap(g => g.products))
+            surfacedFromReply = true
+          }
+        } catch (e) { console.error('[stylist] outfit-surface fallback failed:', e) }
+      }
+    }
+
     // GROUND THE REPLY IN THE REAL PRODUCTS (accuracy fix). On a fresh search the
     // first reply was written before any results existed, so it was guessing.
     // Now that we have the actual products, rewrite the reply over their real
     // data so it names real pieces, explains why each, and cards the picks — no
-    // hallucination. Only for a fresh (non-pinned) shopping reply that produced
-    // products; pinned replies already reason over the shopper's real pinned
-    // data, and small talk has no products. Bounded; on any failure keep reply2.
-    if (products.length === 0 && foundProducts && foundProducts.length > 0 && isProductIntent(question)
+    // hallucination. Only when the MODEL itself searched (searchQuery present) —
+    // never for the describe-then-surface fallback above, whose multi-outfit
+    // text we must keep intact. Pinned replies reason over real pinned data,
+    // small talk has none. Bounded; on any failure keep reply2.
+    if (!!searchQuery && !surfacedFromReply && products.length === 0 && foundProducts && foundProducts.length > 0 && isProductIntent(question)
         && requestDeadline - Date.now() > 12_000) {
       const grounded = await withDeadline(
         groundReplyInProducts(question, foundProducts, rawHistory),
