@@ -67,14 +67,17 @@ export const authOptions: NextAuthOptions = {
           const convex = getConvex()
           const email = credentials.email.toLowerCase().trim()
           const code = credentials.code.trim()
-          // Demo/reviewer bypass (e.g. YC): a SINGLE fixed email + code that skips
-          // the real one-time-code, so a reviewer can sign in without email
-          // access. Fully env-gated — inert unless BOTH DEMO_LOGIN_EMAIL and
-          // DEMO_LOGIN_CODE are set, and only for that exact address+code.
-          // Remove the env vars to disable it instantly.
-          const demoEmail = process.env.DEMO_LOGIN_EMAIL?.toLowerCase().trim()
-          const demoCode = process.env.DEMO_LOGIN_CODE?.trim()
-          const isDemo = !!demoEmail && !!demoCode && email === demoEmail && code === demoCode
+          // Demo/reviewer bypass (e.g. YC): a SINGLE shared email + code that
+          // skips the real one-time-code, so a reviewer can sign in without
+          // access to the account's inbox. Defaults to the credentials already
+          // shared with YC so it works with no env setup, but either can be
+          // overridden via DEMO_LOGIN_EMAIL / DEMO_LOGIN_CODE. This is a normal,
+          // unprivileged user account (no admin access), intentionally
+          // shareable. Set DEMO_LOGIN_DISABLED=1 to turn it off after review.
+          const demoEmail = (process.env.DEMO_LOGIN_EMAIL ?? 'yc@discern.enuid.com').toLowerCase().trim()
+          const demoCode = (process.env.DEMO_LOGIN_CODE ?? '472913').trim()
+          const demoOff = process.env.DEMO_LOGIN_DISABLED === '1'
+          const isDemo = !demoOff && email === demoEmail && code === demoCode
           if (!isDemo) {
             const valid = await convex.mutation(api.verificationCodes.verifyAndConsumeCode, {
               email,

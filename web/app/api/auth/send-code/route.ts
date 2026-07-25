@@ -88,10 +88,12 @@ export async function POST(req: NextRequest) {
     const normalizedEmail = email.toLowerCase().trim()
 
     // Demo/reviewer account (e.g. YC): don't generate or email a real code —
-    // sign-in uses the fixed DEMO_LOGIN_CODE via the bypass in lib/auth.ts.
-    // Returning ok here just lets the UI advance to the code-entry step. Only
-    // active when DEMO_LOGIN_EMAIL is set, and only for that exact address.
-    if (process.env.DEMO_LOGIN_EMAIL && normalizedEmail === process.env.DEMO_LOGIN_EMAIL.toLowerCase().trim()) {
+    // sign-in uses the fixed demo code via the bypass in lib/auth.ts. Returning
+    // ok here just lets the UI advance to the code-entry step. Defaults to the
+    // shared YC address so no env setup is needed; DEMO_LOGIN_EMAIL overrides,
+    // DEMO_LOGIN_DISABLED=1 turns it off.
+    const demoEmail = (process.env.DEMO_LOGIN_EMAIL ?? 'yc@discern.enuid.com').toLowerCase().trim()
+    if (process.env.DEMO_LOGIN_DISABLED !== '1' && normalizedEmail === demoEmail) {
       return NextResponse.json({ ok: true })
     }
 
