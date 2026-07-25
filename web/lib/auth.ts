@@ -74,9 +74,9 @@ export const authOptions: NextAuthOptions = {
           // overridden via DEMO_LOGIN_EMAIL / DEMO_LOGIN_CODE. This is a normal,
           // unprivileged user account (no admin access), intentionally
           // shareable. Set DEMO_LOGIN_DISABLED=1 to turn it off after review.
-          // Defaults are a short VIP nod to YC: pg (Paul Graham) + 500000, YC's
-          // famous $500K standard deal.
-          const demoEmail = (process.env.DEMO_LOGIN_EMAIL ?? 'pg@discern.enuid.com').toLowerCase().trim()
+          // Defaults are a short VIP nod to YC: mspw = the initials of "Make
+          // Something People Want" (YC's motto) + 500000, YC's famous $500K deal.
+          const demoEmail = (process.env.DEMO_LOGIN_EMAIL ?? 'mspw@discern.enuid.com').toLowerCase().trim()
           const demoCode = (process.env.DEMO_LOGIN_CODE ?? '500000').trim()
           const demoOff = process.env.DEMO_LOGIN_DISABLED === '1'
           const isDemo = !demoOff && email === demoEmail && code === demoCode
