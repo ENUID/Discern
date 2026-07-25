@@ -8,6 +8,7 @@ import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/store
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
 import { cerebrasChat } from '@/lib/cerebras'
+import { nvidiaChat, nvidiaVisionChat, NVIDIA_CONFIGURED } from '@/lib/nvidia'
 import { ConvexHttpClient } from 'convex/browser'
 import { api } from '@/convex/_generated/api'
 
@@ -543,6 +544,13 @@ async function stylistChat(
   } else {
     attempts.push(...groqAttempts, cerebrasAttempt)
     if (hasGemini) attempts.push(geminiAttempt)
+  }
+  // NVIDIA NIM (thinkingmachines/inkling) — a 5th independent free pool, appended
+  // LAST so it's a pure safety net: only reached when every other provider has
+  // already failed. It's a reasoning model (slower, token-hungry), which is fine
+  // for a last-resort fallback but not as a primary. Skipped when the key isn't set.
+  if (NVIDIA_CONFIGURED) {
+    attempts.push({ name: 'nvidia', run: () => nvidiaChat(messages, system, opts) })
   }
 
   for (const a of attempts) {
@@ -1625,12 +1633,28 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
         // return contract, so this is logged against the whole vision chain.
         logAiUsage({ path: 'vision', provider: 'gemini-openrouter-or-groq-vision', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: !!raw })
       } catch (err) {
-        logAiUsage({ path: 'vision', provider: 'gemini-openrouter-or-groq-vision', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: false })
-        console.error('[stylist] vision model call failed:', err)
-        if (isRateLimited(err)) {
-          return finish({ reply: BUSY_REPLY, busy: true, comparison: null })
+        // Last-resort vision pool: NVIDIA NIM is multimodal and an INDEPENDENT
+        // free tier, so when the Gemini/OpenRouter/Groq vision pools are all
+        // rate-limited (the recurring "busy" on photo analysis), it can still
+        // answer. Clean its output the same way wardrobeVisionChat cleans its
+        // tiers (a reasoning model can emit a <think> block).
+        if (NVIDIA_CONFIGURED) {
+          try {
+            const nv = await nvidiaVisionChat(visionSystemFull, visionPrompt, images, { max_tokens: 1100, temperature: 0.3 })
+            const cleaned = stripSafetyLabels(stripAiDashes(stripThinkTags((nv || '').trim())))
+            if (cleaned && !looksLikeLeakedReasoning(cleaned)) raw = cleaned
+          } catch (err2) { console.error('[stylist] nvidia vision fallback failed:', err2) }
         }
-        return finish({ reply: "I couldn't read that photo just now. Give it another go in a moment?", comparison: null })
+        if (raw) {
+          logAiUsage({ path: 'vision', provider: 'nvidia-vision', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: true })
+        } else {
+          logAiUsage({ path: 'vision', provider: 'gemini-openrouter-or-groq-vision', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: false })
+          console.error('[stylist] vision model call failed:', err)
+          if (isRateLimited(err)) {
+            return finish({ reply: BUSY_REPLY, busy: true, comparison: null })
+          }
+          return finish({ reply: "I couldn't read that photo just now. Give it another go in a moment?", comparison: null })
+        }
       }
 
       // Self-heal: a photo of an item to find/buy (or "what do I wear with

@@ -5,6 +5,7 @@ import {
   pingOpenRouter, pingGroqDirect,
 } from '@/lib/groq'
 import { CEREBRAS_MODEL, CEREBRAS_CONFIGURED, pingCerebras } from '@/lib/cerebras'
+import { NVIDIA_MODEL, NVIDIA_CONFIGURED, pingNvidia } from '@/lib/nvidia'
 import { ConvexHttpClient } from 'convex/browser'
 import { api } from '@/convex/_generated/api'
 
@@ -42,6 +43,8 @@ export async function GET(req: NextRequest) {
       groq_direct_vision_model: GROQ_DIRECT_VISION_MODEL,
       cerebras_configured: CEREBRAS_CONFIGURED,
       cerebras_model: CEREBRAS_MODEL,
+      nvidia_configured: NVIDIA_CONFIGURED,
+      nvidia_model: NVIDIA_MODEL,
     },
   }
 
@@ -111,6 +114,18 @@ export async function GET(req: NextRequest) {
     }
   } else {
     out.cerebras = { ok: false, error: 'CEREBRAS_API_KEY not set — 4th fallback not configured' }
+  }
+
+  // NVIDIA NIM test — 5th independent free-tier pool (multimodal: text + vision)
+  if (NVIDIA_CONFIGURED) {
+    try {
+      const r = await pingNvidia()
+      out.nvidia = { ok: true, model: NVIDIA_MODEL, reply: (r?.content ?? '').slice(0, 60) }
+    } catch (e) {
+      out.nvidia = { ok: false, model: NVIDIA_MODEL, error: (e as Error).message?.slice(0, 300) ?? 'unknown' }
+    }
+  } else {
+    out.nvidia = { ok: false, error: 'NVIDIA_API_KEY not set — 5th fallback not configured' }
   }
 
   // Usage summary — trailing 24h and trailing 1h, from the ai_usage events
