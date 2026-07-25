@@ -982,6 +982,7 @@ const GROUNDING_SYSTEM = `You are Fabrics, a sharp, warm personal stylist. The a
 • Card each product you recommend with [PRODUCT:N] right after you name it. N is the product's number MINUS 1 (product 1 is [PRODUCT:0], product 3 is [PRODUCT:2]). Write [PRODUCT:N] bare, no bold.
 • Warm and human, plain words, contractions, never an em dash. A simple pick is 2 to 4 sentences; a combination or full outfit gets a short paragraph per piece.
 • If none of these genuinely fit the request, say so honestly instead of pretending.
+• CONTEXT MATTERS: read the conversation so far (the messages before this) and answer the shopper's LATEST request in that context, carrying forward what they already told you (occasion, budget, colours they liked or ruled out, what you discussed). Do not treat the request as if it arrived out of nowhere.
 Output ONLY the reply text with [PRODUCT:N] tokens. Never output [SEARCH:], [OUTFIT:], or [COMPARE:].`
 
 function compactProductLine(p: any, i: number): string {
@@ -996,12 +997,18 @@ function compactProductLine(p: any, i: number): string {
   return extra ? `${bits.join(' — ')} — ${extra}` : bits.join(' — ')
 }
 
-async function groundReplyInProducts(question: string, products: any[]): Promise<string | null> {
+async function groundReplyInProducts(question: string, products: any[], history: StylistMessage[]): Promise<string | null> {
   if (!products || products.length === 0) return null
   const list = products.slice(0, 10).map((p, i) => compactProductLine(p, i)).join('\n')
-  const userMsg = `Shopper asked: ${question}\n\nPRODUCTS FOUND (real data, numbered):\n${list}`
+  const userMsg = `The shopper's LATEST request: ${question}\n\nPRODUCTS FOUND for it (real data, numbered):\n${list}`
+  // Include the recent conversation so the grounded reply stays context-aware
+  // (occasion, budget, colours already discussed) instead of answering blind.
+  const recent = (history || [])
+    .slice(-6)
+    .map(m => ({ role: (m.role === 'assistant' ? 'assistant' : 'user') as 'assistant' | 'user', content: String(m?.content || '').slice(0, 600) }))
+    .filter(m => m.content)
   try {
-    const msg = await stylistChat([{ role: 'user', content: userMsg }], GROUNDING_SYSTEM, { max_tokens: 900, temperature: 0.4 }, false)
+    const msg = await stylistChat([...recent, { role: 'user', content: userMsg }], GROUNDING_SYSTEM, { max_tokens: 900, temperature: 0.4 }, false)
     let out = (msg?.content || '').trim()
     if (!out) return null
     // This pass must never trigger another search/outfit/compare — strip any.
@@ -2011,7 +2018,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
     if (products.length === 0 && foundProducts && foundProducts.length > 0 && isProductIntent(question)
         && requestDeadline - Date.now() > 12_000) {
       const grounded = await withDeadline(
-        groundReplyInProducts(question, foundProducts),
+        groundReplyInProducts(question, foundProducts, rawHistory),
         Math.min(requestDeadline - 4_000, Date.now() + 16_000),
         null,
       )
