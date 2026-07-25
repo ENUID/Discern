@@ -86,6 +86,15 @@ export async function POST(req: NextRequest) {
     }
 
     const normalizedEmail = email.toLowerCase().trim()
+
+    // Demo/reviewer account (e.g. YC): don't generate or email a real code —
+    // sign-in uses the fixed DEMO_LOGIN_CODE via the bypass in lib/auth.ts.
+    // Returning ok here just lets the UI advance to the code-entry step. Only
+    // active when DEMO_LOGIN_EMAIL is set, and only for that exact address.
+    if (process.env.DEMO_LOGIN_EMAIL && normalizedEmail === process.env.DEMO_LOGIN_EMAIL.toLowerCase().trim()) {
+      return NextResponse.json({ ok: true })
+    }
+
     const code = generateCode()
 
     try {

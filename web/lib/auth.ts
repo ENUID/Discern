@@ -65,21 +65,27 @@ export const authOptions: NextAuthOptions = {
           const serverSecret = process.env.CONVEX_AUTH_SECRET
           if (!serverSecret) throw new Error('Authentication is not configured')
           const convex = getConvex()
-          const valid = await convex.mutation(api.verificationCodes.verifyAndConsumeCode, {
-            email: credentials.email.toLowerCase().trim(),
-            code: credentials.code.trim(),
-            serverSecret,
-          })
-          if (!valid) throw new Error('Invalid or expired code')
-          await convex.mutation(api.users.ensureUser, {
-            email: credentials.email.toLowerCase().trim(),
-            serverSecret,
-          })
-          const user = await convex.query(api.users.getUserByEmail, {
-            email: credentials.email.toLowerCase().trim(),
-            serverSecret,
-          }) as any
-          return { id: user?._id ?? credentials.email, name: user?.name ?? null, email: credentials.email.toLowerCase().trim() }
+          const email = credentials.email.toLowerCase().trim()
+          const code = credentials.code.trim()
+          // Demo/reviewer bypass (e.g. YC): a SINGLE fixed email + code that skips
+          // the real one-time-code, so a reviewer can sign in without email
+          // access. Fully env-gated — inert unless BOTH DEMO_LOGIN_EMAIL and
+          // DEMO_LOGIN_CODE are set, and only for that exact address+code.
+          // Remove the env vars to disable it instantly.
+          const demoEmail = process.env.DEMO_LOGIN_EMAIL?.toLowerCase().trim()
+          const demoCode = process.env.DEMO_LOGIN_CODE?.trim()
+          const isDemo = !!demoEmail && !!demoCode && email === demoEmail && code === demoCode
+          if (!isDemo) {
+            const valid = await convex.mutation(api.verificationCodes.verifyAndConsumeCode, {
+              email,
+              code,
+              serverSecret,
+            })
+            if (!valid) throw new Error('Invalid or expired code')
+          }
+          await convex.mutation(api.users.ensureUser, { email, serverSecret })
+          const user = await convex.query(api.users.getUserByEmail, { email, serverSecret }) as any
+          return { id: user?._id ?? email, name: user?.name ?? null, email }
         } catch (err: any) {
           throw new Error(err.message || 'Authentication failed')
         }
