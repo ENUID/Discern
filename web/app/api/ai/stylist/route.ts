@@ -1645,22 +1645,30 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
       // Give the vision path the same on-demand expertise as the text path
       // (Gemini/Groq vision have ample context; unlike the 8K light path).
       const visionSystemFull = VISION_SYSTEM + selectKnowledgeModules(question, { hasPinned: products.length > 0, countryCode })
+      // The vision chain (Gemini + several OpenRouter models + Groq + NVIDIA) is
+      // TIME-BOUNDED as a whole, so a run of hung providers can't eat the entire
+      // request budget and starve the text fallback — the exact "stretched thin"
+      // failure. It always leaves ~18s for a guaranteed text answer.
+      send('read', 'Reading your photos', `vision.analyze(${images.length} photo${images.length > 1 ? 's' : ''})`)
+      let visionThrew: any = null
       try {
-        send('read', 'Reading your photos', `vision.analyze(${images.length} photo${images.length > 1 ? 's' : ''})`)
-        raw = await wardrobeVisionChat(visionSystemFull, visionPrompt, images, { max_tokens: 1100, temperature: 0.3 })
-        // Provider tag is approximate — wardrobeVisionChat doesn't report back
-        // which of Gemini/Groq actually served the request without changing its
-        // return contract, so this is logged against the whole vision chain.
-        logAiUsage({ path: 'vision', provider: 'gemini-openrouter-or-groq-vision', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: !!raw })
-      } catch (err) {
-        // Last-resort vision pool: NVIDIA NIM is multimodal and an INDEPENDENT
-        // free tier, so when the Gemini/OpenRouter/Groq vision pools are all
-        // rate-limited (the recurring "busy" on photo analysis), it can still
-        // answer. Clean its output the same way wardrobeVisionChat cleans its
-        // tiers (a reasoning model can emit a <think> block).
-        if (NVIDIA_CONFIGURED) {
+        raw = await withDeadline(
+          wardrobeVisionChat(visionSystemFull, visionPrompt, images, { max_tokens: 1100, temperature: 0.3 }),
+          Math.min(requestDeadline - 18_000, Date.now() + 28_000),
+          '',
+        )
+      } catch (err) { visionThrew = err }
+      if (raw) {
+        logAiUsage({ path: 'vision', provider: 'gemini-openrouter-or-groq-vision', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: true })
+      } else {
+        // NVIDIA NIM — an independent multimodal pool, also bounded.
+        if (NVIDIA_CONFIGURED && requestDeadline - Date.now() > 16_000) {
           try {
-            const nv = await nvidiaVisionChat(visionSystemFull, visionPrompt, images, { max_tokens: 1100, temperature: 0.3 })
+            const nv = await withDeadline(
+              nvidiaVisionChat(visionSystemFull, visionPrompt, images, { max_tokens: 1100, temperature: 0.3 }),
+              Math.min(requestDeadline - 14_000, Date.now() + 16_000),
+              '',
+            )
             const cleaned = stripSafetyLabels(stripAiDashes(stripThinkTags((nv || '').trim())))
             if (cleaned && !looksLikeLeakedReasoning(cleaned)) raw = cleaned
           } catch (err2) { console.error('[stylist] nvidia vision fallback failed:', err2) }
@@ -1668,17 +1676,16 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
         if (raw) {
           logAiUsage({ path: 'vision', provider: 'nvidia-vision', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: true })
         } else {
-          // Every image reader is down. Don't dead-end on "busy" — the TEXT
-          // providers (Cerebras and the rest) are healthy, so answer the styling
-          // question from text as a graceful degradation: real advice, honest
-          // that we couldn't see the photos this turn, and a [SEARCH:]/[OUTFIT:]
-          // so pieces still show. Falls through to the shared parse+search below.
+          // Every image reader is down. Don't dead-end — the TEXT providers
+          // (Cerebras etc.) are healthy and now have reserved time. Answer the
+          // styling question from the shopper's own description; honest that we
+          // couldn't see the photos. Falls through to the shared parse+search.
           try {
             const textFallbackSystem = SYSTEM + selectKnowledgeModules(question, { hasPinned: products.length > 0, countryCode })
               + `\n\n━━━ NOTE ━━━ The shopper shared photo(s) but the image reader is unavailable this turn, so you cannot see them. WORK WITH WHAT THEY GAVE YOU: they usually describe the pieces, what they like, and the occasion in their message. Give a genuine, decisive answer from THAT description, a real verdict and the because. Open with one brief, casual line that you're going off their description this time (not a big apology). NEVER ask them to share product links, more details, or to re-upload, and NEVER stall, they already told you enough to help. Only use [SEARCH:]/[OUTFIT:] if they want NEW pieces to buy; when they're asking your opinion on their OWN items (which dress suits me), just give the verdict, no token. Do NOT invent specifics you cannot know from their words.`
             const fb = await withDeadline(
               stylistChat([...history, { role: 'user', content: question }], textFallbackSystem, { max_tokens: 1500, temperature: 0.4 }, true),
-              Math.min(requestDeadline - 14_000, Date.now() + 24_000),
+              Math.min(requestDeadline - 3_000, Date.now() + 16_000),
               null,
             )
             raw = (fb?.content ?? '').trim()
@@ -1686,11 +1693,11 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
           } catch (e) { console.error('[stylist] vision->text fallback failed:', e) }
           if (!raw) {
             logAiUsage({ path: 'vision', provider: 'all-failed', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: false })
-            console.error('[stylist] vision + text fallback both failed:', err)
-            if (isRateLimited(err)) {
+            console.error('[stylist] vision + text fallback both failed:', visionThrew)
+            if (isRateLimited(visionThrew)) {
               return finish({ reply: BUSY_REPLY, busy: true, comparison: null })
             }
-            return finish({ reply: "I couldn't read the photos just now and I'm briefly stretched thin. Give it a few seconds and try again, or tell me the vibe you're going for and I'll style you.", comparison: null })
+            return finish({ reply: "I couldn't read the photos just now. Tell me the vibe you're going for, or a couple details about the pieces, and I'll style you from there.", comparison: null })
           }
         }
       }
