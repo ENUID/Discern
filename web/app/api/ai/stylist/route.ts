@@ -969,6 +969,50 @@ function parseSearchToken(text: string): { reply: string; searchQuery?: string }
   }
 }
 
+// ── Grounding pass — reply from the REAL found products ──────────────────────
+// On a fresh search the model composes its reply BEFORE the catalog runs, so it
+// can only guess: wrong names, invented colours, generic filler with no real
+// explanation (the "nothing is true" problem). This second pass fixes accuracy
+// the way a real assistant does — it reads the ACTUAL products that were found
+// and writes a grounded answer over them: real names, real prices/materials,
+// a decision with a per-product why, and a [PRODUCT:N] card for each pick.
+const GROUNDING_SYSTEM = `You are Fabrics, a sharp, warm personal stylist. The app has ALREADY found real products for the shopper (numbered below with their real data). Write the shopper-facing answer grounded ONLY in these real products.
+• Use the ACTUAL products: their real names, prices, and materials/colours from the data. NEVER invent a product, name, brand, colour, fabric, or detail that is not in the data, and never mention a product that is not listed.
+• Lead with a decision: pick the best 1 to 3 for their exact need and give a specific WHY for each (its real fabric, price, cut, colour, occasion fit). For a combination or outfit, also say how the pieces work together (colour, proportion, vibe).
+• Card each product you recommend with [PRODUCT:N] right after you name it. N is the product's number MINUS 1 (product 1 is [PRODUCT:0], product 3 is [PRODUCT:2]). Write [PRODUCT:N] bare, no bold.
+• Warm and human, plain words, contractions, never an em dash. A simple pick is 2 to 4 sentences; a combination or full outfit gets a short paragraph per piece.
+• If none of these genuinely fit the request, say so honestly instead of pretending.
+Output ONLY the reply text with [PRODUCT:N] tokens. Never output [SEARCH:], [OUTFIT:], or [COMPARE:].`
+
+function compactProductLine(p: any, i: number): string {
+  const bits = [`${i + 1}. ${String(p?.title || 'Untitled').slice(0, 90)}`]
+  const vendor = p?.vendor || p?.brand
+  if (vendor) bits.push(`by ${String(vendor).slice(0, 40)}`)
+  if (p?.price != null) bits.push(`${p.price} ${p.currency || p.base_currency || ''}`.trim())
+  const desc = typeof p?.description === 'string'
+    ? p.description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) : ''
+  const tags = Array.isArray(p?.tags) ? p.tags.filter((t: any) => typeof t === 'string' && !t.startsWith('__') && !t.includes(':')).slice(0, 8).join(', ') : ''
+  const extra = [desc, tags].filter(Boolean).join(' | ')
+  return extra ? `${bits.join(' — ')} — ${extra}` : bits.join(' — ')
+}
+
+async function groundReplyInProducts(question: string, products: any[]): Promise<string | null> {
+  if (!products || products.length === 0) return null
+  const list = products.slice(0, 10).map((p, i) => compactProductLine(p, i)).join('\n')
+  const userMsg = `Shopper asked: ${question}\n\nPRODUCTS FOUND (real data, numbered):\n${list}`
+  try {
+    const msg = await stylistChat([{ role: 'user', content: userMsg }], GROUNDING_SYSTEM, { max_tokens: 900, temperature: 0.4 }, false)
+    let out = (msg?.content || '').trim()
+    if (!out) return null
+    // This pass must never trigger another search/outfit/compare — strip any.
+    out = out.replace(/\[(SEARCH|OUTFIT|COMPARE|WARDROBE):[^\]]*\]/gi, '').replace(/[ \t]{2,}/g, ' ').trim()
+    return out || null
+  } catch (e) {
+    console.error('[stylist] grounding pass failed:', e)
+    return null
+  }
+}
+
 // ── Outfit token ─────────────────────────────────────────────────────────────
 function parseOutfitToken(text: string): { reply: string; outfitQueries?: string[] } {
   const match = text.match(/\[OUTFIT:\s*([^\]]+)\]/i)
@@ -1955,6 +1999,23 @@ Use concrete garment, colour, and material words only, never a brand or product 
         const honest = "I'm not pulling those up right now. Want me to try a different colour, brand, or price?"
         reply2 = reply2 ? `${reply2} ${honest}` : honest
       }
+    }
+
+    // GROUND THE REPLY IN THE REAL PRODUCTS (accuracy fix). On a fresh search the
+    // first reply was written before any results existed, so it was guessing.
+    // Now that we have the actual products, rewrite the reply over their real
+    // data so it names real pieces, explains why each, and cards the picks — no
+    // hallucination. Only for a fresh (non-pinned) shopping reply that produced
+    // products; pinned replies already reason over the shopper's real pinned
+    // data, and small talk has no products. Bounded; on any failure keep reply2.
+    if (products.length === 0 && foundProducts && foundProducts.length > 0 && isProductIntent(question)
+        && requestDeadline - Date.now() > 12_000) {
+      const grounded = await withDeadline(
+        groundReplyInProducts(question, foundProducts),
+        Math.min(requestDeadline - 4_000, Date.now() + 16_000),
+        null,
+      )
+      if (grounded) reply2 = grounded
     }
 
     return finish({ reply: reply2, comparison: comparison ?? null, foundProducts, foundProductGroups, outfitSlots, searchQuery: searchQuery || undefined })
