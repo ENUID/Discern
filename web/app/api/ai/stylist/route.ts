@@ -351,7 +351,7 @@ function isReactionOnly(question: string): boolean {
 function isProductIntent(question: string): boolean {
   const q = question.toLowerCase()
   if (decomposeQuery(q).garmentKeys.length > 0) return true
-  return /\bfind\b|\bshow me\b|\blook(ing)? for\b|\brecommend\b|\bsuggest\b|\bsearch\b|\boutfit\b|\bbuild.{0,12}(look|outfit)\b|\bwhat.{0,12}wear\b|\bwear (to|for|with)\b|\bstyle (me|this|a|an|my|for)\b|\bpair (with|it)\b|\bdress (for|me)\b|\bwardrobe\b/.test(q)
+  return /\bfind\b|\bshow me\b|\blook(ing)? for\b|\brecommend\b|\bsuggest\b|\bsearch\b|\boutfits?\b|\bpieces?\b|\bbuild.{0,12}(look|outfit)\b|\bwhat.{0,12}wear\b|\bwear (to|for|with)\b|\bstyle (me|this|a|an|my|for)\b|\bpair (with|it)\b|\bdress (for|me)\b|\bwardrobe\b/.test(q)
 }
 
 // ── Outfit slot naming + coherence ───────────────────────────────────────────
@@ -2121,7 +2121,10 @@ Use concrete garment, colour, and material words only, never a brand or product 
     let surfacedFromReply = false
     if (!searchQuery && (!outfitQueries || outfitQueries.length === 0) && !outfitGroups
         && (!foundProducts || foundProducts.length === 0) && !foundProductGroups && !outfitSlots
-        && isProductIntent(question) && requestDeadline - Date.now() > 10_000) {
+        && requestDeadline - Date.now() > 10_000) {
+      // Trigger on the REPLY describing 2+ garments (an outfit/looks reply),
+      // regardless of how the question was phrased — a reply naming a shirt,
+      // trousers and shoes clearly wants those pieces on screen.
       const replyGarmentKeys = Array.from(new Set(decomposeQuery(reply2).garmentKeys)).slice(0, 5)
       if (replyGarmentKeys.length >= 2) {
         const surfaceQuery = applyGenderDefault(replyGarmentKeys.map(k => GARMENT_VOCAB[k]?.query[0] || k).join(' '))
