@@ -732,6 +732,7 @@ STRICT: use it only when every column is the SAME garment type. The columns ARE 
 • 3-4 slot queries split by |, each a precise search for ONE distinct wardrobe category. EVERY slot a DIFFERENT category, never two tops, two bottoms, or two pairs of shoes: exactly one base top + one bottom + one pair of shoes + (optional) ONE outer layer + (optional) accessory. A layer (overshirt, shacket, shirt-jacket, blazer, cardigan, coat) is the ONE outer slot worn OVER the base top, never a second top, no kurta with a tee, no overshirt with a shirt.
 • Each query names the garment TYPE explicitly (the engine filters on that word): gender + garment + descriptors, e.g. "men dark navy slim trousers | men white linen shirt | men tan leather loafers | men camel unstructured blazer". You may lead a slot with a brand if they anchored the look to one.
 • Never [OUTFIT:] and [SEARCH:] in one reply; never [OUTFIT:] for a single item (use [SEARCH:]). Lead with a one-sentence outfit concept, then the token in the SAME message, never concept-then-"how does that sound?". Approval or a nudge after you proposed or promised a look ("ok", "yes", "go", "do it", "sounds good", "where is the outfit", "you didn't") is a GO signal, emit [OUTFIT:] immediately, never "on it" with no token.
+• MULTIPLE OUTFITS: when they ask for 2 or 3 DIFFERENT looks ("create three outfits", "give me a few different outfits", "some options for the weekend") use [OUTFITS:], not several [OUTFIT:]. Separate each look with " || " and each slot within a look with " | ", every slot a precise gender + garment + descriptor query: [OUTFITS: men white linen shirt | men olive linen shorts | men white canvas sneaker || men green linen shirt | men olive linen shorts | men brown leather sandal || men striped shirt | men beige chino shorts | men espadrille]. Up to 3 looks, up to 4 slots each; a piece may repeat across looks (the same shorts styled two ways is fine). Describe each look in ONE short line before the token; the app renders each as its own carded "Outfit 1 / Outfit 2 / Outfit 3". Never write outfits as plain prose without [OUTFITS:] — the shopper must see the pieces.
 
 ━━━ VOICE ━━━
 • FIRST MESSAGE (fresh session, no prior conversation): introduce yourself in one short, varied line ("Hey, I'm Fabrics, your personal stylist, what are we working on?"), never the exact same opener twice, and never reintroduce yourself after the first exchange unless asked.
@@ -1036,6 +1037,25 @@ function parseOutfitToken(text: string): { reply: string; outfitQueries?: string
   return {
     reply: text.replace(match[0], '').replace(/\n+$/, '').trim(),
     outfitQueries: queries.length > 0 ? queries : undefined,
+  }
+}
+
+// ── Multi-outfit token ───────────────────────────────────────────────────────
+// [OUTFITS: a|b|c || d|e|f || g|h|i] — several DISTINCT looks in one reply, each
+// look separated by "||", each slot within a look by "|". This is what lets
+// "create three outfits" render as three separate carded looks instead of prose.
+// (The regex differs from [OUTFIT:] by the S, so the two never collide.)
+function parseOutfitsToken(text: string): { reply: string; outfitSets?: string[][] } {
+  const match = text.match(/\[OUTFITS:\s*([^\]]+)\]/i)
+  if (!match) return { reply: text.trim() }
+  const sets = match[1]
+    .split('||')
+    .map(chunk => chunk.split('|').map(q => q.trim().slice(0, 200)).filter(Boolean).slice(0, 4))
+    .filter(set => set.length > 0)
+    .slice(0, 3)
+  return {
+    reply: text.replace(match[0], '').replace(/\n+$/, '').trim(),
+    outfitSets: sets.length > 0 ? sets : undefined,
   }
 }
 
@@ -1813,7 +1833,8 @@ Use concrete garment, colour, and material words only, never a brand or product 
 
     const { reply: replyWithSearch, comparison } = parseReply(raw)
     const { reply: replyWithOutfit, searchQuery: rawSearchQuery } = parseSearchToken(replyWithSearch)
-    const { reply: parsedReply, outfitQueries: rawOutfitQueries } = parseOutfitToken(replyWithOutfit)
+    const { reply: replyWithOutfits, outfitQueries: rawOutfitQueries } = parseOutfitToken(replyWithOutfit)
+    const { reply: parsedReply, outfitSets: rawOutfitSets } = parseOutfitsToken(replyWithOutfits)
     // Now that SEARCH/OUTFIT/COMPARE tokens are stripped out, turn any leftover
     // "(product N)" prose references in the visible reply into real
     // [PRODUCT:N-1] cards, so every pinned piece the model recommends renders,
@@ -2005,12 +2026,53 @@ Use concrete garment, colour, and material words only, never a brand or product 
       }
     }
 
+    // MULTIPLE OUTFITS ([OUTFITS:]) — "create three outfits" renders as three
+    // separate carded looks. Fetch every slot of every look in one parallel
+    // batch, then assemble each look picking one real product per slot (deduped
+    // WITHIN a look; a piece may deliberately repeat across looks, e.g. the same
+    // shorts styled two ways). Each look becomes its own labelled group.
+    let outfitGroups: { label: string; products: any[] }[] | null = null
+    if (rawOutfitSets && rawOutfitSets.length > 0) {
+      send('outfit', 'Building the looks', `outfits(${rawOutfitSets.length})`)
+      try {
+        const sets = rawOutfitSets.map(set => set.map(q => applyGenderDefault(q)))
+        const flat: { oi: number; q: string }[] = []
+        sets.forEach((set, oi) => set.forEach(q => flat.push({ oi, q })))
+        const candidates = await withDeadline(Promise.all(
+          flat.map(async ({ oi, q }) => {
+            const { slotCat } = outfitSlotInfo(q)
+            const results = await GlobalCatalogService.search(
+              q, undefined, [], countryCode, true, buildMandatoryConcepts(q),
+              'relevance', buyerCurrency, { fastFirstPage: true }, [],
+              memorySummary, undefined, sizeForQuery(q),
+            )
+            const filtered = slotCat ? results.filter(p => productMatchesSlot(p, slotCat)) : results
+            return { oi, filtered, results }
+          })
+        ), requestDeadline, [] as { oi: number; filtered: any[]; results: any[] }[])
+        const built: { label: string; products: any[] }[] = []
+        for (let oi = 0; oi < sets.length; oi++) {
+          const used = new Set<string>()
+          const picks: any[] = []
+          for (const c of candidates.filter(c => c.oi === oi)) {
+            const pool = c.filtered.length > 0 ? c.filtered : c.results
+            const pick = pool.find(p => !used.has(p.id)) || pool[0]
+            if (pick && !used.has(pick.id)) { used.add(pick.id); picks.push(pick) }
+          }
+          if (picks.length > 0) built.push({ label: `Outfit ${oi + 1}`, products: picks })
+        }
+        outfitGroups = built.length > 0 ? built : null
+      } catch (e) {
+        console.error('[stylist] multi-outfit search error:', e)
+      }
+    }
+
     // GUARANTEE: a shopping reply must never promise products and show none.
     // If a search/outfit intent produced zero products (an outfit whose slots
     // all came back empty, or a search the broaden pass couldn't rescue), cast
     // one broad net; if that still finds nothing, be honest instead of leaving a
     // dangling "here they are" with an empty space beneath it.
-    const nothingShown = (!foundProducts || foundProducts.length === 0) && !outfitSlots && (!foundProductGroups || foundProductGroups.length === 0)
+    const nothingShown = (!foundProducts || foundProducts.length === 0) && !outfitSlots && !outfitGroups && (!foundProductGroups || foundProductGroups.length === 0)
     // Only worth one more search if there's genuine budget left — otherwise fall
     // straight to the honest note below rather than risk a mid-stream kill.
     if ((searchQuery || (outfitQueries && outfitQueries.length > 0)) && nothingShown && requestDeadline - Date.now() > 6_000) {
@@ -2039,7 +2101,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
     // put anything on screen, extract the distinct garments it described and
     // search them so they render as labelled strips alongside the text.
     let surfacedFromReply = false
-    if (!searchQuery && (!outfitQueries || outfitQueries.length === 0)
+    if (!searchQuery && (!outfitQueries || outfitQueries.length === 0) && !outfitGroups
         && (!foundProducts || foundProducts.length === 0) && !foundProductGroups && !outfitSlots
         && isProductIntent(question) && requestDeadline - Date.now() > 10_000) {
       const replyGarmentKeys = Array.from(new Set(decomposeQuery(reply2).garmentKeys)).slice(0, 5)
@@ -2077,7 +2139,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
       if (grounded) reply2 = grounded
     }
 
-    return finish({ reply: reply2, comparison: comparison ?? null, foundProducts, foundProductGroups, outfitSlots, searchQuery: searchQuery || undefined })
+    return finish({ reply: reply2, comparison: comparison ?? null, foundProducts, foundProductGroups, outfitSlots, outfitGroups, searchQuery: searchQuery || undefined })
   } catch (e) {
     console.error('[stylist] error:', e)
     if (isRateLimited(e)) {

@@ -2058,7 +2058,8 @@ export default function DiscernApp({
   // being produced (the same phases the live step tracker showed) — kept on
   // the message so "what did it think about" survives past the loading
   // animation, behind a collapsed "Show reasoning" toggle.
-  type StylistMsg = { role: 'user' | 'assistant'; content: string; comparison?: StylistComparison; comparisonProducts?: Product[]; images?: string[]; pinnedProducts?: Product[]; id?: string; foundProducts?: Product[]; foundProductGroups?: FoundProductGroup[]; foundProductBatches?: number[]; outfitSlots?: OutfitSlot[]; busy?: boolean; searchQuery?: string; loadingMore?: boolean; hasNoMore?: boolean; trace?: StylistLoadingPhase[] }
+  type OutfitGroup = { label: string; products: Product[] }
+  type StylistMsg = { role: 'user' | 'assistant'; content: string; comparison?: StylistComparison; comparisonProducts?: Product[]; images?: string[]; pinnedProducts?: Product[]; id?: string; foundProducts?: Product[]; foundProductGroups?: FoundProductGroup[]; foundProductBatches?: number[]; outfitSlots?: OutfitSlot[]; outfitGroups?: OutfitGroup[]; busy?: boolean; searchQuery?: string; loadingMore?: boolean; hasNoMore?: boolean; trace?: StylistLoadingPhase[] }
   type StylistHistoryEntry = { id: string; label: string; createdAt: number }
   // Guards against a shape mismatch from a pre-migration localStorage payload
   // (this app went through a chat-format architecture change) crashing the
@@ -2406,6 +2407,10 @@ export default function DiscernApp({
         const outfitSlots: OutfitSlot[] | undefined = Array.isArray(data.outfitSlots) && data.outfitSlots.length > 0
           ? data.outfitSlots.map((s: any) => ({ ...s, products: Array.isArray(s.products) ? s.products.map(withCur) : s.products }))
           : undefined
+        // Multiple distinct looks ("create three outfits") — each its own carded group.
+        const outfitGroups: OutfitGroup[] | undefined = Array.isArray(data.outfitGroups) && data.outfitGroups.length > 0
+          ? data.outfitGroups.map((g: any) => ({ label: String(g.label || 'Outfit'), products: Array.isArray(g.products) ? dedupeById(g.products.map(withCur)) : [] })).filter((g: OutfitGroup) => g.products.length > 0)
+          : undefined
         // Products Fabrics surfaces from a search/outfit live ONLY in the chat
         // message (foundProducts / outfitSlots below). The pinned strip at the
         // top is reserved exclusively for pieces the user attached themselves.
@@ -2414,7 +2419,7 @@ export default function DiscernApp({
         // so an old comparison never re-renders against a later pinned set (the
         // ★ pick / pick card would otherwise point at the wrong product).
         const comparisonProducts = data.comparison ? products.slice() : undefined
-        setStylistMsgs(prev => [...prev, { role: 'assistant', content: data.reply, comparison: data.comparison || undefined, comparisonProducts, foundProducts: newProducts.length > 0 ? newProducts : undefined, foundProductGroups, foundProductBatches: (!foundProductGroups && newProducts.length > 0) ? chunkIntoRows(newProducts.length) : undefined, outfitSlots, busy: data.busy === true, searchQuery: typeof data.searchQuery === 'string' ? data.searchQuery : undefined, trace: capturedPhases.length > 0 ? capturedPhases : undefined,
+        setStylistMsgs(prev => [...prev, { role: 'assistant', content: data.reply, comparison: data.comparison || undefined, comparisonProducts, foundProducts: newProducts.length > 0 ? newProducts : undefined, foundProductGroups, foundProductBatches: (!foundProductGroups && newProducts.length > 0) ? chunkIntoRows(newProducts.length) : undefined, outfitSlots, outfitGroups, busy: data.busy === true, searchQuery: typeof data.searchQuery === 'string' ? data.searchQuery : undefined, trace: capturedPhases.length > 0 ? capturedPhases : undefined,
           // The pieces this reply is ABOUT — the products the shopper pinned for
           // this turn. [PRODUCT:N] in the reply text is 0-indexed into exactly
           // this set (the server's "STORE PRODUCTS"), so the tappable card must
@@ -2428,6 +2433,7 @@ export default function DiscernApp({
         const surfacedCount = newProducts.length
           + (foundProductGroups?.reduce((n, g) => n + g.products.length, 0) ?? 0)
           + (outfitSlots?.reduce((n, s) => n + (s.products?.length ?? 0), 0) ?? 0)
+          + (outfitGroups?.reduce((n, g) => n + g.products.length, 0) ?? 0)
         if (typeof data.searchQuery === 'string' && data.searchQuery.trim() && onboardEmail && authProof) {
           saveSearchHistoryMutation({ userEmail: onboardEmail, query: data.searchQuery.trim(), resultCount: surfacedCount, authProof }).catch(() => {})
         }
@@ -2461,6 +2467,7 @@ export default function DiscernApp({
           newProducts.forEach(collect)
           foundProductGroups?.forEach(g => g.products.forEach(collect))
           outfitSlots?.forEach(s => (s.products || []).forEach(collect))
+          outfitGroups?.forEach(g => g.products.forEach(collect))
           if (shown.length > 0) {
             trackEventMutation({
               event: 'impression',
@@ -5494,6 +5501,20 @@ export default function DiscernApp({
                             </button>
                           )
                         )}
+                      </div>
+                    )}
+                    {m.role === 'assistant' && m.outfitGroups && m.outfitGroups.length > 0 && (
+                      <div style={{ marginTop: 10, width: '100%' }}>
+                        {/* Several distinct looks — "Outfit 1 / Outfit 2 / Outfit 3",
+                            each its own labelled row of the pieces that make it up. */}
+                        {m.outfitGroups.map((group, gi) => (
+                          <div key={gi} style={{ marginTop: gi > 0 ? 16 : 0 }}>
+                            <div style={{ fontFamily: SANS, fontSize: 10, fontWeight: 600, letterSpacing: '.1em', textTransform: 'uppercase', color: INK3, marginBottom: 8 }}>{group.label}</div>
+                            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', scrollbarWidth: 'none', paddingBottom: 2, WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
+                              {group.products.map(p => renderFoundProductCard(p, m.searchQuery))}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
                     {m.role === 'assistant' && m.outfitSlots && m.outfitSlots.length > 0 && (
