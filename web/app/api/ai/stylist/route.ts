@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { groqChat, wardrobeVisionChat, stripThinkTags, stripAiDashes, stripSafetyLabels, looksLikeLeakedReasoning, CHAT_MODEL, FAST_MODEL } from '@/lib/groq'
 import { geminiChat } from '@/lib/gemini'
 import { GlobalCatalogService, type CatalogProgress } from '@/lib/services/GlobalCatalogService'
-import { buildMandatoryConcepts, classifyQuerySlot, productMatchesSlot, slotLabelFor, decomposeQuery, GARMENT_VOCAB, GARMENT_CATEGORY, type SlotCategory } from '@/lib/queryParser'
+import { buildMandatoryConcepts, classifyQuerySlot, productMatchesSlot, productMatchesGarmentKey, slotLabelFor, decomposeQuery, GARMENT_VOCAB, GARMENT_CATEGORY, type SlotCategory } from '@/lib/queryParser'
 import { matchStyles, vocabPromptBlock } from '@/lib/styleVocabulary'
 import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/stores'
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
@@ -214,12 +214,15 @@ async function multiCategorySearch(
           { fastFirstPage: true, onProgress: onProgress ? (e => onProgress({ ...e, label })) : undefined },
           [], memorySummary, subQuery, sizeForQuery(subQuery),
         )
-        const filtered = cat ? found.filter(p => productMatchesSlot(p, cat)) : found
-        // Category purity: when the slot is known, keep ONLY matching products,
-        // even if that leaves the group empty (an empty group is dropped below).
-        // Falling back to the unfiltered results was the exact bug that put a
-        // shirt into the "Shorts" strip.
-        const chosen = dedupeById(cat ? filtered : found).slice(0, MULTI_CATEGORY_PER_GROUP_CAP)
+        // Filter by the SPECIFIC garment, not its broad slot — t-shirt and shirt
+        // both live in the 'top' slot, so a slot-level filter let button-up
+        // shirts flood the "T-Shirts" strip (the reported bug). Garment-key
+        // matching keeps each strip pure to exactly what it's labelled.
+        const filtered = found.filter(p => productMatchesGarmentKey(p, key))
+        // Category purity: keep ONLY matching products, even if that leaves the
+        // group empty (an empty group is dropped below). Falling back to the
+        // unfiltered results was the exact bug that put a shirt into the wrong strip.
+        const chosen = dedupeById(filtered).slice(0, MULTI_CATEGORY_PER_GROUP_CAP)
         // subQuery is what this strip's "See more" re-runs on the frontend.
         return { label, products: chosen, query: subQuery }
       } catch (e) {
@@ -705,6 +708,7 @@ FORMATTING: no numbered lists, bullets, bold headers, or "1. 2. 3." / "First… 
 
 ━━━ PRODUCT SEARCH: end the reply with [SEARCH: precise product query] whenever they want to see real pieces ━━━
 • Exact vocabulary: garment type + gender + material + colour, plus an occasion word only when they named one and it narrows results (beach, resort, wedding, office, interview, date night, black tie, cocktail, gym, travel, brunch, festival). E.g. "men linen shirt", "women black leather boots", "silk slip dress", "men linen shirt beach".
+• KEEP THEIR EXACT GARMENT WORD, never substitute a look-alike. A t-shirt / tee is NOT a button-up shirt, a polo is not a t-shirt, a hoodie is not a sweater, shorts are not trousers. If they say "t-shirts", the query says "t-shirt", never "shirt" (dropping the "t" is the exact reported bug). If they EXCLUDE something ("t-shirts NOT shirts", "no button-ups"), search ONLY what they asked for and never add the excluded garment as a second category.
 • OCCASIONS THE CATALOG WON'T NAME, TRANSLATE, NEVER PASS THROUGH: for a cultural, religious, or personal occasion no listing would literally mention (Muharram, Ashura, Eid, Ramadan, Diwali, Navratri, Onam, Lunar New Year, Hanukkah, a funeral, a temple/church/mosque visit, a baby shower, graduation), reason first, what it is, what's respectfully worn there in their culture and region, expected colours and modesty, and the season's local climate, then put ONLY the translated concrete attributes in the query, never the occasion word. "…for Muharram" → a month of mourning, subdued and modest, plain black, no shine, hot South-Asian season so breathable → [SEARCH: men plain black cotton shirt and black linen trousers]. Show that read in ONE natural line ("For Muharram you want subdued and breathable, plain black cotton, nothing flashy"), respectful and matter-of-fact, never lecturing them about their own culture.
 • BRANDS: if they name a brand, KEEP it in the query, the search auto-restricts to it; if they name two, pick the most relevant. PHOTOS: a photo of a product to find or buy always gets [SEARCH:] with every visual detail, garment + exact colour + material + cut + a key identifying detail (and a visible brand or logo), e.g. tan suede loafers → [SEARCH: tan suede penny loafer], a black ribbed knit polo → [SEARCH: black ribbed cotton polo shirt].
 • One search per reply; none when discussing pieces already shown; never [SEARCH:] and [COMPARE:] together; omit [SEARCH:] entirely if no new products are needed.
@@ -1267,8 +1271,10 @@ async function runStylistRequest(
         // the initial grouped search uses; a mixed multi-garment query is left
         // unfiltered.
         const lmKeys = decomposeQuery(loadMoreQuery).garmentKeys
-        const lmCat = lmKeys.length === 1 ? (GARMENT_CATEGORY[lmKeys[0]] as SlotCategory | undefined) : undefined
-        const lmResults = lmCat ? results.filter(p => productMatchesSlot(p, lmCat)) : results
+        // Garment-key precise (t-shirt strip stays t-shirts on "See more"), not
+        // the broad slot that let button-up shirts leak into the t-shirt strip.
+        const lmKey = lmKeys.length === 1 ? lmKeys[0] : undefined
+        const lmResults = lmKey ? results.filter(p => productMatchesGarmentKey(p, lmKey)) : results
         return finish({ reply: '', comparison: null, foundProducts: dedupeById(lmResults).slice(0, INITIAL_RESULT_CAP), outfitSlots: null })
       } catch (e) {
         console.error('[stylist] load-more error:', e)

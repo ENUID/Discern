@@ -779,3 +779,19 @@ export function productSlotCategories(p: { title?: string; tags?: string[]; desc
 export function productMatchesSlot(p: { title?: string; tags?: string[]; description?: string }, cat: SlotCategory): boolean {
   return productSlotCategories(p).has(cat)
 }
+
+// Does this product match a SPECIFIC garment key, not just its broad slot? This
+// is the fix for "asked for t-shirts, got button-up shirts": tshirt and shirt
+// share the 'top' slot, so slot-level filtering can't tell them apart. Requires
+// a product term for THIS exact garment (a "Hakuna Shirt" has no tee/t-shirt
+// term, so it fails the tshirt check) AND no disqualifying look-alike (a real
+// t-shirt fails the shirt check via GARMENT_EXCLUSIONS). Use this instead of
+// productMatchesSlot wherever the query names one specific garment.
+export function productMatchesGarmentKey(p: { title?: string; tags?: string[]; description?: string }, key: string): boolean {
+  const entry = GARMENT_VOCAB[key]
+  if (!entry) return false
+  const text = `${p.title || ''} ${(p.tags || []).join(' ')} ${p.description || ''}`.toLowerCase()
+  if (!entry.product.some(term => hasWord(text, term))) return false
+  if (matchesGarmentExclusion(text, entry.product)) return false
+  return true
+}
