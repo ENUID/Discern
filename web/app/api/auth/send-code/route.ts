@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
     // ok here just lets the UI advance to the code-entry step. Defaults to the
     // shared YC address so no env setup is needed; DEMO_LOGIN_EMAIL overrides,
     // DEMO_LOGIN_DISABLED=1 turns it off.
-    const demoEmail = (process.env.DEMO_LOGIN_EMAIL ?? 'yc@discern.enuid.com').toLowerCase().trim()
+    const demoEmail = (process.env.DEMO_LOGIN_EMAIL ?? 'makesomethingpeoplewant@discern.enuid.com').toLowerCase().trim()
     if (process.env.DEMO_LOGIN_DISABLED !== '1' && normalizedEmail === demoEmail) {
       return NextResponse.json({ ok: true })
     }
