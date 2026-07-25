@@ -594,7 +594,7 @@ function isRateLimited(err: unknown): boolean {
   return /\b429\b|rate limit|too many requests|quota/i.test(msg)
 }
 
-const BUSY_REPLY = "A lot of people are styling with me right now. Give me a few seconds and try again."
+const BUSY_REPLY = "I'm briefly stretched thin and couldn't finish that one. Give it a few seconds and try again, or tell me the vibe and I'll style you from there."
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type StylistProduct = {
@@ -1668,12 +1668,30 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
         if (raw) {
           logAiUsage({ path: 'vision', provider: 'nvidia-vision', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: true })
         } else {
-          logAiUsage({ path: 'vision', provider: 'gemini-openrouter-or-groq-vision', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: false })
-          console.error('[stylist] vision model call failed:', err)
-          if (isRateLimited(err)) {
-            return finish({ reply: BUSY_REPLY, busy: true, comparison: null })
+          // Every image reader is down. Don't dead-end on "busy" — the TEXT
+          // providers (Cerebras and the rest) are healthy, so answer the styling
+          // question from text as a graceful degradation: real advice, honest
+          // that we couldn't see the photos this turn, and a [SEARCH:]/[OUTFIT:]
+          // so pieces still show. Falls through to the shared parse+search below.
+          try {
+            const textFallbackSystem = SYSTEM + selectKnowledgeModules(question, { hasPinned: products.length > 0, countryCode })
+              + `\n\n━━━ NOTE ━━━ The shopper shared photo(s) but the image reader is temporarily unavailable, so you cannot see them this turn. Answer their styling question from the text as best you can: open by briefly acknowledging you could not get a clear read on the photos this time, give genuine advice, and end with a [SEARCH: ...] or [OUTFIT: ...] so they still see real pieces. Do NOT invent what was in the photos.`
+            const fb = await withDeadline(
+              stylistChat([...history, { role: 'user', content: question }], textFallbackSystem, { max_tokens: 1500, temperature: 0.4 }, true),
+              Math.min(requestDeadline - 14_000, Date.now() + 24_000),
+              null,
+            )
+            raw = (fb?.content ?? '').trim()
+            if (raw) logAiUsage({ path: 'vision', provider: `text-fallback:${fb?.provider ?? '?'}`, estPromptTokens: estimateTokens(textFallbackSystem + question), estCompletionTokensCap: 1500, ok: true })
+          } catch (e) { console.error('[stylist] vision->text fallback failed:', e) }
+          if (!raw) {
+            logAiUsage({ path: 'vision', provider: 'all-failed', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: false })
+            console.error('[stylist] vision + text fallback both failed:', err)
+            if (isRateLimited(err)) {
+              return finish({ reply: BUSY_REPLY, busy: true, comparison: null })
+            }
+            return finish({ reply: "I couldn't read the photos just now and I'm briefly stretched thin. Give it a few seconds and try again, or tell me the vibe you're going for and I'll style you.", comparison: null })
           }
-          return finish({ reply: "I couldn't read that photo just now. Give it another go in a moment?", comparison: null })
         }
       }
 

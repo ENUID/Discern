@@ -61,6 +61,14 @@ export const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL ?? CHAT_MODEL
 // openrouter/free's live capability filtering covers image understanding
 // too, so the same "never goes stale" reasoning applies here.
 export const VISION_MODEL = process.env.OPENROUTER_VISION_MODEL ?? 'openrouter/free'
+// A LIST of free OpenRouter vision models tried in order (broadening the chain
+// so a single model being deprecated/down doesn't drop the whole OpenRouter
+// tier). They share OpenRouter's one free pool, so a 429 on the first
+// short-circuits the rest via the base cooldown — but on a MODEL-specific
+// failure (bad slug, refuses the image), the next model still gets a shot.
+export const OPENROUTER_VISION_MODELS: string[] = (process.env.OPENROUTER_VISION_MODELS
+  ?? 'openrouter/free,google/gemini-2.0-flash-exp:free,meta-llama/llama-3.2-11b-vision-instruct:free,qwen/qwen2.5-vl-72b-instruct:free')
+  .split(',').map(s => s.trim()).filter(Boolean)
 
 // ── Groq direct — second-line fallback when OpenRouter's free tier is dry ──
 // Reuses GROQ_API_KEY / GROQ_BASE_URL from before the migration (they were
@@ -497,12 +505,12 @@ export type VisionMessage = {
 export async function groqVisionChat(
   messages: VisionMessage[],
   system: string,
-  opts?: { max_tokens?: number; temperature?: number },
+  opts?: { max_tokens?: number; temperature?: number; model?: string },
   retryCount = 0
 ): Promise<any> {
   const allMessages: VisionMessage[] = [{ role: 'system', content: system }, ...messages]
   const payload = {
-    model: VISION_MODEL,
+    model: opts?.model ?? VISION_MODEL,
     messages: allMessages,
     temperature: opts?.temperature ?? 0.2,
     max_tokens: opts?.max_tokens ?? 700,
@@ -663,14 +671,20 @@ export async function wardrobeVisionChat(
   }))
   const visionMessages: VisionMessage[] = [{ role: 'user', content: [{ type: 'text', text: question }, ...imageParts] }]
 
-  try {
-    const msg = await groqVisionChat(visionMessages, systemPrompt, opts)
-    const content = stripSafetyLabels(stripAiDashes(stripThinkTags((msg?.content ?? '').trim())))
-    if (!content) throw new Error('empty content')
-    if (looksLikeLeakedReasoning(content)) throw new Error('leaked reasoning')
-    return content
-  } catch (err: any) {
-    errors.push({ name: 'openrouter', err })
+  // Several concrete free vision models on OpenRouter, tried in order — not just
+  // the auto-router. If one model is deprecated/down/refuses the image, the next
+  // is tried; a 429 on the shared pool short-circuits the rest via the cooldown.
+  // Env-overridable so the list can be retuned without a deploy.
+  for (const model of OPENROUTER_VISION_MODELS) {
+    try {
+      const msg = await groqVisionChat(visionMessages, systemPrompt, { ...opts, model })
+      const content = stripSafetyLabels(stripAiDashes(stripThinkTags((msg?.content ?? '').trim())))
+      if (!content) throw new Error('empty content')
+      if (looksLikeLeakedReasoning(content)) throw new Error('leaked reasoning')
+      return content
+    } catch (err: any) {
+      errors.push({ name: `openrouter(${model})`, err })
+    }
   }
 
   try {
