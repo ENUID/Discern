@@ -1759,9 +1759,20 @@ export default function DiscernApp({
   const sessionSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sessionSyncLast  = useRef<string>('')
   const deleteSyncedStylistSession = useMutation(api.stylistSessions.deleteStylistSession)
+  // Cross-device conversation sync. Left ON so behaviour is unchanged, but it is
+  // structurally the most expensive thing in the app on Convex's metered I/O:
+  // this is a REACTIVE query, so every session write re-reads every stored
+  // session document for the account, and each document holds a whole
+  // serialized conversation. The write side is already debounced, deduped and
+  // stripped of images (see the persist effect), which cuts most of it.
+  // If bandwidth still climbs, setting NEXT_PUBLIC_SESSION_SYNC=off removes this
+  // path entirely — the only thing lost is seeing the same threads on a SECOND
+  // device; localStorage keeps every shopper's full history on the device
+  // they're actually using.
+  const sessionSyncEnabled = (process.env.NEXT_PUBLIC_SESSION_SYNC ?? 'on').toLowerCase() !== 'off'
   const remoteStylistSessions = useQuery(
     api.stylistSessions.listStylistSessions,
-    onboardEmail && authProof ? { userEmail: onboardEmail, authProof } : 'skip'
+    sessionSyncEnabled && onboardEmail && authProof ? { userEmail: onboardEmail, authProof } : 'skip'
   )
   const [settingsOpen, setSettingsOpen]         = useState(false)
   const [settingsView, setSettingsView]         = useState<'main' | 'profile'>('main')
@@ -2203,7 +2214,7 @@ export default function DiscernApp({
     if (onboardEmail && authProof) {
       try {
         const raw = localStorage.getItem(stylistSessionLS(id))
-        if (raw) syncStylistSession({ userEmail: onboardEmail, sessionId: id, label: newLabel, messages: raw, authProof }).catch(() => {})
+        if (raw && sessionSyncEnabled) syncStylistSession({ userEmail: onboardEmail, sessionId: id, label: newLabel, messages: raw, authProof }).catch(() => {})
       } catch {}
     }
   }
@@ -3039,7 +3050,7 @@ export default function DiscernApp({
     // including base64 photo data URLs — and because the sidebar's session list
     // is a REACTIVE query, every one of those writes made it re-read all of this
     // account's session documents in full. Small edit, enormous amplification.
-    if (onboardEmail && authProof) {
+    if (sessionSyncEnabled && onboardEmail && authProof) {
       const label = stylistHistory.find(h => h.id === id)?.label || toSync[0]?.content?.slice(0, 80) || 'Conversation'
       // Drop the two fields that dominate the payload and that a cross-device
       // restore doesn't need: base64 images (megabytes each) and the reasoning
@@ -3121,7 +3132,7 @@ export default function DiscernApp({
       if (remoteIds.has(h.id) || everSeenRemoteIds.current.has(h.id)) continue
       let raw: string | null = null
       try { raw = localStorage.getItem(stylistSessionLS(h.id)) } catch {}
-      if (raw && raw !== '[]') {
+      if (raw && raw !== '[]' && sessionSyncEnabled) {
         syncStylistSession({ userEmail: onboardEmail, sessionId: h.id, label: h.label, messages: raw, authProof }).catch(() => {})
       }
     }
