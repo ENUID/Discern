@@ -1375,20 +1375,23 @@ function renderStylistText(
     // The model sometimes bolds a product/photo token (**[PRODUCT:0]**); since we
     // split on the token first, those ** would be orphaned into literal "**"
     // around the card. Unwrap any markup hugging a token up front.
-    .replace(/\*{1,3}\s*(\[(?:PRODUCT|PHOTO):\d+\])\s*\*{1,3}/g, '$1')
-    .replace(/\*{1,3}\s*(\[(?:PRODUCT|PHOTO):\d+\])/g, '$1')
-    .replace(/(\[(?:PRODUCT|PHOTO):\d+\])\s*\*{1,3}/g, '$1')
+    // Case-insensitive and space-tolerant on purpose: a free-tier model writes
+    // "[product:0]" or "[PRODUCT: 0]" often enough, and a token that misses these
+    // patterns renders as literal bracket text in the chat bubble.
+    .replace(/\*{1,3}\s*(\[(?:PRODUCT|PHOTO):\s*\d+\])\s*\*{1,3}/gi, '$1')
+    .replace(/\*{1,3}\s*(\[(?:PRODUCT|PHOTO):\s*\d+\])/gi, '$1')
+    .replace(/(\[(?:PRODUCT|PHOTO):\s*\d+\])\s*\*{1,3}/gi, '$1')
     .trim()
 
   // Split on [PRODUCT:N] and [PHOTO:N] tokens
-  const segments = cleaned.split(/(\[(?:PRODUCT|PHOTO):\d+\])/g)
+  const segments = cleaned.split(/(\[(?:PRODUCT|PHOTO):\s*\d+\])/gi)
 
   return (
     <>
       {segments.map((seg, si) => {
         // [PHOTO:N] — show one of the shopper's OWN uploaded photos back (the
         // outfit Fabrics chose), so "which outfit for X?" shows the picked look.
-        const phm = seg.match(/^\[PHOTO:(\d+)\]$/)
+        const phm = seg.match(/^\[PHOTO:\s*(\d+)\]$/i)
         if (phm) {
           const url = photos[parseInt(phm[1], 10)]
           if (!url) return null
@@ -1398,7 +1401,7 @@ function renderStylistText(
             </div>
           )
         }
-        const pm = seg.match(/^\[PRODUCT:(\d+)\]$/)
+        const pm = seg.match(/^\[PRODUCT:\s*(\d+)\]$/i)
         if (pm) {
           const idx = parseInt(pm[1], 10)
           const p = products[idx]
@@ -1459,7 +1462,9 @@ function TypewriterText({ text, products, liveRates, onProductClick, animate, on
   onReveal?: () => void
   photos?: string[]
 }): React.ReactNode {
-  const tokens = useMemo(() => text.match(/\[PRODUCT:\d+\]|\[PHOTO:\d+\]|\S+|\s+/g) || [], [text])
+  // Same case/space tolerance as renderStylistText, so a token always reveals
+  // atomically instead of flickering through as raw bracket text.
+  const tokens = useMemo(() => text.match(/\[(?:PRODUCT|PHOTO):\s*\d+\]|\S+|\s+/gi) || [], [text])
   const [count, setCount] = useState(animate ? 0 : tokens.length)
 
   useEffect(() => {
@@ -2268,14 +2273,18 @@ export default function DiscernApp({
     // data, so it describes the actual pieces. Triggers on any back-reference to
     // the pinned items, OR on a short follow-up (<= 6 words) right after a turn
     // that had pins — both mean "keep talking about what I just pinned".
-    if (productsArg === undefined) {
-      // Clear back-references to previously-selected pieces. Kept low-false-
-      // positive on purpose: a short NEW search ("black shoes") must NOT drag
-      // the old pins in, so this matches referring phrases only, never bare
-      // garment words.
-      const refersToPinned = /\b(these|those|them|they|selected|picked|chosen)\b|\bthe (ones?|selection|products?|pieces?|items?)\b/i.test(question)
+    // Deliberately narrow, because a false positive is WORSE than a miss: pinned
+    // products suppress the fast path AND stop any new search ("pinned products
+    // are the answer"), so wrongly attaching a stale pin surfaces zero products.
+    // Hence: never when photos are attached this turn (a photo pick is its own
+    // thing), only an explicit demonstrative back-reference, and only pins from
+    // the IMMEDIATELY PRECEDING exchange (a recency window) rather than any pin
+    // ever made in the session.
+    if (productsArg === undefined && images.length === 0) {
+      const refersToPinned = /\b(these|those|them)\b|\bthe (ones?|selection)\b/i.test(question)
       if (refersToPinned) {
-        for (let k = history.length - 1; k >= 0; k--) {
+        const RECENCY = 3 // last user msg + its reply + a little slack
+        for (let k = history.length - 1; k >= Math.max(0, history.length - RECENCY); k--) {
           const pp = history[k]?.pinnedProducts
           if (pp && pp.length > 0) { products = pp; break }
         }
@@ -2388,6 +2397,18 @@ export default function DiscernApp({
       if (elapsed < STYLIST_FLICKER_GUARD_MS) await new Promise(r => setTimeout(r, STYLIST_FLICKER_GUARD_MS - elapsed))
       // Bail if the user navigated to another conversation mid-flight.
       if (stylistSessionId.current !== originSession) return
+      // Accept the response when it carries PRODUCTS even if the reply text came
+      // back empty (a model whose whole output was just the [SEARCH:] token, with
+      // the grounding rewrite timed out). Treating that as a failure threw away a
+      // search that actually succeeded and showed "something went wrong" over a
+      // full set of results. A tiny lead-in stands in for the missing prose.
+      const hasAnyProducts = !!data && (
+        (Array.isArray(data.foundProducts) && data.foundProducts.length > 0) ||
+        (Array.isArray(data.foundProductGroups) && data.foundProductGroups.length > 0) ||
+        (Array.isArray(data.outfitGroups) && data.outfitGroups.length > 0) ||
+        (Array.isArray(data.outfitSlots) && data.outfitSlots.length > 0)
+      )
+      if (data && !data.reply && hasAnyProducts) data.reply = "Here's what I found for you."
       if (data?.reply) {
         // Let the step tracker dissolve out before the reply appears, instead
         // of an instant swap — a clean handoff, not a jump cut.
@@ -2494,8 +2515,14 @@ export default function DiscernApp({
       console.error('[stylist] request failed:', err)
       setStylistMsgs(prev => [...prev, { role: 'assistant', content: 'Something went wrong reaching Fabrics. Give it another go in a moment.' }])
     } finally {
-      setStylistLoading(false)
-      setStylistDissolving(false)
+      // Only the request belonging to the CURRENTLY open conversation may clear
+      // the loading state. A stale request finishing after the user started a new
+      // chat would otherwise kill the new request's step tracker and re-enable
+      // the composer mid-flight, allowing a concurrent double-send.
+      if (stylistSessionId.current === originSession) {
+        setStylistLoading(false)
+        setStylistDissolving(false)
+      }
     }
   }
   // Pin products and ask about them — continues the one ongoing conversation
@@ -3503,13 +3530,18 @@ export default function DiscernApp({
     const onWheel = (e: WheelEvent) => {
       const count = sheetImgCount.current
       if (count <= 1) return
-      // Only claim clearly-horizontal gestures; leave vertical scroll alone.
-      // The < 2 floor also drops the tiny tail-end momentum events outright.
-      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || Math.abs(e.deltaX) < 2) return
-      e.preventDefault() // stop the browser's two-finger back/forward nav
+      // Keep the gesture clock ticking on EVERY wheel event of the stream,
+      // including the sub-2px and vertical-dominant ones. Updating it only for
+      // events that pass the filters below let a gentle drag (deltaX oscillating
+      // ~1-3px) or a brief diagonal stretch look like a brand-new gesture every
+      // time an event happened to clear the floor, stepping several images per
+      // swipe. The clock must measure "did the fingers lift", not "did we act".
       const now = e.timeStamp
       const gap = now - wheelLastEv.current
       wheelLastEv.current = now
+      // Only claim clearly-horizontal motion; leave vertical scroll alone.
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || Math.abs(e.deltaX) < 2) return
+      e.preventDefault() // stop the browser's two-finger back/forward nav
       if (gap <= NEW_GESTURE_GAP) return // same gesture (incl. momentum tail) — ignore
       if (e.deltaX > 0) setActiveImg(i => Math.min(count - 1, i + 1))
       else setActiveImg(i => Math.max(0, i - 1))
@@ -3641,14 +3673,41 @@ export default function DiscernApp({
     // this second, instead of leaving the wrong item sitting in the results.
     setStylistMsgs(prev => prev.map(m => {
       if (m.role !== 'assistant') return m
+      const removedIdx = m.foundProducts?.findIndex(x => x.id === p.id) ?? -1
       const foundProducts = m.foundProducts?.filter(x => x.id !== p.id)
+      // Removing from foundProducts SHIFTS the array, and [PRODUCT:N] tokens in
+      // the reply are 0-indexed into that exact array — so without remapping,
+      // flagging one item makes every later card point at the wrong product and
+      // the prose stops matching the cards (the very mismatch the grounding pass
+      // exists to prevent). Renumber the tokens, and drop the one whose product
+      // just went away. Only when the tokens actually index foundProducts: on a
+      // pinned reply they index pinnedProducts and must be left alone.
+      let content = m.content
+      if (removedIdx >= 0 && !(m.pinnedProducts && m.pinnedProducts.length > 0) && /\[PRODUCT:\d+\]/i.test(content)) {
+        content = content
+          .replace(/\[PRODUCT:(\d+)\]/gi, (whole, n: string) => {
+            const i = parseInt(n, 10)
+            if (i === removedIdx) return ''
+            return i > removedIdx ? `[PRODUCT:${i - 1}]` : whole
+          })
+          .replace(/[ \t]{2,}/g, ' ')
+      }
       // Drop a category strip that just lost its last product, so flagging the
       // only item in a group doesn't leave an empty labeled strip with a lone
       // "See more" button behind.
       const foundProductGroups = m.foundProductGroups
         ?.map(g => ({ ...g, products: g.products.filter(x => x.id !== p.id) }))
         .filter(g => g.products.length > 0)
-      return { ...m, foundProducts, foundProductGroups }
+      // Outfit rows too — the comment above promised "every category strip", but
+      // a piece shown inside an "Outfit N" row or an outfit slot was being left
+      // on screen after the shopper explicitly rejected it.
+      const outfitGroups = m.outfitGroups
+        ?.map(g => ({ ...g, products: g.products.filter(x => x.id !== p.id) }))
+        .filter(g => g.products.length > 0)
+      const outfitSlots = m.outfitSlots
+        ?.map(s => ({ ...s, products: (s.products || []).filter((x: Product) => x.id !== p.id) }))
+        .filter(s => s.products.length > 0)
+      return { ...m, content, foundProducts, foundProductGroups, outfitGroups, outfitSlots }
     }))
   }
 
@@ -4931,10 +4990,24 @@ export default function DiscernApp({
                         if (wasLongPress.current) { wasLongPress.current = false; return }
                         if (stylistSessionId.current !== h.id) {
                           // Restore this session's messages from localStorage
+                          let restored: StylistMsg[] = []
                           try {
                             const raw = localStorage.getItem(stylistSessionLS(h.id))
-                            setStylistMsgs(parseStylistMsgs(raw))
-                          } catch { setStylistMsgs([]) }
+                            restored = parseStylistMsgs(raw)
+                          } catch { restored = [] }
+                          setStylistMsgs(restored)
+                          // Treat every restored message as already-typed. Without
+                          // this, the typewriter re-animates the WHOLE history at
+                          // once (each reply typing simultaneously, all fighting to
+                          // scroll to the bottom), which reads as the app glitching.
+                          initialStylistMsgCount.current = restored.length
+                          typedStylistIndices.current = new Set(restored.map((_, i) => i))
+                          // Per-message UI state belongs to the session we just
+                          // left: an open editor or expanded trace at index N would
+                          // otherwise reattach to a DIFFERENT message here, and
+                          // "Save & resend" would truncate the new conversation.
+                          setEditingMsgIndex(null)
+                          setOpenTraceIdx(null)
                           stylistSessionId.current = h.id
                           try { localStorage.setItem(STYLIST_ACTIVE_SESSION_LS, h.id) } catch {}
                           setStylistProducts([])
