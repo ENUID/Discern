@@ -2297,7 +2297,12 @@ export default function DiscernApp({
     // one turn; the caller (doSearch) clears wardrobeImages right after
     // calling this, same as any other attachment.
     const capturedImages = images.map(i => i.url)
-    const isNewSession = history.length === 0
+    // An empty history means a genuinely new conversation ONLY if we aren't
+    // already in one. Editing and resending the FIRST message also passes an
+    // empty (truncated) history, which used to mint a SECOND session id and a
+    // second sidebar entry — forking one conversation into two and orphaning the
+    // original. Reuse the open session in that case.
+    const isNewSession = history.length === 0 && !stylistSessionId.current
     if (isNewSession) {
       const sessionId = `f-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
       stylistSessionId.current = sessionId
@@ -2382,6 +2387,17 @@ export default function DiscernApp({
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: requestBody,
           })
+          // fetch does NOT reject on an HTTP error, so without this a 429/500
+          // fell through as `data === null` and got retried — double-hitting the
+          // rate limiter, or paying twice for a request whose AI work was already
+          // done before the function died. Rate limits and server errors are not
+          // the transient blip this retry is for; surface them instead.
+          if (res.status === 429 || res.status >= 500) {
+            data = { reply: res.status === 429
+              ? "That was a lot of requests at once. Give it a few seconds and try again."
+              : "Something went wrong on my end. Give it another go?" }
+            break
+          }
           data = await readStylistStream(res, onProgress)
         } catch (e) {
           if (attempt === 1) throw e // final attempt failed → outer catch shows the error
