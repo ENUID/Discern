@@ -4,7 +4,7 @@ import {
   CHAT_MODEL, FAST_MODEL, GROQ_DIRECT_SMART_MODEL, GROQ_DIRECT_FAST_MODEL, GROQ_DIRECT_VISION_MODEL, GROQ_DIRECT_CONFIGURED,
   pingOpenRouter, pingGroqDirect,
 } from '@/lib/groq'
-import { CEREBRAS_MODEL, CEREBRAS_CONFIGURED, pingCerebras } from '@/lib/cerebras'
+import { CEREBRAS_MODEL, CEREBRAS_CONFIGURED, CEREBRAS_VISION_MODEL, pingCerebras } from '@/lib/cerebras'
 import { NVIDIA_MODEL, NVIDIA_CONFIGURED, pingNvidia } from '@/lib/nvidia'
 import { ConvexHttpClient } from 'convex/browser'
 import { api } from '@/convex/_generated/api'
@@ -43,6 +43,7 @@ export async function GET(req: NextRequest) {
       groq_direct_vision_model: GROQ_DIRECT_VISION_MODEL,
       cerebras_configured: CEREBRAS_CONFIGURED,
       cerebras_model: CEREBRAS_MODEL,
+      cerebras_vision_model: CEREBRAS_VISION_MODEL,
       nvidia_configured: NVIDIA_CONFIGURED,
       nvidia_model: NVIDIA_MODEL,
     },

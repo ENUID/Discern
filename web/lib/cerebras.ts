@@ -38,6 +38,12 @@ const CEREBRAS_BASE = process.env.CEREBRAS_BASE_URL ?? 'https://api.cerebras.ai/
 const CEREBRAS_API_KEY = process.env.CEREBRAS_API_KEY ?? ''
 export const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL ?? 'gpt-oss-120b'
 export const CEREBRAS_CONFIGURED = !!CEREBRAS_API_KEY
+// Cerebras also serves a VISION-capable model (gemma-4-31b: image input, up to
+// 10 images/request, same generous free quota as gpt-oss-120b). Because Cerebras
+// is the most reliable pool in the app, this becomes the primary photo-analysis
+// provider — env-overridable if the preview model id changes.
+export const CEREBRAS_VISION_MODEL = process.env.CEREBRAS_VISION_MODEL ?? 'gemma-4-31b'
+export const CEREBRAS_VISION_CONFIGURED = !!CEREBRAS_API_KEY
 
 type CerebrasMessage = {
   role: string
@@ -83,6 +89,31 @@ export async function cerebrasChat(
   opts?: CerebrasOpts,
 ): Promise<any> {
   return cerebrasCompletion(messages, system, opts)
+}
+
+// Multimodal (image + text) via Cerebras' gemma-4-31b — same OpenAI image_url
+// content-part format the other vision providers use. Returns the raw reply
+// text (matching geminiVisionChat), so it drops straight into the vision chain.
+// Cerebras caps image input at 10 per request.
+export async function cerebrasVisionChat(
+  system: string,
+  question: string,
+  imageDataUrls: string[],
+  opts?: CerebrasOpts,
+): Promise<string> {
+  if (!CEREBRAS_API_KEY) throw new Error('CEREBRAS_API_KEY is not set')
+  const parts: any[] = [{ type: 'text', text: question }]
+  for (const url of imageDataUrls.slice(0, 10)) parts.push({ type: 'image_url', image_url: { url } })
+  const msg = await chatCompletion(
+    CEREBRAS_BASE,
+    CEREBRAS_API_KEY,
+    opts?.model ?? CEREBRAS_VISION_MODEL,
+    [{ role: 'user', content: parts }] as any,
+    system,
+    undefined,
+    { max_tokens: opts?.max_tokens ?? 1100, temperature: opts?.temperature ?? 0.3 },
+  )
+  return (msg?.content ?? '') as string
 }
 
 // Isolated diagnostic seam — bypasses any fallback loop, same shape as
