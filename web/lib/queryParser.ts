@@ -382,12 +382,14 @@ export function matchesGarmentExclusion(haystack: string, garmentGroup: string[]
   }
   if (excludes.size === 0) return false
   for (const t of Array.from(excludes)) {
-    if (t.includes(' ') || t.includes('-')) {
-      if (haystack.includes(t)) return true
-    } else {
-      const esc = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      if (new RegExp(`\\b${esc}s?\\b`, 'i').test(haystack)) return true
-    }
+    // Word-boundary matching for EVERY term, including multi-word ones. A raw
+    // substring test on "t shirt" matched the tail of any word ending in t —
+    // "slim fiT SHIRT", "prinT SHIRT", "knit shirt", and any description saying
+    // "lightweighT SHIRT" — so legitimate button-ups were being excluded from
+    // the shirt group wholesale and the strip came back EMPTY. The leading \b
+    // is what makes "a t shirt" match while "fit shirt" does not.
+    const esc = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    if (new RegExp(`\\b${esc}s?\\b`, 'i').test(haystack)) return true
   }
   return false
 }
@@ -621,12 +623,27 @@ export function decomposeQuery(query: string): QueryComponents {
 
   const gender = detectGenderInQuery(lower) ?? undefined
 
-  const garmentKeys: string[] = []
+  const matchedKeys: string[] = []
   for (const [key, entry] of Object.entries(GARMENT_VOCAB)) {
     if (entry.query.some(term => hasWord(lower, term))) {
-      garmentKeys.push(key)
+      matchedKeys.push(key)
     }
   }
+  // Drop a GENERAL garment when a more SPECIFIC look-alike also matched. "men
+  // t-shirt" matches both `shirt` (the hyphen is a word boundary) and `tshirt`,
+  // and callers that key off a single garment then saw an ambiguous 2-key result
+  // and silently disabled their category filter — letting button-ups back into
+  // a t-shirt strip. Specificity is already encoded in GARMENT_EXCLUSIONS: if
+  // A excludes one of B's product terms, B is the more specific reading.
+  const garmentKeys = matchedKeys.filter(key => {
+    const ex = GARMENT_EXCLUSIONS[key]
+    if (!ex || ex.length === 0) return true
+    return !matchedKeys.some(other => {
+      if (other === key) return false
+      const otherTerms = GARMENT_VOCAB[other]?.product || []
+      return otherTerms.some(t => ex.includes(t.toLowerCase().trim()))
+    })
+  })
 
   const materials: string[] = []
   for (const [mat] of Object.entries(MATERIAL_VOCAB)) {

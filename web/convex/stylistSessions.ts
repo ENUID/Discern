@@ -43,13 +43,18 @@ export const listStylistSessions = query({
     if (!(await verifyAuthProof(args.authProof, args.userEmail))) return [];
     const user = await getUserByEmail(ctx, args.userEmail);
     if (!user) return [];
+    // take(30), not collect() — this is a REACTIVE query that re-runs on every
+    // session write, and Convex bills on documents READ, so collecting every
+    // session (each carrying a full serialized conversation) just to slice 30 in
+    // JS multiplied this account's read bandwidth by however many sessions it
+    // had. Bounded at the same 30 the client shows.
     const rows = await ctx.db
       .query("stylist_sessions")
       .withIndex("by_user", (q: any) => q.eq("userId", user._id))
-      .collect();
+      .order("desc")
+      .take(30);
     return rows
       .sort((a: any, b: any) => b.updatedAt - a.updatedAt)
-      .slice(0, 30)
       .map((r: any) => ({ sessionId: r.sessionId, label: r.label, messages: r.messages, createdAt: r.createdAt, updatedAt: r.updatedAt }));
   },
 });

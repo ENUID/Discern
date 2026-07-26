@@ -145,7 +145,18 @@ function garmentLabel(key: string): string {
 // "shirts, trousers and tshirts" yields three garments (shirt, trouser, tshirt)
 // even though shirt and tshirt share the broad "top" slot.
 function separatedGarmentKeys(query: string): string[] {
-  const words = query.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  // Collapse the hyphenated/spaced spellings of compound garments into their
+  // single-token vocab form FIRST. Splitting on non-alphanumerics turns
+  // "t-shirt" into ["t","shirt"], and multi-word vocab terms are skipped below,
+  // so "a white t-shirt" used to resolve to the key `shirt` — labelling the
+  // strip "Shirts" and then filtering out every actual t-shirt. Only the
+  // unhyphenated spellings ever routed correctly.
+  const words = query.toLowerCase()
+    .replace(/\bt[\s-]+shirts?\b/g, 'tshirt')
+    .replace(/\btank[\s-]+tops?\b/g, 'tank')
+    .replace(/\bpolo[\s-]+shirts?\b/g, 'polo')
+    .replace(/\bsweat[\s-]+shirts?\b/g, 'sweatshirt')
+    .split(/[^a-z0-9]+/).filter(Boolean)
   const wordKey: (string | null)[] = words.map(w => {
     const ws = w.replace(/s$/, '') // tolerate a plural the vocab lists only in singular ("tshirts" → "tshirt")
     for (const [key, entry] of Object.entries(GARMENT_VOCAB)) {
@@ -1021,7 +1032,10 @@ async function groundReplyInProducts(question: string, products: any[], history:
     let out = (msg?.content || '').trim()
     if (!out) return null
     // This pass must never trigger another search/outfit/compare — strip any.
-    out = out.replace(/\[(SEARCH|OUTFIT|COMPARE|WARDROBE):[^\]]*\]/gi, '').replace(/[ \t]{2,}/g, ' ').trim()
+    // OUTFITS? — the multi-outfit token has an S before the colon, so the old
+    // pattern missed it and an [OUTFITS: ...] emitted here (after the parser has
+    // already run) leaked into the chat bubble as literal bracket text.
+    out = out.replace(/\[(SEARCH|OUTFITS?|COMPARE|WARDROBE):[^\]]*\]/gi, '').replace(/[ \t]{2,}/g, ' ').trim()
     return out || null
   } catch (e) {
     console.error('[stylist] grounding pass failed:', e)
@@ -1668,7 +1682,17 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
       for (const attempt of visionAttempts) {
         if (requestDeadline - Date.now() < 18_000) break // reserve time for the text fallback
         try {
-          const out = await withDeadline(attempt.run(), Math.min(requestDeadline - 16_000, Date.now() + 22_000), '')
+          // Capture the rejection BEFORE withDeadline swallows it — it resolves
+          // its fallback instead of rejecting, so the outer catch was unreachable
+          // and visionThrew stayed null forever. That made the rate-limit branch
+          // below dead code: a turn where every provider 429'd returned the
+          // generic "couldn't read the photos" instead of the busy reply the
+          // client keys its retry framing off.
+          const out = await withDeadline(
+            attempt.run().catch((e: unknown) => { visionThrew = e; return '' }),
+            Math.min(requestDeadline - 16_000, Date.now() + 22_000),
+            '',
+          )
           const cleaned = cleanVision(out)
           if (cleaned) { raw = cleaned; visionProvider = attempt.name; break }
         } catch (err) { visionThrew = err }
@@ -1879,6 +1903,10 @@ Use concrete garment, colour, and material words only, never a brand or product 
     let foundProducts: any[] | null = null
     let foundProductGroups: { label: string; products: any[]; query: string }[] | null = null
     let reply2 = reply
+    // A disclosure the shopper must keep seeing (brand not in the roster, nothing
+    // under their budget, search broadened) even if the grounding pass rewrites
+    // the reply around it.
+    let honestyNote = ''
     if (searchQuery) {
       // Real fetch/judge boundaries stream up from inside the search itself, so
       // no generic placeholder line here (see the fast-path call site).
@@ -1989,6 +2017,11 @@ Use concrete garment, colour, and material words only, never a brand or product 
         if (results.length > 0) {
           foundProducts = dedupeById(results).slice(0, INITIAL_RESULT_CAP)
           reply2 = `${reply2}${refineNote}`.trim()
+          // Remember it: the grounding pass replaces reply2 wholesale, which was
+          // silently deleting these disclosures — presenting non-Zara or
+          // over-budget pieces as confident picks with the caveat gone. Honesty
+          // about what we couldn't find must survive the rewrite.
+          honestyNote = refineNote
         }
         // Skip when the search already streamed a "Judging relevance" event
         // (rerank runs only at ≥4 results) to avoid double-reporting the rank.
@@ -2099,7 +2132,12 @@ Use concrete garment, colour, and material words only, never a brand or product 
     const nothingShown = (!foundProducts || foundProducts.length === 0) && !outfitSlots && !outfitGroups && (!foundProductGroups || foundProductGroups.length === 0)
     // Only worth one more search if there's genuine budget left — otherwise fall
     // straight to the honest note below rather than risk a mid-stream kill.
-    if ((searchQuery || (outfitQueries && outfitQueries.length > 0)) && nothingShown && requestDeadline - Date.now() > 6_000) {
+    // rawOutfitSets included: an [OUTFITS:]-only reply has no searchQuery and no
+    // outfitQueries, so the guard never fired for it — the shopper got "here are
+    // three looks for you" with a blank space underneath when the slot searches
+    // came back empty or hit the deadline. That is exactly what this exists to
+    // prevent.
+    if ((searchQuery || (outfitQueries && outfitQueries.length > 0) || (rawOutfitSets && rawOutfitSets.length > 0)) && nothingShown && requestDeadline - Date.now() > 6_000) {
       try {
         const fallbackQ = searchQuery || (outfitQueries && outfitQueries[0]) || question
         send('search', 'Casting a wider net', `catalog.search("${fallbackQ}")`)
@@ -2156,14 +2194,24 @@ Use concrete garment, colour, and material words only, never a brand or product 
     // never for the describe-then-surface fallback above, whose multi-outfit
     // text we must keep intact. Pinned replies reason over real pinned data,
     // small talk has none. Bounded; on any failure keep reply2.
-    if (!!searchQuery && !surfacedFromReply && products.length === 0 && foundProducts && foundProducts.length > 0 && isProductIntent(question)
+    // Also skipped for a MULTI-CATEGORY reply: the rewrite only sees the first 10
+    // of the flattened union, so a 3-garment search (8 each) would hand it all the
+    // shirts, two trousers and zero shoes — and the prompt forbids mentioning
+    // anything not listed. It would confidently discuss one strip while three
+    // render below. The original reply already covers every category.
+    if (!!searchQuery && !surfacedFromReply && !foundProductGroups && products.length === 0 && foundProducts && foundProducts.length > 0 && isProductIntent(question)
         && requestDeadline - Date.now() > 12_000) {
       const grounded = await withDeadline(
         groundReplyInProducts(question, foundProducts, rawHistory),
         Math.min(requestDeadline - 4_000, Date.now() + 16_000),
         null,
       )
-      if (grounded) reply2 = grounded
+      // Re-attach the disclosure the rewrite would otherwise have dropped, unless
+      // the model happened to say it itself.
+      if (grounded) {
+        const note = honestyNote.trim()
+        reply2 = (note && !grounded.includes(note)) ? `${grounded} ${note}`.trim() : grounded
+      }
     }
 
     return finish({ reply: reply2, comparison: comparison ?? null, foundProducts, foundProductGroups, outfitSlots, outfitGroups, searchQuery: searchQuery || undefined })

@@ -1753,6 +1753,11 @@ export default function DiscernApp({
   // local session change pushes here (when signed in); on mount, any remote
   // session this device doesn't have gets pulled in to backfill the sidebar.
   const syncStylistSession = useMutation(api.stylistSessions.upsertStylistSession)
+  // Debounce + dedupe state for the cross-device session push (see the persist
+  // effect) — the write itself is cheap, but each one re-runs the reactive
+  // session-list query against every stored session document.
+  const sessionSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sessionSyncLast  = useRef<string>('')
   const deleteSyncedStylistSession = useMutation(api.stylistSessions.deleteStylistSession)
   const remoteStylistSessions = useQuery(
     api.stylistSessions.listStylistSessions,
@@ -3027,9 +3032,34 @@ export default function DiscernApp({
     // Push to Convex so the same account sees this session on another
     // device — fire-and-forget, never blocks the local (already-persisted)
     // experience if the write fails or the shopper isn't signed in.
+    //
+    // DEBOUNCED + SLIMMED, because this was the single largest consumer of the
+    // Convex I/O budget. It fired on EVERY stylistMsgs change (each message,
+    // each "See more", each product load) and pushed the whole conversation
+    // including base64 photo data URLs — and because the sidebar's session list
+    // is a REACTIVE query, every one of those writes made it re-read all of this
+    // account's session documents in full. Small edit, enormous amplification.
     if (onboardEmail && authProof) {
       const label = stylistHistory.find(h => h.id === id)?.label || toSync[0]?.content?.slice(0, 80) || 'Conversation'
-      syncStylistSession({ userEmail: onboardEmail, sessionId: id, label, messages: JSON.stringify(toSync), authProof }).catch(() => {})
+      // Drop the two fields that dominate the payload and that a cross-device
+      // restore doesn't need: base64 images (megabytes each) and the reasoning
+      // trace. Everything that makes a restored conversation useful — text,
+      // products, outfits, comparisons — is kept. localStorage still holds the
+      // full fidelity copy for this device.
+      const forSync = toSync.map(m => {
+        const { images, trace, ...rest } = m as StylistMsg
+        return rest
+      })
+      const payload = JSON.stringify(forSync)
+      if (sessionSyncTimer.current) clearTimeout(sessionSyncTimer.current)
+      sessionSyncTimer.current = setTimeout(() => {
+        // Skip a re-push of byte-identical content (React can re-run this effect
+        // for unrelated state changes; an identical write still costs a write
+        // AND a full reactive re-read of every session).
+        if (sessionSyncLast.current === payload) return
+        sessionSyncLast.current = payload
+        syncStylistSession({ userEmail: onboardEmail, sessionId: id, label, messages: payload, authProof }).catch(() => {})
+      }, 4000)
     }
   }, [stylistMsgs, authProof])
 
