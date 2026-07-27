@@ -1201,13 +1201,13 @@ export async function POST(req: NextRequest) {
         await runStylistRequest(req, send, finish)
       } catch (e) {
         console.error('[stylist] error:', e)
-        if (isRateLimited(e)) { finish({ reply: BUSY_REPLY, busy: true, comparison: null }); return }
-        finish({ reply: "Something went wrong on my end. Give it another go?", comparison: null })
+        if (isRateLimited(e)) { finish({ reply: BUSY_REPLY, busy: true, retryable: true, comparison: null }); return }
+        finish({ reply: "Something went wrong on my end. Give it another go?", retryable: true, comparison: null })
       }
       // Safety net: every real code path below calls finish() itself, but if
       // one somehow falls through without it, the stream must still close —
       // an open stream with no final line hangs the frontend's reader forever.
-      if (!streamClosed) finish({ reply: "Something went wrong on my end. Give it another go?", comparison: null })
+      if (!streamClosed) finish({ reply: "Something went wrong on my end. Give it another go?", retryable: true, comparison: null })
     },
   })
 
@@ -1739,9 +1739,9 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
           logAiUsage({ path: 'vision', provider: 'all-failed', estPromptTokens: estimateTokens(visionSystemFull + visionPrompt), estCompletionTokensCap: 1100, ok: false })
           console.error('[stylist] vision + text fallback both failed:', visionThrew)
           if (isRateLimited(visionThrew)) {
-            return finish({ reply: BUSY_REPLY, busy: true, comparison: null })
+            return finish({ reply: BUSY_REPLY, busy: true, retryable: true, comparison: null })
           }
-          return finish({ reply: "I couldn't read the photos just now. Tell me the vibe you're going for, or a couple details about the pieces, and I'll style you from there.", comparison: null })
+          return finish({ reply: "I couldn't read the photos just now. Tell me the vibe you're going for, or a couple details about the pieces, and I'll style you from there.", retryable: true, comparison: null })
         }
       }
 
@@ -1861,10 +1861,10 @@ Use concrete garment, colour, and material words only, never a brand or product 
         logAiUsage({ path: heavy ? 'llm-heavy' : 'llm-light', provider: 'openrouter-or-groq', estPromptTokens: estimateTokens(promptTextForEstimate), estCompletionTokensCap: replyMaxTokens, ok: false })
         console.error('[stylist] model call failed:', err)
         if (isRateLimited(err)) {
-          return finish({ reply: BUSY_REPLY, busy: true, comparison: null })
+          return finish({ reply: BUSY_REPLY, busy: true, retryable: true, comparison: null })
         }
         console.error('[stylist] all models failed:', (err as Error).message)
-        return finish({ reply: "Something went wrong. Please try again.", comparison: null })
+        return finish({ reply: "Something went wrong. Please try again.", retryable: true, comparison: null })
       }
 
       // Self-heal: the #1 failure mode is the model describing an outfit/item in
@@ -1901,7 +1901,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
       }
     }
 
-    if (!raw) return finish({ reply: "I missed that one, sorry. Try again?", comparison: null })
+    if (!raw) return finish({ reply: "I missed that one, sorry. Try again?", retryable: true, comparison: null })
 
     const { reply: replyWithSearch, comparison } = parseReply(raw)
     const { reply: replyWithOutfit, searchQuery: rawSearchQuery } = parseSearchToken(replyWithSearch)
@@ -2242,8 +2242,8 @@ Use concrete garment, colour, and material words only, never a brand or product 
   } catch (e) {
     console.error('[stylist] error:', e)
     if (isRateLimited(e)) {
-      return finish({ reply: BUSY_REPLY, busy: true, comparison: null })
+      return finish({ reply: BUSY_REPLY, busy: true, retryable: true, comparison: null })
     }
-    return finish({ reply: "Something went wrong on my end. Give it another go?", comparison: null })
+    return finish({ reply: "Something went wrong on my end. Give it another go?", retryable: true, comparison: null })
   }
 }

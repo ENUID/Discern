@@ -2390,10 +2390,16 @@ export default function DiscernApp({
       // reaching Fabrics" case. Only retries when the first attempt threw or
       // produced no result at all, so a real reply never re-sends (no double
       // AI cost); the progress tracker resets so it doesn't show stale steps.
+      // Up to 3 attempts. Every outcome that triggers a retry produced NO answer
+      // (a stalled provider, an empty generation, all pools momentarily busy), so
+      // re-sending wastes nothing — and each failure puts the offending provider
+      // on cooldown, so the next attempt routes around it. This is what turns
+      // "it failed, I resent it, then it worked" into "it worked the first time".
       let data: any = null
-      for (let attempt = 0; attempt < 2 && !data; attempt++) {
+      const MAX_ATTEMPTS = 3
+      for (let attempt = 0; attempt < MAX_ATTEMPTS && !data; attempt++) {
         if (attempt > 0) {
-          await new Promise(r => setTimeout(r, 700))
+          await new Promise(r => setTimeout(r, 500 * attempt))
           if (stylistSessionId.current !== originSession) return
           capturedPhases.length = 0
           setStylistLoadingPhases([])
@@ -2421,8 +2427,12 @@ export default function DiscernApp({
           // stalled is now on cooldown and gets skipped. Doing it here is what
           // makes the shopper's FIRST send work instead of them having to resend
           // by hand. Only on the first pass, so it can never loop.
-          if (data?.retryable && attempt === 0) {
-            console.warn('[stylist] server reported a retryable timeout, retrying once')
+          // Bound the TOTAL wait, not just the attempt count: a retry is normally
+          // fast (the provider that stalled is on cooldown, so it's skipped), but
+          // if everything is genuinely slow we'd rather show the honest message
+          // than leave the shopper staring at a spinner.
+          if (data?.retryable && attempt < MAX_ATTEMPTS - 1 && Date.now() - requestStartedAt < 60_000) {
+            console.warn(`[stylist] server reported a retryable non-answer (attempt ${attempt + 1}), retrying`)
             data = null
           }
         } catch (e) {
