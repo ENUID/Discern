@@ -2415,6 +2415,16 @@ export default function DiscernApp({
             break
           }
           data = await readStylistStream(res, onProgress)
+          // The server answered, but told us it produced no actual reply (its
+          // model call ran out of time). Re-sending costs nothing — no answer was
+          // generated — and almost always succeeds, because the provider that
+          // stalled is now on cooldown and gets skipped. Doing it here is what
+          // makes the shopper's FIRST send work instead of them having to resend
+          // by hand. Only on the first pass, so it can never loop.
+          if (data?.retryable && attempt === 0) {
+            console.warn('[stylist] server reported a retryable timeout, retrying once')
+            data = null
+          }
         } catch (e) {
           if (attempt === 1) throw e // final attempt failed → outer catch shows the error
           console.warn('[stylist] transient request failure, retrying once:', e)

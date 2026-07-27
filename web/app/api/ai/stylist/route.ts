@@ -564,9 +564,29 @@ async function stylistChat(
     attempts.push({ name: 'nvidia', run: () => nvidiaChat(messages, system, opts) })
   }
 
+  // Per-attempt time cap. THIS is why a first query so often failed with "that
+  // took me too long" and the very same query worked on resend: a single slow
+  // provider could hold the whole request. chatCompletion allows 25s per call
+  // and retries twice with backoff, so one unhealthy provider could burn ~79s
+  // against a ~30s budget for the ENTIRE chain — the fallback never got a turn.
+  // Meanwhile the failure marked that provider on cooldown, so the resend
+  // skipped it instantly and a healthy provider answered. Capping each attempt
+  // makes the FIRST request behave like that resend: a stalled provider is
+  // abandoned quickly and the next one gets its shot inside the same budget.
+  const ATTEMPT_MS = Number(process.env.STYLIST_ATTEMPT_MS ?? 11_000)
+  const attemptTimedOut = Symbol('attempt-timeout')
   for (const a of attempts) {
     try {
-      const result = await a.run()
+      const result = await Promise.race([
+        a.run(),
+        new Promise<typeof attemptTimedOut>(resolve => setTimeout(() => resolve(attemptTimedOut), ATTEMPT_MS)),
+      ])
+      if (result === attemptTimedOut) {
+        // Not an error, just too slow to be worth waiting on — try the next pool.
+        console.error(`[stylist] ${a.name}: attempt exceeded ${ATTEMPT_MS}ms, moving on`)
+        errors.push(`${a.name}: timeout`)
+        continue
+      }
       // Strip visible chain-of-thought leakage — some models in this chain
       // (gpt-oss with reasoning_effort set, or whatever openrouter/free
       // routes to on a given request) can emit a raw <think> block inline
@@ -1829,7 +1849,11 @@ Use concrete garment, colour, and material words only, never a brand or product 
         const msg = await withDeadline(stylistChat(messages, combinedSystem, { max_tokens: replyMaxTokens, temperature: 0.4 }, heavy), chatDeadline, null)
         if (!msg) {
           console.error('[stylist] model call timed out within budget')
-          return finish({ reply: "That one took me too long to think through. Give it another go?", comparison: null })
+          // `retryable` tells the client this produced NO answer, so re-sending
+          // costs nothing and will very likely succeed (the slow provider is now
+          // on cooldown and gets skipped). The client retries once silently, so
+          // the shopper never sees this and never has to resend by hand.
+          return finish({ reply: "That one took me too long to think through. Give it another go?", retryable: true, comparison: null })
         }
         raw = (msg?.content ?? '').trim()
         logAiUsage({ path: heavy ? 'llm-heavy' : 'llm-light', provider: msg.provider, estPromptTokens: estimateTokens(promptTextForEstimate), estCompletionTokensCap: replyMaxTokens, ok: !!raw })
