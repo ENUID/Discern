@@ -208,8 +208,9 @@ export default function DiscernV2({
     <div className="v2-root">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className={`v2-head ${view === 'home' ? '' : 'solid'}`}>
-        <button className="v2-ic" aria-label="Menu" onClick={() => setMenuOpen(true)}>
+        <button className="v2-ic v2-menu-btn" aria-label="Menu" onClick={() => setMenuOpen(true)}>
           <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.4" fill="none"><path d="M3 7h18M3 12h18M3 17h18" /></svg>
+          <em>Menu</em>
         </button>
         <button className="v2-ic" aria-label="History">
           <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.4" fill="none"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 2" /></svg>
@@ -299,15 +300,21 @@ export default function DiscernV2({
                 </div>
 
                 {s.products.length > 0 && (
-                  <div className="v2-mosaic">
-                    {s.products.map((p, i) => (
-                      <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
-                        <button className="v2-tile-btn" onClick={() => openProduct(p)}><img src={p.image} alt={p.title} loading="lazy" /></button>
-                        <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p.id) }} />
-                        <span className="v2-tile-name">{p.title} <i aria-hidden>›</i></span>
-                      </div>
-                    ))}
-                  </div>
+                  <>
+                    {/* Desktop reads as an editorial line above a horizontal
+                        carousel; phone keeps the masonry. Same markup, the
+                        breakpoint swaps the layout. */}
+                    <h3 className="v2-inspired">Get inspired by these creations</h3>
+                    <div className="v2-mosaic">
+                      {s.products.map((p, i) => (
+                        <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
+                          <button className="v2-tile-btn" onClick={() => openProduct(p)}><img src={p.image} alt={p.title} loading="lazy" /></button>
+                          <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p.id) }} />
+                          <span className="v2-tile-name">{p.title} <i aria-hidden>›</i></span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
 
                 {si < sections.length - 1 && (
@@ -846,12 +853,87 @@ export default function DiscernV2({
         @keyframes v2-rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
         @keyframes v2-fade{from{opacity:0}to{opacity:1}}
 
+        .v2-menu-btn em{display:none;}
+        .v2-inspired{display:none;}
+
         @media(min-width:760px){
           :root{--bar:104px;}
           .v2-tray,.v2-cart,.v2-acc,.v2-panel{left:50%;translate:-50% 0;width:min(560px,92vw);}
           .v2-back{left:50%;margin-left:min(-280px,-46vw);}
           .v2-sugs{max-width:560px;margin:0 auto;}
           .v2-bag{padding-left:max(22px,calc(50vw - 280px));padding-right:max(22px,calc(50vw - 280px));}
+        }
+
+        /* ── Desktop / laptop ────────────────────────────────────────────────
+           The reference desktop is a different composition, not the phone
+           stretched: the menu button carries a text label, results become a
+           full-height horizontal carousel under an editorial line, the product
+           page scrolls its imagery sideways, and the legal lines split to
+           opposite corners. */
+        @media(min-width:1024px){
+          :root{--bar:112px;--tray:120px;}
+
+          .v2-head{padding:20px 26px;gap:6px;}
+          .v2-menu-btn{width:auto;gap:9px;padding:0 6px;}
+          .v2-menu-btn em{display:inline;font-style:normal;font-size:11px;letter-spacing:.16em;
+            text-transform:uppercase;}
+          .v2-brand span{font-size:13px;}
+
+          /* Hero: one-line headline, tighter card cluster */
+          .v2-hero-copy h1{font-size:clamp(44px,4.4vw,64px);line-height:1.04;}
+          .v2-hero-copy h1 br{display:none;}
+          .v2-hero-copy p{font-size:15px;}
+          .v2-cards{gap:14px;max-width:640px;margin-left:auto;margin-right:auto;margin-top:120px;}
+          .v2-card{width:26%;}
+          .v2-card.c1{width:31%;}
+          /* Legal lines sit in opposite corners, not stacked centre */
+          .v2-foot{flex-direction:row;justify-content:space-between;padding:0 26px;bottom:26px;font-size:9.5px;}
+
+          /* Results: editorial line + horizontal carousel of full-height cards */
+          .v2-sec{padding-top:clamp(80px,7vw,120px);}
+          .v2-sec h2{font-size:clamp(34px,3.1vw,46px);}
+          .v2-inspired{display:block;font-family:${V2.serif};font-weight:300;font-size:clamp(24px,2.1vw,30px);
+            text-align:center;margin:clamp(56px,5vw,84px) 0 26px;}
+          .v2-mosaic{display:flex;grid-template-columns:none;gap:2px;padding:0 0 8px;
+            overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none;align-items:flex-start;}
+          .v2-mosaic::-webkit-scrollbar{display:none;}
+          .v2-tile{flex:0 0 auto;width:clamp(240px,19vw,300px);scroll-snap-align:start;}
+          .v2-tile img,.v2-tile.tall img{aspect-ratio:3/4;}
+          .v2-tile .v2-heart{bottom:44px;right:11px;}
+          .v2-tile-name{padding:11px 3px 20px;font-size:13px;}
+
+          .v2-sec-hero{max-width:440px;}
+          .v2-editorial p{font-size:clamp(30px,2.6vw,40px);max-width:22ch;}
+
+          /* Product page: imagery scrolls sideways, one screen tall */
+          .v2-pdp{display:flex;height:100svh;overflow-x:auto;overflow-y:hidden;padding:0;
+            scroll-snap-type:x proximity;scrollbar-width:none;}
+          .v2-pdp::-webkit-scrollbar{display:none;}
+          .v2-pdp-img{width:auto;height:100%;flex:0 0 auto;object-fit:cover;scroll-snap-align:center;}
+
+          /* Controls sit left-of-centre over that imagery, larger */
+          .v2-acc{left:26px;right:auto;translate:none;width:auto;}
+          .v2-acc-pill{font-size:11.5px;padding:11px 17px;}
+          .v2-panel{left:26px;right:auto;translate:none;width:min(680px,54vw);max-height:52vh;
+            display:grid;grid-template-columns:1.4fr 1fr;gap:26px;align-items:start;}
+          .v2-panel-head{grid-column:1;}
+          .v2-panel p{grid-column:1;}
+          .v2-sku{grid-column:1;}
+          .v2-nested{grid-column:2;grid-row:1/4;margin-top:0;padding-top:0;border-top:none;
+            border-left:1px dashed ${V2.hairline};padding-left:26px;}
+          .v2-back{left:26px;margin-left:0;top:76px;}
+
+          .v2-cart{left:26px;right:auto;translate:none;width:min(430px,36vw);padding:15px;}
+          .v2-cart-thumb{width:64px;height:82px;}
+          .v2-cart-name{font-size:18px;}
+          .v2-buy{padding:14px 30px;font-size:15px;}
+
+          .v2-tray{left:50%;translate:-50% 0;width:min(620px,54vw);}
+          .v2-bar{max-width:min(560px,44vw);}
+          .v2-lookpage{padding-top:150px;}
+          .v2-rail-item{width:clamp(260px,21vw,320px);}
+          .v2-eyebrow{left:26px;top:150px;}
+          .v2-minibag{right:26px;top:86px;}
         }
       `}</style>
     </div>
