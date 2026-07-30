@@ -37,22 +37,45 @@ async function readStream(res: Response): Promise<any> {
 const img = (p: any): string =>
   p?.media?.[0]?.url || p?.image_url || p?.image || p?.images?.[0] || ''
 
+const opt = (p: any, re: RegExp): string[] =>
+  (Array.isArray(p?.options) ? p.options.find((o: any) => re.test(o?.name ?? ''))?.values ?? [] : [])
+
+/** Colour swatches, resolved against variants so each carries its own image
+ *  and real availability — that's what drives the picker's ring and its
+ *  "Unavailable" state rather than a decorative dot. */
+function toColors(p: any) {
+  const names: string[] = opt(p, /colou?r/i)
+  if (!names.length) return undefined
+  return names.slice(0, 6).map(name => {
+    const v = (p?.variants ?? []).find((vr: any) =>
+      (vr?.options ?? []).some((o: any) => String(o?.label ?? '').toLowerCase() === name.toLowerCase()))
+    return {
+      name,
+      image: v?.media?.[0]?.url || img(p),
+      available: v ? v.availability !== false : true,
+    }
+  })
+}
+
 function toProduct(p: any): V2Product {
+  const media = Array.isArray(p?.media) ? p.media.map((m: any) => m?.url).filter(Boolean) : []
   return {
     id: String(p?.id ?? p?.handle ?? Math.random()),
     title: String(p?.title ?? 'Piece'),
     price: typeof p?.price === 'number' ? p.price : undefined,
     compareAt: typeof p?.compare_at_price === 'number' ? p.compare_at_price : undefined,
-    currency: p?.currency ?? 'USD',
+    currency: p?.currency ?? p?.base_currency ?? 'USD',
     image: img(p),
-    images: Array.isArray(p?.media) ? p.media.map((m: any) => m?.url).filter(Boolean).slice(0, 4) : undefined,
+    images: media.length ? media.slice(0, 5) : undefined,
     vendor: p?.vendor,
+    sku: p?.handle ? String(p.handle).toUpperCase().replace(/-/g, '').slice(0, 18) : undefined,
+    colorName: opt(p, /colou?r/i)[0],
+    colors: toColors(p),
+    sizes: opt(p, /size/i).slice(0, 10),
     description: typeof p?.description === 'string'
-      ? p.description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 480)
+      ? p.description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 520)
       : undefined,
-    sizes: Array.isArray(p?.options)
-      ? (p.options.find((o: any) => /size/i.test(o?.name ?? ''))?.values ?? []).slice(0, 8)
-      : undefined,
+    materials: (p?.tags ?? []).filter((t: string) => /cotton|linen|wool|silk|cashmere|leather|denim|suede|velvet/i.test(t)).join(', ') || undefined,
   }
 }
 

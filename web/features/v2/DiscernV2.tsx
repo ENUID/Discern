@@ -97,6 +97,18 @@ function Ornament({ light, spin }: { light?: boolean; spin?: boolean }) {
   )
 }
 
+/** Images fail quietly and look deliberate. A missing hero or card must read as
+ *  an unphotographed surface, never as a broken tile — so the element keeps its
+ *  geometry and drops to a warm paper wash instead of showing the browser's
+ *  torn-image glyph. This is what lets the whole composition stand up before
+ *  the art has been dropped in. */
+function Img({ src, alt = '', className, ...rest }: React.ImgHTMLAttributes<HTMLImageElement>) {
+  const [failed, setFailed] = useState(!src)
+  useEffect(() => { setFailed(!src) }, [src])
+  if (failed) return <span className={`v2-img-ph ${className ?? ''}`} aria-hidden />
+  return <img src={src} alt={alt} className={className} onError={() => setFailed(true)} {...rest} />
+}
+
 function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: React.MouseEvent) => void; size?: number; ghost?: boolean }) {
   return (
     <button type="button" aria-label={on ? 'Saved' : 'Save'} onClick={onClick}
@@ -169,9 +181,16 @@ export default function DiscernV2({
       const res = onQuery ? await onQuery(q.trim()) : { sections: [], look: undefined }
       setSections(res.sections ?? [])
       if (res.look?.length) { setLook(res.look); setLookOpen(true) }
+    } catch (e) {
+      // A failed lookup still lands on the results view — the empty state says
+      // so plainly, which is calmer than an error dialog over the boutique.
+      console.error('[v2] query failed:', e)
+      setSections([])
+    } finally {
       setView('results')
       scrollRef.current?.scrollTo({ top: 0 })
-    } finally { setLoading(false) }
+      setLoading(false)
+    }
   }, [loading, onQuery])
 
   const submit = () => run(input)
@@ -233,7 +252,7 @@ export default function DiscernV2({
       {cart.length > 0 && view === 'product' && (
         <div className="v2-minibag">
           {cart.slice(-2).map((l, i) => (
-            <button key={i} onClick={() => setBagOpen(true)}><img src={l.product.image} alt="" /></button>
+            <button key={i} onClick={() => setBagOpen(true)}><Img src={l.product.image} /></button>
           ))}
         </div>
       )}
@@ -246,12 +265,12 @@ export default function DiscernV2({
           <>
             <section className="v2-hero">
               <div className="v2-hero-media">
-                {heroIsVideo ? <video src={heroMedia} poster={heroPoster} autoPlay muted loop playsInline /> : <img src={heroMedia} alt="" />}
+                {heroIsVideo ? <video src={heroMedia} poster={heroPoster} autoPlay muted loop playsInline /> : <Img src={heroMedia} />}
                 <div className="v2-veil" />
               </div>
               <div className="v2-cards">
                 {[0, 1, 2].map(i => (
-                  <figure key={i} className={`v2-card c${i}`}><img src={`/v2/card-${i + 1}.jpg`} alt="" /></figure>
+                  <figure key={i} className={`v2-card c${i}`}><Img src={`/v2/card-${i + 1}.jpg`} /></figure>
                 ))}
               </div>
               <div className="v2-hero-copy">
@@ -266,7 +285,7 @@ export default function DiscernV2({
 
             {/* 1b · SECOND HERO — collection statement */}
             <section className="v2-hero v2-hero2">
-              <div className="v2-hero-media"><img src="/v2/hero-2.jpg" alt="" /><div className="v2-veil" /></div>
+              <div className="v2-hero-media"><Img src="/v2/hero-2.jpg" /><div className="v2-veil" /></div>
               <div className="v2-hero-copy">
                 <h1>Let yourself be<br />inspired</h1>
                 <p>Select a suggestion or start prompting</p>
@@ -283,6 +302,13 @@ export default function DiscernV2({
         {/* 2 · RESULTS */}
         {view === 'results' && (
           <section className="v2-results">
+            {sections.length === 0 && (
+              <div className="v2-empty">
+                <Ornament />
+                <h2>Nothing quite right</h2>
+                <p>The boutique didn’t find pieces that genuinely fit that. Try a different colour, fabric or occasion and I’ll look again.</p>
+              </div>
+            )}
             {sections.map((s, si) => (
               <React.Fragment key={si}>
                 <div className="v2-sec">
@@ -290,7 +316,7 @@ export default function DiscernV2({
                   {s.subtitle && <p>{s.subtitle}</p>}
                   {s.hero && (
                     <div className="v2-sec-hero">
-                      <button className="v2-shot" onClick={() => openProduct(s.hero!)}><img src={s.hero.image} alt={s.hero.title} /></button>
+                      <button className="v2-shot" onClick={() => openProduct(s.hero!)}><Img src={s.hero.image} alt={s.hero.title} /></button>
                       <Heart on={saved.has(s.hero.id)} onClick={e => { e.stopPropagation(); toggleSave(s.hero!.id) }} />
                     </div>
                   )}
@@ -308,7 +334,7 @@ export default function DiscernV2({
                     <div className="v2-mosaic">
                       {s.products.map((p, i) => (
                         <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
-                          <button className="v2-tile-btn" onClick={() => openProduct(p)}><img src={p.image} alt={p.title} loading="lazy" /></button>
+                          <button className="v2-tile-btn" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} loading="lazy" /></button>
                           <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p.id) }} />
                           <span className="v2-tile-name">{p.title} <i aria-hidden>›</i></span>
                         </div>
@@ -333,7 +359,7 @@ export default function DiscernV2({
             <div className="v2-rail" ref={lookRailRef}>
               {look.map(p => (
                 <div key={p.id} className="v2-rail-item">
-                  <button className="v2-shot" onClick={() => openProduct(p)}><img src={p.image} alt={p.title} /></button>
+                  <button className="v2-shot" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} /></button>
                   <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p.id) }} />
                   <span className="v2-rail-name">{p.title} <i aria-hidden>›</i></span>
                 </div>
@@ -349,7 +375,7 @@ export default function DiscernV2({
         {/* 3 · PRODUCT */}
         {view === 'product' && product && (
           <section className="v2-pdp">
-            {pdpImages.map((src, i) => <img key={i} className="v2-pdp-img" src={src} alt="" />)}
+            {pdpImages.map((src, i) => <Img key={i} className="v2-pdp-img" src={src} />)}
           </section>
         )}
       </div>
@@ -394,7 +420,7 @@ export default function DiscernV2({
         <div className="v2-tray" style={{ bottom: `calc(var(--bar) + ${kb}px)` }}>
           <div className="v2-tray-row">
             {look.slice(0, 4).map(p => (
-              <button key={p.id} className="v2-chip" onClick={() => openProduct(p)}><img src={p.image} alt={p.title} /></button>
+              <button key={p.id} className="v2-chip" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} /></button>
             ))}
             <Heart on={look.every(p => saved.has(p.id))} ghost onClick={() => look.forEach(p => toggleSave(p.id))} />
           </div>
@@ -452,7 +478,7 @@ export default function DiscernV2({
             {cart.length === 0 && <p className="v2-bag-empty">Nothing here yet.</p>}
             {cart.map((l, i) => (
               <div className="v2-line" key={i}>
-                <img src={l.product.image} alt="" />
+                <Img src={l.product.image} />
                 <div>
                   <span className="v2-line-name">{l.product.title}</span>
                   <span className="v2-line-price">{money(l.product.price, l.product.currency)}</span>
@@ -533,14 +559,14 @@ export default function DiscernV2({
             <div className="v2-swatches">
               {(product.colors ?? []).map(c => (
                 <button key={c.name} className={pickedColor?.name === c.name ? 'on' : ''} onClick={() => setPickedColor(c)}>
-                  <img src={c.image} alt={c.name} />
+                  <Img src={c.image} alt={c.name} />
                 </button>
               ))}
             </div>
           )}
           {!colorMode && !sizeMode && (
             <>
-              <img className="v2-cart-thumb" src={product.image} alt="" />
+              <Img className="v2-cart-thumb" src={product.image} />
               <div className="v2-cart-meta">
                 <span className="v2-cart-name">{product.title}</span>
                 <span className="v2-cart-price">
@@ -855,6 +881,28 @@ export default function DiscernV2({
 
         .v2-menu-btn em{display:none;}
         .v2-inspired{display:none;}
+
+        /* Missing art reads as unphotographed paper, never as a broken tile:
+           it keeps the element's exact geometry so layout never shifts when the
+           real image lands. A faint diagonal grain keeps it from looking like a
+           rendering failure. */
+        .v2-img-ph{display:block;width:100%;height:100%;min-height:inherit;
+          background:
+            repeating-linear-gradient(135deg,rgba(28,27,25,.028) 0 2px,transparent 2px 9px),
+            linear-gradient(160deg,${V2.boneDeep} 0%,#DFDAD2 55%,${V2.boneDeep} 100%);}
+        .v2-hero-media .v2-img-ph{position:absolute;inset:0;
+          background:
+            repeating-linear-gradient(135deg,rgba(255,255,255,.03) 0 2px,transparent 2px 10px),
+            linear-gradient(165deg,#3B3833 0%,#2A2724 48%,#1E1C1A 100%);}
+        .v2-card .v2-img-ph,.v2-shot .v2-img-ph,.v2-tile-btn .v2-img-ph{aspect-ratio:3/4;}
+        .v2-pdp-img.v2-img-ph{aspect-ratio:3/4;}
+        .v2-cart-thumb.v2-img-ph{width:56px;height:72px;border-radius:8px;}
+
+        /* Nothing-found */
+        .v2-empty{padding:clamp(90px,22vw,150px) 26px;text-align:center;display:flex;
+          flex-direction:column;align-items:center;gap:20px;}
+        .v2-empty h2{font-family:${V2.serif};font-weight:300;font-size:clamp(26px,6.6vw,34px);margin:0;}
+        .v2-empty p{font-size:14px;font-weight:300;color:${V2.ink70};margin:0;max-width:30ch;line-height:1.6;}
 
         @media(min-width:760px){
           :root{--bar:104px;}
