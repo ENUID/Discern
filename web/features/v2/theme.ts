@@ -42,6 +42,13 @@ export const V2_PROMPTS = [
   'Something I can wear over a shirt in winter',
 ]
 
+// Tap-to-run suggestions on the "Let yourself be inspired" panel. Full-width
+// pills, left-aligned, stacked above the bar — they seed a query in one tap.
+export const V2_SUGGESTIONS = [
+  "Show me women's soft tailoring pieces in subtle neutrals",
+  'Find accessories to complement a classic blazer',
+]
+
 // Editorial interstitials — the dark full-bleed quote panels between product
 // sections. Kept here so copy can be tuned without touching layout code.
 export const V2_EDITORIAL = [
