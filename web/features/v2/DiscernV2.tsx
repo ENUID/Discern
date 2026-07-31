@@ -173,6 +173,44 @@ export default function DiscernV2({
   const [artwork, setArtwork] = useState<string[]>([])
   const [headHidden, setHeadHidden] = useState(false)
 
+  // ── Focus containment ──────────────────────────────────────────────────────
+  // Opening the bag used to leave the content behind it fully tabbable: Tab
+  // walked through five hidden controls before it ever reached the sheet's own
+  // Close button, then carried on out into the composer. A visual scrim is not
+  // a focus boundary, so the background is marked `inert` while an overlay is
+  // up. Set imperatively — React 18 does not accept `inert` as a prop.
+  //
+  // The header is only inerted for the bag, never for the menu: the menu's
+  // toggle lives in the header and doubles as its close, so inerting it there
+  // would trap the user with no way out.
+  const rootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    // Whitelist by structure rather than by naming the background pieces: the
+    // first attempt listed them and missed two (the scroll hint and the
+    // composer are direct children of the root, not of .v2-scroll), so focus
+    // still escaped. Anything not named here gets inerted.
+    const live = bagOpen ? ['v2-bag', 'v2-bag-ov']
+      : menuOpen ? ['v2-head', 'v2-menu', 'v2-ov']
+      : null
+    const touched: HTMLElement[] = []
+    if (live) {
+      for (const el of Array.from(root.children) as HTMLElement[]) {
+        if (live.some(c => el.classList.contains(c))) continue
+        el.setAttribute('inert', '')
+        touched.push(el)
+      }
+    } else {
+      // With nothing open the menu is still mounted. Its list items already
+      // manage tabIndex, but the mailto link in its footer does not, so it
+      // stayed in the tab order permanently.
+      const menu = root.querySelector('.v2-menu') as HTMLElement | null
+      if (menu) { menu.setAttribute('inert', ''); touched.push(menu) }
+    }
+    return () => touched.forEach(n => n.removeAttribute('inert'))
+  }, [bagOpen, menuOpen])
+
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const lookRailRef = useRef<HTMLDivElement>(null)
@@ -321,7 +359,7 @@ export default function DiscernV2({
   const soldOut = pickedColor ? pickedColor.available === false : false
 
   return (
-    <div className="v2-root" style={{ ...barVar.style }}>
+    <div className="v2-root" ref={rootRef} style={{ ...barVar.style }}>
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className={`v2-head ${view === 'home' ? '' : 'solid'} ${headHidden ? 'up' : ''}`}>
         {/* The trigger stays put and morphs into the close control while the
@@ -806,6 +844,11 @@ export default function DiscernV2({
         .v2-head.solid{color:${V2.ink};background:linear-gradient(to bottom,${V2.bone} 60%,rgba(242,239,234,0));}
         .v2-ic{width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:none;
           border:none;color:inherit;cursor:pointer;position:relative;-webkit-tap-highlight-color:transparent;}
+        /* The circle stays 34px because that is the drawing; the touch target
+           does not. This pseudo-element pads the hit area out to the 44px
+           minimum without moving a pixel of what is on screen. */
+        .v2-ic::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
+          transform:translate(-50%,-50%);}
         .v2-ic:active{transform:scale(.9);}
         .v2-brand{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;pointer-events:none;}
         .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.36em;text-indent:.36em;white-space:nowrap;}
@@ -842,11 +885,17 @@ export default function DiscernV2({
         .v2-card{margin:0;width:28%;aspect-ratio:3/4;overflow:hidden;flex-shrink:0;
           box-shadow:0 18px 44px rgba(0,0,0,.36);animation:v2-float 7s ease-in-out infinite;}
         .v2-card img{width:100%;height:100%;object-fit:cover;display:block;animation:v2-swap 12s ease-in-out infinite;}
-        .v2-card.c0{transform:translateY(14px) rotate(-1.5deg);animation-delay:-1.2s;}
+        /* The outer two mirror each other exactly. They were -1.5deg/+1.7deg at
+           14px/18px, so the right card leaned 0.2deg further and sat 4px lower
+           than the left — a lopsided fan reads as a mistake rather than as a
+           casual stack, because the eye checks a symmetric arrangement against
+           its own centre line. The float animation below still offsets their
+           phase, which is what keeps the deck from looking mechanical. */
+        .v2-card.c0{transform:translateY(16px) rotate(-1.6deg);animation-delay:-1.2s;}
         .v2-card.c0 img{animation-delay:-8s;}
         .v2-card.c1{width:36%;z-index:2;transform:translateY(-12px);}
         .v2-card.c1 img{animation-delay:-4s;}
-        .v2-card.c2{transform:translateY(18px) rotate(1.7deg);animation-delay:-3.6s;}
+        .v2-card.c2{transform:translateY(16px) rotate(1.6deg);animation-delay:-3.6s;}
         @keyframes v2-float{0%,100%{translate:0 0}50%{translate:0 -7px}}
         @keyframes v2-swap{0%,88%{opacity:1}94%{opacity:.35}100%{opacity:1}}
         @media(prefers-reduced-motion:reduce){.v2-card,.v2-card img{animation:none}}
