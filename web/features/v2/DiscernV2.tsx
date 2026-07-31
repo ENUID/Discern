@@ -11,8 +11,9 @@
  *    so the trio is never in phase.
  *  · The look tray is CONTEXTUAL — its four chips are the pieces of whichever
  *    look is currently on screen, and it re-populates as you scroll.
- *  · Expanding MATERIALS / HOW TO STYLE opens a DASHED-outline panel carrying
- *    the description, the SKU and a nested DETAILS accordion.
+ *  · The two PDP pills open DIFFERENT surfaces: MATERIALS a dark frosted card
+ *    (composition, SKU, nested DETAILS), HOW TO STYLE a light card holding a
+ *    grid of pieces that complete the look.
  *  · The cart tray has two shapes: compact (one row: buy + name + price) and
  *    expanded (thumb + meta + colour/size actions).
  *  · Choosing a colour ringed-highlights the swatch and can resolve to
@@ -22,7 +23,7 @@
  *    shipping, subtotal, then PROCEED TO PAYMENT with the redirect notice.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { V2, V2_PROMPTS, V2_EDITORIAL, V2_SUGGESTIONS } from './theme'
+import { V2, V2_PROMPTS, V2_EDITORIAL, V2_SUGGESTIONS, V2_LOADING } from './theme'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export type V2Color = { name: string; code?: string; image: string; available?: boolean }
@@ -81,6 +82,33 @@ function useKeyboardOffset(): number {
     return () => { vv.removeEventListener('resize', check); vv.removeEventListener('scroll', check); document.removeEventListener('focusout', blur) }
   }, [])
   return o
+}
+
+// ── Measured layout vars ─────────────────────────────────────────────────────
+// The bar and the PDP tray both change height with their content (a wrapped
+// query, an expanded colour picker). Everything that floats above them is
+// positioned off --bar/--tray, so those have to be measured rather than
+// guessed — a stale constant parks the accordion pills underneath the tray.
+function useMeasuredVar(name: string, fallback: number) {
+  const [el, setEl] = useState<HTMLElement | null>(null)
+  const [px, setPx] = useState(fallback)
+  useEffect(() => {
+    if (!el) { setPx(fallback); return }
+    // Distance from the element's top edge to the bottom of the viewport, not
+    // its own height — that folds in its bottom margin and safe-area inset, so
+    // anything positioned at this offset clears the whole occupied strip.
+    const measure = () => {
+      const r = el.getBoundingClientRect()
+      const host = el.offsetParent?.getBoundingClientRect().bottom ?? window.innerHeight
+      setPx(Math.max(0, Math.round(host - r.top)))
+    }
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    measure()
+    window.addEventListener('resize', measure)
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
+  }, [el, fallback])
+  return { ref: setEl, style: { [name]: `${px}px` } as React.CSSProperties }
 }
 
 const money = (n?: number, c = 'USD') =>
@@ -142,7 +170,7 @@ export default function DiscernV2({
   const [input, setInput] = useState('')
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [loadingLabel, setLoadingLabel] = useState<'answer' | 'suggestions'>('answer')
+  const [loadPhase, setLoadPhase] = useState(0)
   const [sections, setSections] = useState<V2Section[]>([])
   const [look, setLook] = useState<V2Product[] | null>(null)
   const [lookOpen, setLookOpen] = useState(false)
@@ -151,6 +179,7 @@ export default function DiscernV2({
   const [menuOpen, setMenuOpen] = useState(false)
   const [acc, setAcc] = useState<'materials' | 'style' | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [descOpen, setDescOpen] = useState(true)
   const [showScroll, setShowScroll] = useState(true)
   const [colorMode, setColorMode] = useState(false)
   const [sizeMode, setSizeMode] = useState(false)
@@ -159,6 +188,7 @@ export default function DiscernV2({
   const [adding, setAdding] = useState(false)
   const [cart, setCart] = useState<V2CartLine[]>([])
   const [bagOpen, setBagOpen] = useState(false)
+  const [cardSeed, setCardSeed] = useState(0)
 
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -169,15 +199,48 @@ export default function DiscernV2({
   const barScale = useSpring(barPressed ? .985 : 1, 260, 28)
   const sendScale = useSpring(sendPressed ? .86 : 1, 380, 24)
 
+  const barVar = useMeasuredVar('--bar', 96)
+  const trayVar = useMeasuredVar('--tray', 112)
+
   const canSend = input.trim().length > 0
   const idle = !focused && input.length === 0
   const cartCount = cart.reduce((n, l) => n + l.qty, 0)
   const subtotal = cart.reduce((n, l) => n + (l.product.price ?? 0) * l.qty, 0)
 
+  // DETAILS reads as a short list of construction facts, one per line — split
+  // whatever the catalog gives us on the separators it actually uses.
+  const detailLines = useMemo(() => {
+    const raw = product?.details || product?.materials || ''
+    const parts = raw.split(/\s*[\n•;]\s*|\.\s+(?=[A-Z])/).map(s => s.trim()).filter(Boolean)
+    return parts.length ? parts.slice(0, 8) : ['Made in Italy', 'Specialist clean only']
+  }, [product])
+
+  // The reference leads the MATERIALS panel with the composition in caps.
+  const composition = useMemo(() => {
+    const m = (product?.materials || product?.description || '').match(/\d{1,3}\s*%\s*[A-Za-z][A-Za-z\s]*/g)
+    return m?.length ? m.map(s => s.replace(/\s+/g, ' ').trim()).slice(0, 3).join(', ').toUpperCase() : ''
+  }, [product])
+
+  // Pieces offered under HOW TO STYLE. The current look is the truest answer to
+  // "what finishes this"; failing that, fall back to the rest of the results.
+  const styleWith = useMemo(() => {
+    if (!product) return []
+    const pool = (look?.length ? look : sections.flatMap(s => [...(s.hero ? [s.hero] : []), ...s.products]))
+    return pool.filter(p => p.id !== product.id && p.image).slice(0, 4)
+  }, [product, look, sections])
+
   useEffect(() => {
     const el = taRef.current; if (!el) return
     el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 76) + 'px'
   }, [input, focused])
+
+  // The wait is narrated as a sequence, not one frozen label: the phrases
+  // cross-fade in order for as long as the work takes.
+  useEffect(() => {
+    if (!loading) return
+    const t = setInterval(() => setLoadPhase(n => (n + 1) % V2_LOADING.length), 2100)
+    return () => clearInterval(t)
+  }, [loading])
 
   const toggleSave = useCallback((id: string) => {
     setSaved(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -186,7 +249,7 @@ export default function DiscernV2({
   const run = useCallback(async (q: string) => {
     if (!q.trim() || loading) return
     taRef.current?.blur()
-    setLoadingLabel(Math.random() > .5 ? 'answer' : 'suggestions')
+    setLoadPhase(0)
     setLoading(true); setLookOpen(false)
     try {
       const res = onQuery ? await onQuery(q.trim()) : { sections: [], look: undefined }
@@ -235,12 +298,19 @@ export default function DiscernV2({
   const soldOut = pickedColor ? pickedColor.available === false : false
 
   return (
-    <div className="v2-root">
+    <div className="v2-root" style={{ ...barVar.style, ...trayVar.style }}>
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className={`v2-head ${view === 'home' ? '' : 'solid'}`}>
-        <button className="v2-ic v2-menu-btn" aria-label="Menu" onClick={() => setMenuOpen(true)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.4" fill="none"><path d="M3 7h18M3 12h18M3 17h18" /></svg>
-          <em>Menu</em>
+        {/* The trigger stays put and morphs into the close control while the
+            menu is open, exactly as the reference does — you shut the menu
+            from the button you opened it with. */}
+        <button className={`v2-ic v2-menu-btn ${menuOpen ? 'x' : ''}`}
+          aria-label={menuOpen ? 'Close menu' : 'Menu'} aria-expanded={menuOpen}
+          onClick={() => setMenuOpen(v => !v)}>
+          <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.4" fill="none" aria-hidden>
+            <path className="v2-bun-t" d="M3 7h18" /><path className="v2-bun-m" d="M3 12h18" /><path className="v2-bun-b" d="M3 17h18" />
+          </svg>
+          <em>{menuOpen ? 'Close' : 'Menu'}</em>
         </button>
         <button className="v2-ic" aria-label="History">
           <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.4" fill="none"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 2" /></svg>
@@ -279,24 +349,41 @@ export default function DiscernV2({
                 {heroIsVideo ? <video src={heroMedia} poster={heroPoster} autoPlay muted loop playsInline /> : <Img src={heroMedia} />}
                 <div className="v2-veil" />
               </div>
+              {/* Three cards, unequal, the middle one tallest — and on a wide
+                  screen a pair of arrows sits either side of the trio. */}
               <div className="v2-cards">
+                <button className="v2-cards-nav prev" aria-label="Previous" onClick={() => setCardSeed(n => n - 1)}>‹</button>
                 {[0, 1, 2].map(i => (
-                  <figure key={i} className={`v2-card c${i}`}><Img src={`/v2/card-${i + 1}.jpg`} /></figure>
+                  <figure key={i} className={`v2-card c${i}`}>
+                    <Img src={`/v2/card-${((cardSeed + i) % 3 + 3) % 3 + 1}.jpg`} />
+                  </figure>
                 ))}
+                <button className="v2-cards-nav next" aria-label="Next" onClick={() => setCardSeed(n => n + 1)}>›</button>
               </div>
               <div className="v2-hero-copy">
                 <h1><span>Where ideas become</span> <span>endless possibilities</span></h1>
                 <p>Welcome to the AI Online Boutique</p>
               </div>
-              <div className="v2-foot">
-                <span>©2026 DISCERN — EARLY ACCESS</span>
-                <span>THIS BOUTIQUE RUNS ON DISCERN</span>
+            </section>
+
+            {/* 1b · COLLECTION — the editorial screen between the hero and the
+                prompt panel: title, season line, and one pill into the
+                suggestions. */}
+            <section className="v2-hero v2-hero2">
+              <div className="v2-hero-media"><Img src="/v2/hero-2.jpg" /><div className="v2-veil" /></div>
+              <div className="v2-hero-copy">
+                <h1 className="v2-one"><span>Pages from Landscapes</span></h1>
+                <p>Fall-Winter 2026 Collection</p>
+                <button className="v2-inspire-cta"
+                  onClick={() => scrollRef.current?.scrollBy({ top: window.innerHeight, behavior: 'smooth' })}>
+                  Let yourself be inspired
+                </button>
               </div>
             </section>
 
-            {/* 1b · SECOND HERO — collection statement */}
-            <section className="v2-hero v2-hero2">
-              <div className="v2-hero-media"><Img src="/v2/hero-2.jpg" /><div className="v2-veil" /></div>
+            {/* 1c · INSPIRE — the prompt panel proper */}
+            <section className="v2-hero v2-hero3">
+              <div className="v2-hero-media"><Img src="/v2/hero-3.jpg" /><div className="v2-veil" /></div>
               <div className="v2-hero-copy">
                 <h1><span>Let yourself be</span> <span>inspired</span></h1>
                 <p>Select a suggestion or start prompting</p>
@@ -387,6 +474,45 @@ export default function DiscernV2({
         {view === 'product' && product && (
           <section className="v2-pdp">
             {pdpImages.map((src, i) => <Img key={i} className="v2-pdp-img" src={src} />)}
+
+            {/* After the photographs the page itself carries a dashed-outline
+                card with two independently collapsible rows — description and
+                details. This is in the scroll, not a floating panel; the
+                floating panels belong to the MATERIALS / HOW TO STYLE pills. */}
+            <div className="v2-doc">
+              <button className="v2-doc-row" onClick={() => setDescOpen(v => !v)} aria-expanded={descOpen}>
+                DESCRIPTION <i aria-hidden>{descOpen ? '−' : '+'}</i>
+              </button>
+              {descOpen && (
+                <div className="v2-doc-body">
+                  <p>{product.description || 'A considered piece, cut and finished to last.'}</p>
+                  {product.sku && <span className="v2-doc-sku">SKU: {product.sku}</span>}
+                </div>
+              )}
+              <button className="v2-doc-row" onClick={() => setDetailsOpen(v => !v)} aria-expanded={detailsOpen}>
+                DETAILS <i aria-hidden>{detailsOpen ? '−' : '+'}</i>
+              </button>
+              {detailsOpen && (
+                <ul className="v2-doc-list">
+                  {detailLines.map((l, i) => <li key={i}>{l}</li>)}
+                </ul>
+              )}
+            </div>
+
+            {styleWith.length > 0 && (
+              <div className="v2-other">
+                <div className="v2-eyebrow-in">OTHER SUGGESTIONS</div>
+                <div className="v2-rail">
+                  {styleWith.map(p => (
+                    <div key={p.id} className="v2-rail-item">
+                      <button className="v2-shot" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} /></button>
+                      <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p.id) }} />
+                      <span className="v2-rail-name">{p.title} <i aria-hidden>›</i></span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
         )}
       </div>
@@ -397,27 +523,42 @@ export default function DiscernV2({
       )}
       {view === 'look' && <div className="v2-eyebrow">OTHER SUGGESTIONS</div>}
 
-      {/* Accordion panel — dashed outline, description + SKU + nested DETAILS */}
-      {view === 'product' && product && acc && (
-        <div className="v2-panel" style={{ bottom: `calc(var(--tray) + 62px + ${kb}px)` }}>
+      {/* Expanded accordion panel. The two pills open two different surfaces in
+          the reference, not one shared drawer: MATERIALS lifts a dark frosted
+          card of composition copy, HOW TO STYLE lifts a light card holding a
+          grid of pieces that finish the look. */}
+      {view === 'product' && product && acc === 'materials' && (
+        <div className="v2-panel" style={{ bottom: `calc(var(--tray) + 58px + ${kb}px)` }}>
           <div className="v2-panel-head">
-            <span>{acc === 'materials' ? 'DESCRIPTION' : 'HOW TO STYLE'}</span>
+            <span>MATERIALS</span>
             <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
           </div>
-          <p>{acc === 'materials'
-            ? (product.description || product.materials || 'Composition details are being added for this piece.')
-            : (product.howToStyle || 'Pair it back to tailored trousers and a soft leather shoe.')}</p>
-          {acc === 'materials' && product.sku && <span className="v2-sku">SKU: {product.sku}</span>}
-          {acc === 'materials' && (
-            <div className="v2-nested">
-              <button onClick={() => setDetailsOpen(v => !v)}>DETAILS <i>{detailsOpen ? '−' : '+'}</i></button>
-              {detailsOpen && <p className="v2-nested-body">{product.details || product.materials || 'Made in Italy. Specialist clean.'}</p>}
+          {composition && <span className="v2-comp">{composition}</span>}
+          <p>{product.materials || product.description || 'Composition details are being added for this piece.'}</p>
+        </div>
+      )}
+      {view === 'product' && product && acc === 'style' && (
+        <div className="v2-panel light" style={{ bottom: `calc(var(--tray) + 58px + ${kb}px)` }}>
+          <div className="v2-panel-head">
+            <span>HOW TO STYLE</span>
+            <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
+          </div>
+          {styleWith.length > 0 ? (
+            <div className="v2-style-grid">
+              {styleWith.map(p => (
+                <button key={p.id} className="v2-style-cell" onClick={() => openProduct(p)}>
+                  <Img src={p.image} alt={p.title} />
+                  <i aria-hidden>+</i>
+                </button>
+              ))}
             </div>
+          ) : (
+            <p>{product.howToStyle || 'Pair it back to tailored trousers and a soft leather shoe.'}</p>
           )}
         </div>
       )}
       {view === 'product' && product && (
-        <div className="v2-acc" style={{ bottom: `calc(var(--tray) + ${kb}px)` }}>
+        <div className="v2-acc" style={{ bottom: `calc(var(--tray) + 10px + ${kb}px)` }}>
           {(['materials', 'style'] as const).map(k => (
             <button key={k} className={`v2-acc-pill ${acc === k ? 'on' : ''}`} onClick={() => setAcc(acc === k ? null : k)}>
               {k === 'materials' ? 'MATERIALS' : 'HOW TO STYLE'}<i aria-hidden>{acc === k ? '−' : '+'}</i>
@@ -454,11 +595,20 @@ export default function DiscernV2({
         </button>
       )}
 
-      {/* Loading */}
-      {loading && (
+      {/* Waiting has two shapes in the reference. The first search takes over
+          the screen — there is nothing behind it worth keeping. Every search
+          after that keeps your results on screen and narrates itself with a
+          small pill instead. */}
+      {loading && sections.length > 0 && (
+        <div className="v2-crafting" style={{ bottom: `calc(var(--bar) + 54px + ${kb}px)` }}>
+          <Ornament spin />
+          <span>{V2_LOADING[loadPhase][0]}{V2_LOADING[loadPhase][1]}</span>
+        </div>
+      )}
+      {loading && sections.length === 0 && (
         <div className="v2-loading">
           <Ornament />
-          <h2>{loadingLabel === 'suggestions' ? <>Curating <em>suggestions</em></> : <>Crafting your <em>answer</em></>}</h2>
+          <h2 key={loadPhase}>{V2_LOADING[loadPhase][0]}<em>{V2_LOADING[loadPhase][1]}</em></h2>
           <svg className="v2-sky" viewBox="0 0 400 90" fill="none" stroke={V2.ink45} strokeWidth=".8" aria-hidden>
             <circle cx="52" cy="20" r="7" />
             <path d="M0 78h400M14 78V56h16v22M30 78V44h10v34M40 78V52h22v26M62 78V38h8v40M70 78V58h26v20M96 78V48h18v30M114 78V64h22v14M136 78V42h9v36M145 78V60h30v18M175 78V50h16v28M191 78V66h26v12M217 78V46h10v32M227 78V58h24v20M251 78V54h18v24M269 78V64h28v14M297 78V44h9v34M306 78V60h26v18M332 78V52h16v26M348 78V66h24v12M372 78V56h14v22" />
@@ -470,16 +620,24 @@ export default function DiscernV2({
       {/* Menu */}
       <div className={`v2-ov ${menuOpen ? 'on' : ''}`} onClick={() => setMenuOpen(false)} />
       <nav className={`v2-menu ${menuOpen ? 'on' : ''}`} aria-hidden={!menuOpen}>
-        <button className="v2-menu-x" aria-label="Close" onClick={() => setMenuOpen(false)}>
-          <svg width="15" height="15" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
-        </button>
         <span className="v2-eyebrow-s">Menu</span>
-        <ul>{['New arrivals', 'Women', 'Men', 'Collections', 'The house', 'Contact'].map(x => <li key={x}>{x}</li>)}</ul>
-        <Ornament />
+        <ul>{['New arrivals', 'Women', 'Men', 'Collections', 'The house', 'Contact'].map(x => (
+          <li key={x}><button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); run(x) }}>{x}</button></li>
+        ))}</ul>
+        <div className="v2-menu-meta">
+          <div><span>Journal</span><span>Client care</span></div>
+          <div><a href="mailto:care@discern.com">care@discern.com</a><a href="tel:+18005550110">+1 800 555 0110</a></div>
+        </div>
+        <button className="v2-menu-cta" tabIndex={menuOpen ? 0 : -1}
+          onClick={() => { setMenuOpen(false); run('Book me a styling appointment') }}>
+          <span aria-hidden>↳</span> BOOK AN APPOINTMENT
+        </button>
       </nav>
 
       {/* Bag sheet */}
       {bagOpen && (
+        <>
+        <div className="v2-bag-ov" onClick={() => setBagOpen(false)} />
         <div className="v2-bag">
           <button className="v2-bag-x" aria-label="Close" onClick={() => setBagOpen(false)}>
             <svg width="15" height="15" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
@@ -513,11 +671,12 @@ export default function DiscernV2({
           <button className="v2-pay">PROCEED TO PAYMENT <span aria-hidden>↗</span></button>
           <p className="v2-bag-note">To complete your purchase, you will be redirected to the brand’s own store.</p>
         </div>
+        </>
       )}
 
       {/* ── AI bar ─────────────────────────────────────────────────────────── */}
       {view !== 'product' && (
-        <div className="v2-bar-wrap" style={{ bottom: kb }}>
+        <div className={`v2-bar-wrap ${view === 'home' && !focused ? 'home' : ''}`} ref={barVar.ref} style={{ bottom: kb }}>
           <div style={{ transform: `scale(${barScale})`, transformOrigin: 'center bottom' }}
             onPointerDown={() => setBarPressed(true)} onPointerUp={() => setBarPressed(false)} onPointerLeave={() => setBarPressed(false)}>
             <div className={`v2-bar ${focused ? 'focus' : ''}`}>
@@ -552,9 +711,19 @@ export default function DiscernV2({
         </div>
       )}
 
+      {/* Legal line — the reference parks it at the very bottom of the window,
+          under the bar: centred and stacked on a phone, split to the two
+          corners on a wide screen. */}
+      {view === 'home' && !focused && (
+        <div className="v2-foot">
+          <span>©2026 DISCERN — EARLY ACCESS</span>
+          <span>THIS BOUTIQUE RUNS ON DISCERN</span>
+        </div>
+      )}
+
       {/* ── Cart tray (PDP) ────────────────────────────────────────────────── */}
       {view === 'product' && product && (
-        <div className={`v2-cart ${colorMode || sizeMode ? 'tall' : ''}`} style={{ bottom: kb }}>
+        <div className={`v2-cart ${colorMode || sizeMode ? 'tall' : ''}`} ref={trayVar.ref} style={{ bottom: kb }}>
           {sizeMode && (
             <div className="v2-picker">
               <span className="v2-picker-t">Select your size</span>
@@ -615,7 +784,9 @@ export default function DiscernV2({
         :root{--bar:96px;--tray:112px;}
         .v2-root{position:fixed;inset:0;background:${V2.bone};color:${V2.ink};font-family:${V2.sans};overflow:hidden;}
 
-        .v2-head{position:absolute;top:0;left:0;right:0;z-index:40;display:flex;align-items:center;gap:2px;
+        /* Above the menu scrim (70): the trigger doubles as the close control,
+           so it has to stay reachable while the menu is open. */
+        .v2-head{position:absolute;top:0;left:0;right:0;z-index:72;display:flex;align-items:center;gap:2px;
           padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 12px;color:#fff;
           background:linear-gradient(to bottom,rgba(0,0,0,.36),rgba(0,0,0,0));
           transition:color .45s ${V2.ease},background .45s ${V2.ease};}
@@ -638,13 +809,13 @@ export default function DiscernV2({
         .v2-scroll::-webkit-scrollbar{display:none;}
 
         /* Hero */
-        .v2-hero{position:relative;min-height:100svh;display:flex;flex-direction:column;justify-content:flex-end;
-          padding-bottom:calc(var(--bar) + 108px);}
+        .v2-hero{position:relative;min-height:100svh;display:flex;flex-direction:column;justify-content:center;
+          padding-bottom:calc(var(--bar) + 54px);padding-top:calc(env(safe-area-inset-top,0px) + 74px);}
         .v2-hero-media{position:absolute;inset:0;overflow:hidden;}
         .v2-hero-media img,.v2-hero-media video{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-veil{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(20,17,14,.44) 0%,rgba(20,17,14,.1) 30%,rgba(20,17,14,.56) 76%,rgba(20,17,14,.74) 100%);}
         .v2-cards{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;gap:9px;
-          padding:0 14px;margin-bottom:auto;margin-top:calc(env(safe-area-inset-top,0px) + 92px);}
+          padding:0 14px;margin:0 0 30px;}
         .v2-card{margin:0;width:28%;aspect-ratio:3/4;overflow:hidden;flex-shrink:0;
           box-shadow:0 18px 44px rgba(0,0,0,.36);animation:v2-float 7s ease-in-out infinite;}
         .v2-card img{width:100%;height:100%;object-fit:cover;display:block;animation:v2-swap 12s ease-in-out infinite;}
@@ -661,10 +832,28 @@ export default function DiscernV2({
           margin:0 0 12px;text-shadow:0 2px 26px rgba(0,0,0,.42);}
         .v2-hero-copy h1 span{display:block;}
         .v2-hero-copy p{font-size:14px;font-weight:300;margin:0;opacity:.93;}
-        .v2-foot{position:absolute;left:0;right:0;bottom:calc(var(--bar) + 56px);z-index:2;display:flex;
-          flex-direction:column;gap:3px;align-items:center;color:rgba(255,255,255,.72);
-          font-size:9px;letter-spacing:.09em;text-align:center;padding:0 16px;}
-        .v2-hero2{justify-content:flex-end;}
+        /* Below the bar, hard against the bottom of the window. */
+        .v2-foot{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 5px);z-index:51;
+          display:flex;flex-direction:column;gap:2px;align-items:center;color:rgba(255,255,255,.62);
+          font-size:9px;letter-spacing:.09em;text-align:center;padding:0 16px;pointer-events:none;}
+        .v2-hero2,.v2-hero3{justify-content:flex-end;}
+        .v2-hero3{padding-bottom:calc(var(--bar) + 20px);}
+        .v2-hero2 .v2-hero-copy{margin-bottom:auto;margin-top:auto;}
+        .v2-hero2{padding-bottom:calc(var(--bar) + 54px);}
+        .v2-one span{display:block;}
+        .v2-inspire-cta{margin-top:20px;padding:11px 22px;border:none;border-radius:999px;cursor:pointer;
+          color:#fff;font-size:12.5px;font-weight:300;background:${V2.glassDark};
+          backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+          box-shadow:inset 0 0 0 1px ${V2.glassEdge};transition:background .22s ${V2.ease};}
+        .v2-inspire-cta:hover{background:rgba(255,255,255,.18);}
+        /* Arrows either side of the hero trio — wide screens only. */
+        .v2-cards-nav{display:none;position:absolute;top:50%;translate:0 -50%;z-index:3;
+          width:34px;height:34px;border:none;border-radius:50%;cursor:pointer;color:#fff;font-size:17px;
+          background:rgba(255,255,255,.12);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+          transition:background .2s ${V2.ease};}
+        .v2-cards-nav:hover{background:rgba(255,255,255,.24);}
+        .v2-cards-nav.prev{left:calc(50% - 340px);}
+        .v2-cards-nav.next{right:calc(50% - 340px);}
         .v2-sugs{position:relative;z-index:2;display:flex;flex-direction:column;gap:9px;padding:22px 14px 0;}
         .v2-sug{text-align:left;padding:13px 18px;border:none;border-radius:999px;cursor:pointer;color:#fff;
           font-size:13.5px;font-weight:300;background:${V2.glassDark};
@@ -720,48 +909,78 @@ export default function DiscernV2({
         .v2-pdp{padding-bottom:calc(var(--tray) + 96px);}
         .v2-pdp-img{width:100%;display:block;background:${V2.boneDeep};}
         .v2-back{position:absolute;z-index:45;top:calc(env(safe-area-inset-top,0px) + 56px);left:14px;display:flex;
-          align-items:center;gap:7px;padding:9px 17px 9px 13px;border:none;border-radius:999px;cursor:pointer;
-          font-size:14px;color:${V2.ink};background:${V2.glassLight};
+          align-items:center;gap:6px;padding:7px 14px 7px 11px;border:none;border-radius:999px;cursor:pointer;
+          font-size:12.5px;color:${V2.ink};background:${V2.glassLight};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 3px 16px rgba(0,0,0,.10);}
         .v2-back span{font-size:17px;line-height:1;}
 
-        .v2-acc{position:absolute;z-index:44;left:14px;right:14px;display:flex;gap:9px;}
-        .v2-acc-pill{display:inline-flex;align-items:center;gap:9px;padding:10px 15px;border:none;border-radius:999px;
-          cursor:pointer;font-size:11px;letter-spacing:.11em;font-weight:500;color:#fff;background:${V2.glassDark};
+        .v2-acc{position:absolute;z-index:52;left:14px;right:14px;display:flex;gap:9px;}
+        .v2-acc-pill{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border:none;border-radius:999px;
+          cursor:pointer;font-size:9.5px;letter-spacing:.13em;font-weight:500;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);}
-        .v2-acc-pill i{font-style:normal;font-size:14px;opacity:.85;}
+        .v2-acc-pill i{font-style:normal;font-size:12px;opacity:.85;}
         .v2-acc-pill.on{background:rgba(28,27,25,.85);}
-        .v2-panel{position:absolute;z-index:44;left:14px;right:14px;max-height:44vh;overflow-y:auto;
-          padding:16px 18px;border-radius:6px;background:${V2.bone};border:1px dashed ${V2.ink45};
-          animation:v2-rise .3s ${V2.ease};}
+        .v2-panel{position:absolute;z-index:52;left:14px;right:14px;max-height:44vh;overflow-y:auto;
+          padding:16px 18px;border-radius:18px;color:#fff;background:${V2.glassDark};
+          backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+          box-shadow:0 14px 44px rgba(0,0,0,.3);animation:v2-rise .3s ${V2.ease};}
         .v2-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
-        .v2-panel-head span{font-size:10.5px;letter-spacing:.15em;color:${V2.ink70};}
-        .v2-panel-head button{background:none;border:none;font-size:17px;cursor:pointer;color:${V2.ink70};line-height:1;}
+        .v2-panel-head span{font-size:10.5px;letter-spacing:.15em;opacity:.75;}
+        .v2-panel-head button{background:none;border:none;font-size:17px;cursor:pointer;color:inherit;opacity:.75;line-height:1;}
         .v2-panel p{font-size:13.5px;line-height:1.62;font-weight:300;margin:0;}
-        .v2-sku{display:block;margin-top:14px;font-size:11px;color:${V2.ink45};}
-        .v2-nested{margin-top:16px;padding-top:12px;border-top:1px dashed ${V2.hairline};}
+        /* HOW TO STYLE lifts a light card instead of the dark one. */
+        .v2-panel.light{color:${V2.ink};background:${V2.glassLight};border:1px solid rgba(255,255,255,.5);max-height:38vh;}
+        .v2-style-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+        .v2-style-cell{position:relative;padding:0;border:none;cursor:pointer;background:rgba(255,255,255,.55);
+          aspect-ratio:1/1;overflow:hidden;border-radius:4px;}
+        .v2-style-cell img,.v2-style-cell .v2-img-ph{width:100%;height:100%;object-fit:cover;display:block;}
+        .v2-style-cell i{position:absolute;right:6px;bottom:6px;width:19px;height:19px;border-radius:50%;
+          background:rgba(255,255,255,.9);color:${V2.ink};font-style:normal;font-size:13px;line-height:19px;
+          text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.18);}
+        .v2-sku{display:block;margin-top:14px;font-size:11px;opacity:.6;}
+        .v2-comp{display:block;margin-bottom:8px;font-size:12px;letter-spacing:.06em;}
+
+        /* The quiet, in-place "still working" note for follow-up searches. */
+        .v2-crafting{position:absolute;z-index:45;left:50%;translate:-50% 0;display:flex;align-items:center;gap:9px;
+          padding:8px 15px;border-radius:999px;color:#fff;background:${V2.glassDark};
+          backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+          box-shadow:inset 0 0 0 1px ${V2.glassEdge};font-size:12.5px;font-weight:300;white-space:nowrap;
+          animation:v2-fade .3s ${V2.ease};}
+
+        /* In-flow dashed card at the foot of the product page. */
+        .v2-doc{margin:34px 16px 0;padding:6px 18px 10px;border:1px dashed ${V2.hairline};border-radius:12px;}
+        .v2-doc-row{display:flex;width:100%;justify-content:space-between;align-items:center;background:none;
+          border:none;padding:14px 0;cursor:pointer;color:inherit;font-size:10.5px;letter-spacing:.15em;}
+        .v2-doc-row i{font-style:normal;font-size:15px;opacity:.6;}
+        .v2-doc-body p{margin:0 0 14px;font-size:13.5px;line-height:1.62;font-weight:300;}
+        .v2-doc-sku{display:block;margin-bottom:12px;font-size:11px;color:${V2.ink45};}
+        .v2-doc-list{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:5px;}
+        .v2-doc-list li{font-size:13px;line-height:1.5;font-weight:300;}
+        .v2-other{margin-top:38px;}
+        .v2-eyebrow-in{font-size:10px;letter-spacing:.2em;color:${V2.ink45};text-align:center;margin-bottom:16px;}
+        .v2-nested{margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.16);}
         .v2-nested button{display:flex;width:100%;justify-content:space-between;align-items:center;background:none;
-          border:none;padding:0;cursor:pointer;font-size:10.5px;letter-spacing:.15em;color:${V2.ink70};}
+          border:none;padding:0;cursor:pointer;font-size:10.5px;letter-spacing:.15em;color:inherit;opacity:.75;}
         .v2-nested i{font-style:normal;font-size:15px;}
         .v2-nested-body{margin-top:10px !important;font-size:13px !important;}
 
         /* Trays */
-        .v2-tray{position:absolute;z-index:42;left:12px;right:12px;padding:11px;border-radius:22px;color:#fff;
+        .v2-tray{position:absolute;z-index:42;left:12px;right:12px;padding:9px;border-radius:18px;color:#fff;
           background:${V2.glassDark};backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
           box-shadow:0 14px 44px rgba(0,0,0,.3);animation:v2-rise .4s ${V2.ease};}
         .v2-tray-row{display:flex;gap:8px;}
-        .v2-chip{flex:1;min-width:0;aspect-ratio:3/4;padding:0;border:none;border-radius:9px;overflow:hidden;
+        .v2-chip{flex:1;min-width:0;aspect-ratio:1/1;padding:0;border:none;border-radius:8px;overflow:hidden;
           background:rgba(255,255,255,.1);cursor:pointer;box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-chip img{width:100%;height:100%;object-fit:cover;display:block;}
-        .v2-tray-row .v2-heart.ghost{flex:1;height:auto;aspect-ratio:3/4;border-radius:9px;color:#fff;
+        .v2-tray-row .v2-heart.ghost{flex:1;height:auto;aspect-ratio:1/1;border-radius:8px;color:#fff;
           background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
-        .v2-tray-cta{display:flex;gap:8px;margin-top:10px;align-items:center;}
+        .v2-tray-cta{display:flex;gap:7px;margin-top:8px;align-items:center;}
 
-        .v2-pill{flex:1;min-width:0;padding:12px 10px;border:none;border-radius:999px;cursor:pointer;font-size:13.5px;
+        .v2-pill{flex:1;min-width:0;padding:10px 6px;border:none;border-radius:999px;cursor:pointer;font-size:11.5px;
           color:#fff;background:rgba(255,255,255,.16);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
           transition:background .18s ${V2.ease};}
         .v2-pill:active{background:rgba(255,255,255,.26);}
-        .v2-x{width:40px;height:40px;flex-shrink:0;border:none;border-radius:50%;cursor:pointer;display:flex;
+        .v2-x{width:34px;height:34px;flex-shrink:0;border:none;border-radius:50%;cursor:pointer;display:flex;
           align-items:center;justify-content:center;color:#fff;background:rgba(255,255,255,.16);}
         .v2-heart{border:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;
           color:${V2.ink};background:rgba(255,255,255,.8);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
@@ -773,9 +992,12 @@ export default function DiscernV2({
           background:${V2.glassDark};backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);animation:v2-fade .6s ${V2.ease};}
 
         /* Loading */
-        .v2-loading{position:absolute;inset:0;z-index:60;background:${V2.bone};display:flex;flex-direction:column;
-          align-items:center;justify-content:center;gap:26px;padding:0 24px calc(var(--bar) + 40px);animation:v2-fade .35s ${V2.ease};}
-        .v2-loading h2{font-family:${V2.serif};font-weight:300;font-size:clamp(26px,7vw,34px);margin:0;}
+        .v2-loading{position:absolute;left:0;right:0;top:0;bottom:calc(var(--bar) - 10px);z-index:39;
+          background:${V2.bone};display:flex;flex-direction:column;
+          align-items:center;justify-content:center;gap:26px;padding:0 24px;animation:v2-fade .35s ${V2.ease};}
+        .v2-loading h2{font-family:${V2.serif};font-weight:300;font-size:clamp(26px,7vw,34px);margin:0;
+          animation:v2-phrase .5s ${V2.ease};}
+        @keyframes v2-phrase{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
         .v2-loading h2 em{font-style:italic;}
         .v2-sky{width:min(430px,92vw);opacity:.5;stroke-dasharray:1400;stroke-dashoffset:1400;animation:v2-draw 3.4s ${V2.ease} forwards;}
         @keyframes v2-draw{to{stroke-dashoffset:0}}
@@ -785,21 +1007,48 @@ export default function DiscernV2({
         /* Menu + overlay */
         .v2-ov{position:absolute;inset:0;z-index:70;background:rgba(16,14,12,0);pointer-events:none;transition:background .42s ${V2.ease};}
         .v2-ov.on{background:rgba(16,14,12,.46);pointer-events:auto;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);}
-        .v2-menu{position:absolute;z-index:71;inset:0 auto 0 0;width:min(310px,86%);background:${V2.bone};
-          padding:calc(env(safe-area-inset-top,0px) + 26px) 26px 30px;transform:translateX(-101%);
-          transition:transform .46s ${V2.easeInOut};display:flex;flex-direction:column;gap:24px;
-          box-shadow:14px 0 60px rgba(0,0,0,.16);}
-        .v2-menu.on{transform:none;}
-        .v2-menu-x{align-self:flex-end;width:34px;height:34px;border:none;background:none;color:${V2.ink};cursor:pointer;}
-        .v2-eyebrow-s{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:${V2.ink45};}
-        .v2-menu ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:18px;}
-        .v2-menu li{font-family:${V2.serif};font-size:25px;font-weight:300;cursor:pointer;}
+        /* The menu grows out of the trigger it was opened from rather than
+           sliding in as a slab — origin top-left, scale + fade, one easing. */
+        .v2-menu{position:absolute;z-index:71;left:12px;top:calc(env(safe-area-inset-top,0px) + 52px);
+          width:min(320px,calc(100% - 24px));border-radius:16px;color:#fff;background:${V2.glassDark};
+          backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);
+          border:1px solid ${V2.glassEdge};box-shadow:0 26px 70px rgba(0,0,0,.34);
+          padding:22px 22px 20px;display:flex;flex-direction:column;gap:20px;
+          transform-origin:top left;transform:scale(.9);opacity:0;pointer-events:none;
+          transition:transform .42s ${V2.ease},opacity .3s ${V2.ease};}
+        .v2-menu.on{transform:none;opacity:1;pointer-events:auto;}
+        .v2-eyebrow-s{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;opacity:.55;}
+        .v2-menu ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:11px;}
+        .v2-menu li button{font-family:${V2.serif};font-size:25px;font-weight:300;cursor:pointer;
+          background:none;border:none;padding:0;color:inherit;text-align:left;line-height:1.18;
+          transition:opacity .2s ${V2.ease};}
+        .v2-menu li button:hover{opacity:.62;}
+        .v2-menu-meta{display:flex;justify-content:space-between;gap:18px;padding-top:16px;
+          border-top:1px solid rgba(255,255,255,.16);font-size:12px;}
+        .v2-menu-meta div{display:flex;flex-direction:column;gap:5px;}
+        .v2-menu-meta div:first-child{opacity:.55;}
+        .v2-menu-meta a{color:inherit;text-decoration:none;}
+        .v2-menu-cta{display:flex;align-items:center;gap:10px;justify-content:center;cursor:pointer;
+          padding:14px;border:1px solid rgba(255,255,255,.28);border-radius:2px;background:none;
+          color:#fff;font-size:11px;letter-spacing:.16em;transition:background .24s ${V2.ease};}
+        .v2-menu-cta:hover{background:rgba(255,255,255,.1);}
+        /* Hamburger → ✕ on the trigger itself. */
+        .v2-menu-btn svg path{transition:transform .34s ${V2.ease},opacity .2s ${V2.ease};transform-origin:center;}
+        .v2-menu-btn.x .v2-bun-t{transform:translateY(5px) rotate(45deg);}
+        .v2-menu-btn.x .v2-bun-b{transform:translateY(-5px) rotate(-45deg);}
+        .v2-menu-btn.x .v2-bun-m{opacity:0;}
 
         /* Bag sheet */
-        .v2-bag{position:absolute;inset:0;z-index:80;background:#fff;overflow-y:auto;
-          padding:calc(env(safe-area-inset-top,0px) + 26px) 22px calc(env(safe-area-inset-bottom,0px) + 30px);
-          animation:v2-fade .3s ${V2.ease};}
-        .v2-bag-x{position:absolute;top:calc(env(safe-area-inset-top,0px) + 22px);right:20px;width:32px;height:32px;
+        .v2-bag-ov{position:absolute;inset:0;z-index:79;background:rgba(20,18,16,.34);
+          backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);animation:v2-fade .3s ${V2.ease};}
+        /* Scales up from the centre rather than sliding, and stops short of the
+           edges so the blurred boutique stays visible around it. */
+        .v2-bag{position:absolute;z-index:80;inset:calc(env(safe-area-inset-top,0px) + 54px) 12px
+          calc(env(safe-area-inset-bottom,0px) + 16px);background:#fff;overflow-y:auto;border-radius:16px;
+          padding:26px 22px 30px;box-shadow:0 30px 90px rgba(0,0,0,.4);
+          animation:v2-pop .42s ${V2.ease};transform-origin:center;}
+        @keyframes v2-pop{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:none}}
+        .v2-bag-x{position:absolute;top:22px;right:20px;width:32px;height:32px;
           border:none;background:none;cursor:pointer;color:${V2.ink};}
         .v2-bag h2{font-family:${V2.serif};font-weight:300;font-size:26px;margin:0 0 26px;}
         .v2-bag h2 em{font-style:normal;}
@@ -822,10 +1071,11 @@ export default function DiscernV2({
         .v2-bag-note{font-size:11.5px;line-height:1.5;color:${V2.ink45};text-align:center;margin:14px 0 0;}
 
         /* Bar */
+        .v2-bar-wrap.home{padding-bottom:calc(env(safe-area-inset-bottom,0px) + 38px);}
         .v2-bar-wrap{position:absolute;z-index:50;left:0;right:0;
           padding:14px clamp(12px,3.6vw,18px) calc(env(safe-area-inset-bottom,0px) + 16px);pointer-events:none;}
         .v2-bar-wrap>*{pointer-events:auto;}
-        .v2-bar{display:flex;align-items:flex-end;gap:9px;padding:9px 9px 9px 10px;width:100%;
+        .v2-bar{display:flex;align-items:flex-end;gap:8px;padding:7px 7px 7px 9px;width:100%;
           max-width:min(680px,96vw);margin:0 auto;border-radius:30px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%);
           box-shadow:0 10px 40px rgba(0,0,0,.26),inset 0 1px 0 ${V2.glassEdge};transition:background .3s ${V2.ease};}
@@ -835,7 +1085,7 @@ export default function DiscernV2({
         .v2-plus{width:38px;height:38px;background:rgba(255,255,255,.13);}
         .v2-plus:active{transform:scale(.9);}
         .v2-clear{width:26px;height:26px;margin-bottom:6px;background:rgba(255,255,255,.16);}
-        .v2-send{width:38px;height:38px;background:rgba(255,255,255,.13);}
+        .v2-send{width:33px;height:33px;background:rgba(255,255,255,.13);}
         .v2-send.on{background:#fff;color:${V2.ink};}
         .v2-field{position:relative;flex:1;min-width:0;padding:9px 0 8px;overflow:hidden;}
         .v2-field textarea{width:100%;border:none;background:none;outline:none;resize:none;font-family:${V2.sans};
@@ -843,8 +1093,8 @@ export default function DiscernV2({
         .v2-ph{position:absolute;left:0;top:9px;pointer-events:none;font-size:16px;line-height:1.42;color:rgba(255,255,255,.6);}
         /* Idle prompt drifts continuously, matching the reference ticker. */
         .v2-marquee{position:absolute;left:0;right:0;top:9px;pointer-events:none;overflow:hidden;
-          mask-image:linear-gradient(to right,transparent,#000 6%,#000 88%,transparent);
-          -webkit-mask-image:linear-gradient(to right,transparent,#000 6%,#000 88%,transparent);}
+          mask-image:linear-gradient(to right,transparent,#000 9%,#000 91%,transparent);
+          -webkit-mask-image:linear-gradient(to right,transparent,#000 9%,#000 91%,transparent);}
         .v2-marquee>div{display:flex;gap:44px;width:max-content;animation:v2-drift 44s linear infinite;}
         .v2-marquee span{font-size:16px;line-height:1.42;color:rgba(255,255,255,.6);white-space:nowrap;}
         @keyframes v2-drift{from{transform:translateX(0)}to{transform:translateX(-50%)}}
@@ -859,13 +1109,13 @@ export default function DiscernV2({
         .v2-cart.tall{grid-template-columns:1fr;}
         .v2-cart-thumb{width:56px;height:72px;object-fit:cover;border-radius:8px;display:block;box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-cart-meta{min-width:0;display:flex;flex-direction:column;gap:3px;}
-        .v2-cart-name{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-        .v2-cart-price{font-size:13.5px;display:flex;gap:8px;align-items:baseline;}
-        .v2-cart-price em{font-style:normal;text-decoration:line-through;opacity:.55;font-size:12.5px;}
-        .v2-cart-color{font-size:12.5px;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .v2-cart-name{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .v2-cart-price{font-size:12px;display:flex;gap:8px;align-items:baseline;}
+        .v2-cart-price em{font-style:normal;text-decoration:line-through;opacity:.55;font-size:11px;}
+        .v2-cart-color{font-size:11.5px;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
         .v2-cart-cta{grid-column:1/-1;display:flex;gap:8px;align-items:center;margin-top:2px;}
-        .v2-buy{flex-shrink:0;padding:13px 26px;border:none;border-radius:999px;cursor:pointer;background:#fff;
-          color:${V2.ink};font-size:14.5px;min-width:124px;display:flex;align-items:center;justify-content:center;
+        .v2-buy{flex-shrink:0;padding:11px 16px;border:none;border-radius:999px;cursor:pointer;background:#fff;
+          color:${V2.ink};font-size:12.5px;min-width:92px;display:flex;align-items:center;justify-content:center;
           transition:transform .12s ${V2.ease};}
         .v2-buy:active{transform:scale(.97);}
         .v2-buy.off{background:rgba(255,255,255,.3);color:rgba(255,255,255,.75);cursor:default;}
@@ -884,7 +1134,7 @@ export default function DiscernV2({
         .v2-sizes::-webkit-scrollbar{display:none;}
         .v2-sizes button{flex:0 0 auto;width:44px;height:44px;border-radius:50%;cursor:pointer;font-size:13.5px;
           color:#fff;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);}
-        .v2-sizes button.on{background:#fff;color:${V2.ink};}
+        .v2-sizes button.on{background:transparent;color:#fff;border-color:#fff;box-shadow:0 0 0 1px #fff;}
         .v2-picker-nav{position:absolute;left:2px;bottom:2px;width:30px;height:30px;border-radius:50%;border:none;
           cursor:pointer;color:#fff;background:rgba(255,255,255,.14);font-size:15px;line-height:1;}
 
@@ -921,7 +1171,10 @@ export default function DiscernV2({
           .v2-tray,.v2-cart,.v2-acc,.v2-panel{left:50%;translate:-50% 0;width:min(560px,92vw);}
           .v2-back{left:50%;margin-left:min(-280px,-46vw);}
           .v2-sugs{max-width:560px;margin:0 auto;}
-          .v2-bag{padding-left:max(22px,calc(50vw - 280px));padding-right:max(22px,calc(50vw - 280px));}
+          /* On a wide screen the sheet hugs its contents and centres, instead
+             of stretching into a tall column of empty white. */
+          .v2-bag{left:50%;right:auto;top:50%;bottom:auto;translate:-50% -50%;
+            width:min(560px,92vw);height:auto;max-height:min(78vh,760px);}
         }
 
         /* ── Desktop / laptop ────────────────────────────────────────────────
@@ -947,7 +1200,8 @@ export default function DiscernV2({
           .v2-card{width:172px;}
           .v2-card.c1{width:206px;}
           /* Legal lines sit in opposite corners, not stacked centre */
-          .v2-foot{flex-direction:row;justify-content:space-between;padding:0 26px;bottom:26px;font-size:9.5px;}
+          .v2-foot{flex-direction:row;justify-content:space-between;padding:0 26px;bottom:14px;font-size:9.5px;}
+          .v2-cards-nav{display:block;}
 
           /* Results: editorial line + horizontal carousel of full-height cards */
           .v2-sec{padding-top:clamp(80px,7vw,120px);}
@@ -973,7 +1227,7 @@ export default function DiscernV2({
 
           /* Controls sit left-of-centre over that imagery, larger */
           .v2-acc{left:26px;right:auto;translate:none;width:auto;}
-          .v2-acc-pill{font-size:11.5px;padding:11px 17px;}
+          .v2-acc-pill{font-size:10px;padding:9px 15px;}
           .v2-panel{left:26px;right:auto;translate:none;width:min(680px,54vw);max-height:52vh;
             display:grid;grid-template-columns:1.4fr 1fr;gap:26px;align-items:start;}
           .v2-panel-head{grid-column:1;}

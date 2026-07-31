@@ -42,6 +42,15 @@ export const V2_PROMPTS = [
   'Something I can wear over a shirt in winter',
 ]
 
+// The loading screen cycles these while it works, each with one word set in
+// italic — it is a sequence, not a single label, and it cross-fades.
+export const V2_LOADING = [
+  ['Crafting your ', 'experience'],
+  ['Gathering ', 'inspiration'],
+  ['Curating ', 'suggestions'],
+  ['Crafting your ', 'answer'],
+]
+
 // Tap-to-run suggestions on the "Let yourself be inspired" panel. Full-width
 // pills, left-aligned, stacked above the bar — they seed a query in one tap.
 export const V2_SUGGESTIONS = [
