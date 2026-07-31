@@ -23,7 +23,7 @@
  *    shipping, subtotal, then PROCEED TO PAYMENT with the redirect notice.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { V2, V2_PROMPTS, V2_EDITORIAL, V2_SUGGESTIONS, V2_LOADING } from './theme'
+import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING } from './theme'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export type V2Color = { name: string; code?: string; image: string; available?: boolean }
@@ -65,10 +65,9 @@ function useKeyboardOffset(): number {
 }
 
 // ── Measured layout vars ─────────────────────────────────────────────────────
-// The bar and the PDP tray both change height with their content (a wrapped
-// query, an expanded colour picker). Everything that floats above them is
-// positioned off --bar/--tray, so those have to be measured rather than
-// guessed — a stale constant parks the accordion pills underneath the tray.
+// The bar changes height with its content (a wrapped query), and the look
+// tray and scroll hint sit on top of it, so --bar is measured rather than
+// guessed — a stale constant parks them underneath it.
 function useMeasuredVar(name: string, fallback: number) {
   const [el, setEl] = useState<HTMLElement | null>(null)
   const [px, setPx] = useState(fallback)
@@ -94,14 +93,14 @@ function useMeasuredVar(name: string, fallback: number) {
 const money = (n?: number, c = 'USD') =>
   typeof n === 'number' ? new Intl.NumberFormat('en-US', { style: 'currency', currency: c }).format(n) : ''
 
-// ── Ornament ─────────────────────────────────────────────────────────────────
-function Ornament({ light, spin }: { light?: boolean; spin?: boolean }) {
-  const c = light ? 'rgba(255,255,255,.72)' : V2.ink45
+// ── Progress line ────────────────────────────────────────────────────────────
+// The only decoration on the page, and it is load-bearing: it says work is
+// happening. A hairline that sweeps, nothing more.
+function Progress({ light }: { light?: boolean }) {
   return (
-    <svg className={spin ? 'v2-orn-spin' : ''} width="46" height="10" viewBox="0 0 46 10" fill="none" aria-hidden style={{ display: 'block', margin: '0 auto' }}>
-      <path d="M1 5h13M32 5h13" stroke={c} strokeWidth=".7" />
-      <path d="M18 5c2-3 4-3 5 0s3 3 5 0" stroke={c} strokeWidth=".7" />
-    </svg>
+    <span className={`v2-prog ${light ? 'light' : ''}`} aria-hidden>
+      <i />
+    </span>
   )
 }
 
@@ -177,7 +176,6 @@ export default function DiscernV2({
   const kb = useKeyboardOffset()
 
   const barVar = useMeasuredVar('--bar', 96)
-  const trayVar = useMeasuredVar('--tray', 112)
 
   const canSend = input.trim().length > 0
   const idle = !focused && input.length === 0
@@ -311,7 +309,7 @@ export default function DiscernV2({
   const soldOut = pickedColor ? pickedColor.available === false : false
 
   return (
-    <div className="v2-root" style={{ ...barVar.style, ...trayVar.style }}>
+    <div className="v2-root" style={{ ...barVar.style }}>
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className={`v2-head ${view === 'home' ? '' : 'solid'} ${headHidden ? 'up' : ''}`}>
         {/* The trigger stays put and morphs into the close control while the
@@ -374,8 +372,8 @@ export default function DiscernV2({
                 <button className="v2-cards-nav next" aria-label="Next" onClick={() => setCardSeed(n => n + 1)}>›</button>
               </div>
               <div className="v2-hero-copy">
-                <h1><span>Where ideas become</span> <span>endless possibilities</span></h1>
-                <p>Welcome to the AI Online Boutique</p>
+                <h1><span>Know what</span> <span>to buy.</span></h1>
+                <p>Describe what you want. Get an answer, not a list.</p>
               </div>
             </section>
 
@@ -398,8 +396,8 @@ export default function DiscernV2({
             <section className="v2-hero v2-hero3">
               <div className="v2-hero-media"><Img src="/v2/hero-3.jpg" /><div className="v2-veil" /></div>
               <div className="v2-hero-copy">
-                <h1><span>Let yourself be</span> <span>inspired</span></h1>
-                <p>Select a suggestion or start prompting</p>
+                <h1><span>Start</span> <span>anywhere.</span></h1>
+                <p>Pick one, or ask for something else.</p>
               </div>
               <div className="v2-sugs">
                 {V2_SUGGESTIONS.map(s => (
@@ -414,13 +412,12 @@ export default function DiscernV2({
         {view === 'results' && (
           <section className="v2-results">
             {sections.length > 0 && (
-              <h2 className="v2-intro v2-rise">Discover the creations<br />selected for you</h2>
+              <h2 className="v2-intro v2-rise">Here’s what fits.</h2>
             )}
             {sections.length === 0 && (
               <div className="v2-empty">
-                <Ornament />
-                <h2>Nothing quite right</h2>
-                <p>The boutique didn’t find pieces that genuinely fit that. Try a different colour, fabric or occasion and I’ll look again.</p>
+                <h2>No match</h2>
+                <p>Nothing in the catalogue genuinely fits that. Change the colour, fabric or budget and I’ll look again.</p>
               </div>
             )}
             {sections.map((s, si) => (
@@ -435,7 +432,7 @@ export default function DiscernV2({
                     </div>
                   )}
                   <button className="v2-discover" onClick={() => s.hero && openProduct(s.hero)}>
-                    Discover all {s.title} <span aria-hidden>›</span>
+                    See all {s.title} <span aria-hidden>›</span>
                   </button>
                 </div>
 
@@ -444,7 +441,7 @@ export default function DiscernV2({
                     {/* Desktop reads as an editorial line above a horizontal
                         carousel; phone keeps the masonry. Same markup, the
                         breakpoint swaps the layout. */}
-                    <h3 className="v2-inspired v2-rise">Get inspired by these creations</h3>
+                    <h3 className="v2-inspired v2-rise">More options</h3>
                     <div className="v2-mosaic">
                       {s.products.map((p, i) => (
                         <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
@@ -457,11 +454,6 @@ export default function DiscernV2({
                   </>
                 )}
 
-                {si < sections.length - 1 && (
-                  <div className="v2-editorial v2-rise">
-                    <Ornament light /><p>{V2_EDITORIAL[si % V2_EDITORIAL.length]}</p><Ornament light />
-                  </div>
-                )}
               </React.Fragment>
             ))}
           </section>
@@ -497,16 +489,16 @@ export default function DiscernV2({
                 floating panels belong to the MATERIALS / HOW TO STYLE pills. */}
             <div className="v2-doc">
               <button className="v2-doc-row" onClick={() => setDescOpen(v => !v)} aria-expanded={descOpen}>
-                DESCRIPTION <i aria-hidden>{descOpen ? '−' : '+'}</i>
+                Description <i aria-hidden>{descOpen ? '−' : '+'}</i>
               </button>
               {descOpen && (
                 <div className="v2-doc-body">
-                  <p>{product.description || 'A considered piece, cut and finished to last.'}</p>
+                  <p>{product.description || 'No description supplied for this piece.'}</p>
                   {product.sku && <span className="v2-doc-sku">SKU: {product.sku}</span>}
                 </div>
               )}
               <button className="v2-doc-row" onClick={() => setDetailsOpen(v => !v)} aria-expanded={detailsOpen}>
-                DETAILS <i aria-hidden>{detailsOpen ? '−' : '+'}</i>
+                Details <i aria-hidden>{detailsOpen ? '−' : '+'}</i>
               </button>
               {detailsOpen && (
                 <ul className="v2-doc-list">
@@ -517,7 +509,7 @@ export default function DiscernV2({
 
             {styleWith.length > 0 && (
               <div className="v2-other">
-                <div className="v2-eyebrow-in">OTHER SUGGESTIONS</div>
+                <div className="v2-eyebrow-in">More like this</div>
                 <div className="v2-rail">
                   {styleWith.map(p => (
                     <div key={p.id} className="v2-rail-item">
@@ -537,49 +529,105 @@ export default function DiscernV2({
       {(view === 'product' || view === 'look') && (
         <button className="v2-back" onClick={() => setView('results')}><span aria-hidden>‹</span> Back</button>
       )}
-      {view === 'look' && <div className="v2-eyebrow">OTHER SUGGESTIONS</div>}
+      {view === 'look' && <div className="v2-eyebrow">More like this</div>}
 
-      {/* Expanded accordion panel. The two pills open two different surfaces in
-          the reference, not one shared drawer: MATERIALS lifts a dark frosted
-          card of composition copy, HOW TO STYLE lifts a light card holding a
-          grid of pieces that finish the look. */}
-      {view === 'product' && product && acc === 'materials' && (
-        <div className="v2-panel" style={{ bottom: `calc(var(--tray) + 58px + ${kb}px)` }}>
-          <div className="v2-panel-head">
-            <span>MATERIALS</span>
-            <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
+      {/* Product dock — the panel, the two pills and the buy tray are one
+          column, so they cannot overlap each other whatever their heights
+          turn out to be. */}
+      {view === 'product' && product && (
+        <div className="v2-dock" style={{ bottom: kb }}>
+          {acc === 'materials' && (
+            <div className="v2-panel">
+              <div className="v2-panel-head">
+                <span>Materials</span>
+                <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
+              </div>
+              {composition && <span className="v2-comp">{composition}</span>}
+              <p>{product.materials || product.description || 'Composition details are being added for this piece.'}</p>
+            </div>
+          )}
+          {acc === 'style' && (
+            <div className="v2-panel light">
+              <div className="v2-panel-head">
+                <span>Wear it with</span>
+                <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
+              </div>
+              {styleWith.length > 0 ? (
+                <div className="v2-style-grid">
+                  {styleWith.map(p => (
+                    <button key={p.id} className="v2-style-cell" onClick={() => openProduct(p)}>
+                      <Img src={p.image} alt={p.title} />
+                      <i aria-hidden>+</i>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p>{product.howToStyle || 'Works with straight trousers and a plain leather shoe.'}</p>
+              )}
+            </div>
+          )}
+          <div className="v2-acc">
+            {(['materials', 'style'] as const).map(k => (
+              <button key={k} className={`v2-acc-pill ${acc === k ? 'on' : ''}`} onClick={() => setAcc(acc === k ? null : k)}>
+                {k === 'materials' ? 'Materials' : 'Wear it with'}<i aria-hidden>{acc === k ? '−' : '+'}</i>
+              </button>
+            ))}
           </div>
-          {composition && <span className="v2-comp">{composition}</span>}
-          <p>{product.materials || product.description || 'Composition details are being added for this piece.'}</p>
-        </div>
-      )}
-      {view === 'product' && product && acc === 'style' && (
-        <div className="v2-panel light" style={{ bottom: `calc(var(--tray) + 58px + ${kb}px)` }}>
-          <div className="v2-panel-head">
-            <span>HOW TO STYLE</span>
-            <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
-          </div>
-          {styleWith.length > 0 ? (
-            <div className="v2-style-grid">
-              {styleWith.map(p => (
-                <button key={p.id} className="v2-style-cell" onClick={() => openProduct(p)}>
-                  <Img src={p.image} alt={p.title} />
-                  <i aria-hidden>+</i>
-                </button>
+      <div className={`v2-cart ${colorMode || sizeMode ? 'tall' : ''}`}>
+        {sizeMode && (
+          <div className="v2-picker">
+            <span className="v2-picker-t">Select your size</span>
+            <div className="v2-sizes">
+              {(product.sizes ?? ['44', '46', '48', '50', '52', '54']).map(s => (
+                <button key={s} className={pickedSize === s ? 'on' : ''} onClick={() => { setPickedSize(s); setSizeMode(false) }}>{s}</button>
               ))}
             </div>
-          ) : (
-            <p>{product.howToStyle || 'Pair it back to tailored trousers and a soft leather shoe.'}</p>
-          )}
+            <button className="v2-picker-nav" aria-label="Back" onClick={() => setSizeMode(false)}>‹</button>
+          </div>
+        )}
+        {colorMode && (
+          <div className="v2-swatches">
+            {(product.colors ?? []).map(c => (
+              <button key={c.name} className={pickedColor?.name === c.name ? 'on' : ''} onClick={() => setPickedColor(c)}>
+                <Img src={c.image} alt={c.name} />
+              </button>
+            ))}
+          </div>
+        )}
+        {!colorMode && !sizeMode && (
+          <>
+            <Img className="v2-cart-thumb" src={product.image} />
+            <div className="v2-cart-meta">
+              <span className="v2-cart-name">{product.title}</span>
+              <span className="v2-cart-price">
+                {money(product.price, product.currency)}
+                {product.compareAt ? <em>{money(product.compareAt, product.currency)}</em> : null}
+              </span>
+              <span className="v2-cart-color">
+                {(pickedColor?.name ?? product.colorName) ?? ''}
+                {pickedColor?.code ? ` (${pickedColor.code})` : ''}
+                {product.colors?.length ? ` | ${product.colors.length} colors` : ''}
+                {pickedSize ? ` | Size ${pickedSize}` : ''}
+              </span>
+            </div>
+            <Heart on={saved.has(product.id)} onClick={() => toggleSave(product.id)} />
+          </>
+        )}
+        <div className="v2-cart-cta">
+          <button className={`v2-buy ${soldOut ? 'off' : ''}`} onClick={addToCart} disabled={adding || soldOut}>
+            {soldOut ? 'Unavailable' : adding ? <i className="v2-spin" /> : 'Add to cart'}
+          </button>
+          {product.colors?.length ? (
+            <button className="v2-pill" onClick={() => { setColorMode(v => !v); setSizeMode(false) }}>See all colors</button>
+          ) : null}
+          <button className="v2-pill" onClick={() => { setSizeMode(v => !v); setColorMode(false) }}>
+            {pickedSize ? `Size ${pickedSize}` : 'Select size'}
+          </button>
+          <button className="v2-x" aria-label="Close" onClick={() => setView('results')}>
+            <svg width="13" height="13" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+          </button>
         </div>
-      )}
-      {view === 'product' && product && (
-        <div className="v2-acc" style={{ bottom: `calc(var(--tray) + 10px + ${kb}px)` }}>
-          {(['materials', 'style'] as const).map(k => (
-            <button key={k} className={`v2-acc-pill ${acc === k ? 'on' : ''}`} onClick={() => setAcc(acc === k ? null : k)}>
-              {k === 'materials' ? 'MATERIALS' : 'HOW TO STYLE'}<i aria-hidden>{acc === k ? '−' : '+'}</i>
-            </button>
-          ))}
+      </div>
         </div>
       )}
 
@@ -619,19 +667,14 @@ export default function DiscernV2({
           small pill instead. */}
       {loading && sections.length > 0 && (
         <div className="v2-crafting" style={{ bottom: `calc(var(--bar) + 54px + ${kb}px)` }}>
-          <Ornament spin />
+          <Progress light />
           <span>{V2_LOADING[loadPhase][0]}{V2_LOADING[loadPhase][1]}</span>
         </div>
       )}
       {loading && sections.length === 0 && (
         <div className="v2-loading">
-          <Ornament />
           <h2 key={loadPhase}>{V2_LOADING[loadPhase][0]}<em>{V2_LOADING[loadPhase][1]}</em></h2>
-          <svg className="v2-sky" viewBox="0 0 400 90" fill="none" stroke={V2.ink45} strokeWidth=".8" aria-hidden>
-            <circle cx="52" cy="20" r="7" />
-            <path d="M0 78h400M14 78V56h16v22M30 78V44h10v34M40 78V52h22v26M62 78V38h8v40M70 78V58h26v20M96 78V48h18v30M114 78V64h22v14M136 78V42h9v36M145 78V60h30v18M175 78V50h16v28M191 78V66h26v12M217 78V46h10v32M227 78V58h24v20M251 78V54h18v24M269 78V64h28v14M297 78V44h9v34M306 78V60h26v18M332 78V52h16v26M348 78V66h24v12M372 78V56h14v22" />
-            <path d="M22 56l-4 4h12l-4-4M144 42l-4 5h10l-4-5M301 44l-4 5h10l-4-5" />
-          </svg>
+          <Progress />
         </div>
       )}
 
@@ -639,17 +682,12 @@ export default function DiscernV2({
       <div className={`v2-ov ${menuOpen ? 'on' : ''}`} onClick={() => setMenuOpen(false)} />
       <nav className={`v2-menu ${menuOpen ? 'on' : ''}`} aria-hidden={!menuOpen}>
         <span className="v2-eyebrow-s">Menu</span>
-        <ul>{['New arrivals', 'Women', 'Men', 'Collections', 'The house', 'Contact'].map(x => (
+        <ul>{['New in', 'Women', 'Men', 'Saved', 'Orders', 'Help'].map(x => (
           <li key={x}><button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); run(x) }}>{x}</button></li>
         ))}</ul>
         <div className="v2-menu-meta">
-          <div><span>Journal</span><span>Client care</span></div>
-          <div><a href="mailto:care@discern.com">care@discern.com</a><a href="tel:+18005550110">+1 800 555 0110</a></div>
+          <a href="mailto:help@discern.com">help@discern.com</a>
         </div>
-        <button className="v2-menu-cta" tabIndex={menuOpen ? 0 : -1}
-          onClick={() => { setMenuOpen(false); run('Book me a styling appointment') }}>
-          <span aria-hidden>↳</span> BOOK AN APPOINTMENT
-        </button>
       </nav>
 
       {/* Bag sheet */}
@@ -660,7 +698,7 @@ export default function DiscernV2({
           <button className="v2-bag-x" aria-label="Close" onClick={() => setBagOpen(false)}>
             <svg width="15" height="15" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
           </button>
-          <h2>My selection <em>({cartCount})</em></h2>
+          <h2>Bag <em>({cartCount})</em></h2>
           <div className="v2-bag-list">
             {cart.length === 0 && <p className="v2-bag-empty">Nothing here yet.</p>}
             {cart.map((l, i) => (
@@ -686,8 +724,8 @@ export default function DiscernV2({
             <div><span>Shipping Costs</span><span>FREE</span></div>
             <div><span>Subtotal (tax incl.)</span><span>{money(subtotal)}</span></div>
           </div>
-          <button className="v2-pay">PROCEED TO PAYMENT <span aria-hidden>↗</span></button>
-          <p className="v2-bag-note">To complete your purchase, you will be redirected to the brand’s own store.</p>
+          <button className="v2-pay">Checkout <span aria-hidden>↗</span></button>
+          <p className="v2-bag-note">Checkout happens on the brand’s own store.</p>
         </div>
         </>
       )}
@@ -717,7 +755,7 @@ export default function DiscernV2({
                 </button>
               )}
               <button className={`v2-send ${canSend ? 'on' : ''}`} aria-label="Send" onClick={submit} disabled={loading}>
-                {loading ? <Ornament light spin />
+                {loading ? <Progress light />
                   : <svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"><path d="M12 19V5M5 12l7-7 7 7" /></svg>}
               </button>
             </div>
@@ -730,72 +768,13 @@ export default function DiscernV2({
           corners on a wide screen. */}
       {view === 'home' && (
         <div className={`v2-foot ${focused ? 'off' : ''}`}>
-          <span>©2026 DISCERN — EARLY ACCESS</span>
-          <span>THIS BOUTIQUE RUNS ON DISCERN</span>
-        </div>
-      )}
-
-      {/* ── Cart tray (PDP) ────────────────────────────────────────────────── */}
-      {view === 'product' && product && (
-        <div className={`v2-cart ${colorMode || sizeMode ? 'tall' : ''}`} ref={trayVar.ref} style={{ bottom: kb }}>
-          {sizeMode && (
-            <div className="v2-picker">
-              <span className="v2-picker-t">Select your size</span>
-              <div className="v2-sizes">
-                {(product.sizes ?? ['44', '46', '48', '50', '52', '54']).map(s => (
-                  <button key={s} className={pickedSize === s ? 'on' : ''} onClick={() => { setPickedSize(s); setSizeMode(false) }}>{s}</button>
-                ))}
-              </div>
-              <button className="v2-picker-nav" aria-label="Back" onClick={() => setSizeMode(false)}>‹</button>
-            </div>
-          )}
-          {colorMode && (
-            <div className="v2-swatches">
-              {(product.colors ?? []).map(c => (
-                <button key={c.name} className={pickedColor?.name === c.name ? 'on' : ''} onClick={() => setPickedColor(c)}>
-                  <Img src={c.image} alt={c.name} />
-                </button>
-              ))}
-            </div>
-          )}
-          {!colorMode && !sizeMode && (
-            <>
-              <Img className="v2-cart-thumb" src={product.image} />
-              <div className="v2-cart-meta">
-                <span className="v2-cart-name">{product.title}</span>
-                <span className="v2-cart-price">
-                  {money(product.price, product.currency)}
-                  {product.compareAt ? <em>{money(product.compareAt, product.currency)}</em> : null}
-                </span>
-                <span className="v2-cart-color">
-                  {(pickedColor?.name ?? product.colorName) ?? ''}
-                  {pickedColor?.code ? ` (${pickedColor.code})` : ''}
-                  {product.colors?.length ? ` | ${product.colors.length} colors` : ''}
-                  {pickedSize ? ` | Size ${pickedSize}` : ''}
-                </span>
-              </div>
-              <Heart on={saved.has(product.id)} onClick={() => toggleSave(product.id)} />
-            </>
-          )}
-          <div className="v2-cart-cta">
-            <button className={`v2-buy ${soldOut ? 'off' : ''}`} onClick={addToCart} disabled={adding || soldOut}>
-              {soldOut ? 'Unavailable' : adding ? <i className="v2-spin" /> : 'Add to cart'}
-            </button>
-            {product.colors?.length ? (
-              <button className="v2-pill" onClick={() => { setColorMode(v => !v); setSizeMode(false) }}>See all colors</button>
-            ) : null}
-            <button className="v2-pill" onClick={() => { setSizeMode(v => !v); setColorMode(false) }}>
-              {pickedSize ? `Size ${pickedSize}` : 'Select size'}
-            </button>
-            <button className="v2-x" aria-label="Close" onClick={() => setView('results')}>
-              <svg width="13" height="13" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
-            </button>
-          </div>
+          <span>© 2026 Discern</span>
+          <span>Early access</span>
         </div>
       )}
 
       <style jsx global>{`
-        :root{--bar:96px;--tray:112px;}
+        :root{--bar:96px;}
         .v2-root{position:fixed;inset:0;background:${V2.bone};color:${V2.ink};font-family:${V2.sans};overflow:hidden;}
 
         /* Above the menu scrim (70): the trigger doubles as the close control,
@@ -810,7 +789,7 @@ export default function DiscernV2({
           border:none;color:inherit;cursor:pointer;position:relative;-webkit-tap-highlight-color:transparent;}
         .v2-ic:active{transform:scale(.9);}
         .v2-brand{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;pointer-events:none;}
-        .v2-brand span{font-family:${V2.serif};font-size:12px;letter-spacing:.36em;text-indent:.36em;white-space:nowrap;}
+        .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.36em;text-indent:.36em;white-space:nowrap;}
         .v2-dot{position:absolute;top:6px;right:5px;width:5px;height:5px;border-radius:50%;background:currentColor;}
 
         .v2-minibag{position:absolute;z-index:46;top:calc(env(safe-area-inset-top,0px) + 62px);right:12px;
@@ -829,7 +808,7 @@ export default function DiscernV2({
         .v2-rise{opacity:0;transform:translateY(22px);
           transition:opacity .7s ${V2.ease},transform .7s ${V2.ease};}
         .v2-rise.in{opacity:1;transform:none;}
-        .v2-intro{font-family:${V2.serif};font-weight:300;font-size:clamp(26px,7.4vw,36px);line-height:1.16;
+        .v2-intro{font-family:${V2.display};font-weight:600;font-size:clamp(27px,7.6vw,38px);line-height:1.1;letter-spacing:-.03em;
           text-align:center;margin:0;padding:clamp(74px,20vw,120px) 24px 0;}
         .v2-scroll::-webkit-scrollbar{display:none;}
 
@@ -853,14 +832,14 @@ export default function DiscernV2({
         @keyframes v2-swap{0%,88%{opacity:1}94%{opacity:.35}100%{opacity:1}}
         @media(prefers-reduced-motion:reduce){.v2-card,.v2-card img{animation:none}}
         .v2-hero-copy{position:relative;z-index:2;text-align:center;color:#fff;padding:0 22px;}
-        .v2-hero-copy h1{font-family:${V2.serif};font-weight:300;font-size:clamp(30px,8.6vw,46px);line-height:1.08;
+        .v2-hero-copy h1{font-family:${V2.display};font-weight:600;font-size:clamp(34px,9.4vw,50px);line-height:1.05;letter-spacing:-.035em;
           margin:0 0 12px;text-shadow:0 2px 26px rgba(0,0,0,.42);}
         .v2-hero-copy h1 span{display:block;}
-        .v2-hero-copy p{font-size:14px;font-weight:300;margin:0;opacity:.93;}
+        .v2-hero-copy p{font-size:14px;font-weight:400;margin:0;opacity:.93;}
         /* Below the bar, hard against the bottom of the window. */
         .v2-foot{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 5px);z-index:51;
-          display:flex;flex-direction:column;gap:2px;align-items:center;color:rgba(255,255,255,.62);
-          font-size:9px;letter-spacing:.09em;text-align:center;padding:0 16px;pointer-events:none;
+          display:flex;flex-direction:column;gap:2px;align-items:center;color:rgba(255,255,255,.5);
+          font-size:10.5px;text-align:center;padding:0 16px;pointer-events:none;
           transition:opacity .3s ${V2.ease};}
         .v2-foot.off{opacity:0;}
         .v2-hero2,.v2-hero3{justify-content:flex-end;}
@@ -869,7 +848,7 @@ export default function DiscernV2({
         .v2-hero2{padding-bottom:calc(var(--bar) + 54px);}
         .v2-one span{display:block;}
         .v2-inspire-cta{margin-top:20px;padding:11px 22px;border:none;border-radius:999px;cursor:pointer;
-          color:#fff;font-size:12.5px;font-weight:300;background:${V2.glassDark};
+          color:#fff;font-size:12.5px;font-weight:400;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};transition:background .22s ${V2.ease};}
         .v2-inspire-cta:hover{background:rgba(255,255,255,.18);}
@@ -883,7 +862,7 @@ export default function DiscernV2({
         .v2-cards-nav.next{right:calc(50% - 340px);}
         .v2-sugs{position:relative;z-index:2;display:flex;flex-direction:column;gap:9px;padding:22px 14px 0;}
         .v2-sug{text-align:left;padding:13px 18px;border:none;border-radius:999px;cursor:pointer;color:#fff;
-          font-size:13.5px;font-weight:300;background:${V2.glassDark};
+          font-size:13.5px;font-weight:400;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};transition:background .2s ${V2.ease};}
         .v2-sug:active{background:rgba(255,255,255,.2);}
@@ -891,8 +870,8 @@ export default function DiscernV2({
         /* Results */
         .v2-results{padding-bottom:calc(var(--bar) + 44px);}
         .v2-sec{padding:clamp(60px,15vw,100px) 20px 0;text-align:center;}
-        .v2-sec h2{font-family:${V2.serif};font-weight:300;font-size:clamp(27px,7.4vw,38px);line-height:1.1;margin:0 0 8px;}
-        .v2-sec p{font-size:14px;font-weight:300;color:${V2.ink70};margin:0 0 28px;}
+        .v2-sec h2{font-family:${V2.display};font-weight:600;letter-spacing:-.03em;font-size:clamp(27px,7.4vw,38px);line-height:1.1;margin:0 0 8px;}
+        .v2-sec p{font-size:14px;font-weight:400;color:${V2.ink70};margin:0 0 28px;}
         .v2-sec-hero{position:relative;margin:0 auto;max-width:min(420px,88vw);}
         .v2-shot{display:block;width:100%;padding:0;border:none;background:${V2.boneDeep};cursor:pointer;}
         .v2-shot img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;}
@@ -913,11 +892,6 @@ export default function DiscernV2({
         .v2-tile-name{display:block;padding:9px 5px 16px;font-size:12.5px;text-align:left;}
         .v2-tile-name i{font-style:normal;color:${V2.ink45};}
 
-        .v2-editorial{margin-top:32px;padding:clamp(88px,24vw,150px) 26px;text-align:center;color:#fff;
-          background:linear-gradient(150deg,#2A2E2C 0%,#1D2220 55%,#141817 100%);
-          display:flex;flex-direction:column;gap:28px;align-items:center;}
-        .v2-editorial p{font-family:${V2.serif};font-weight:300;font-size:clamp(23px,6.2vw,31px);line-height:1.28;margin:0;max-width:19ch;}
-
         /* Look page */
         .v2-lookpage{padding:calc(env(safe-area-inset-top,0px) + 108px) 0 calc(var(--bar) + 70px);}
         .v2-rail{display:flex;gap:12px;overflow-x:auto;padding:0 16px;scroll-snap-type:x mandatory;scrollbar-width:none;}
@@ -933,7 +907,7 @@ export default function DiscernV2({
           font-size:10.5px;letter-spacing:.16em;color:${V2.ink70};}
 
         /* PDP */
-        .v2-pdp{padding-bottom:calc(var(--tray) + 96px);}
+        .v2-pdp{padding-bottom:300px;}
         .v2-pdp-img{width:100%;display:block;background:${V2.boneDeep};}
         .v2-back{position:absolute;z-index:45;top:calc(env(safe-area-inset-top,0px) + 56px);left:14px;display:flex;
           align-items:center;gap:6px;padding:7px 14px 7px 11px;border:none;border-radius:999px;cursor:pointer;
@@ -941,20 +915,24 @@ export default function DiscernV2({
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 3px 16px rgba(0,0,0,.10);}
         .v2-back span{font-size:17px;line-height:1;}
 
-        .v2-acc{position:absolute;z-index:52;left:14px;right:14px;display:flex;gap:9px;}
+        /* One column: panel, pills, tray. Nothing here is positioned against
+           anything else, so nothing here can land on top of anything else. */
+        .v2-dock{position:absolute;z-index:52;left:12px;right:12px;display:flex;flex-direction:column;
+          align-items:stretch;gap:10px;margin-bottom:calc(env(safe-area-inset-bottom,0px) + 14px);}
+        .v2-acc{display:flex;gap:9px;}
         .v2-acc-pill{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border:none;border-radius:999px;
-          cursor:pointer;font-size:9.5px;letter-spacing:.13em;font-weight:500;color:#fff;background:${V2.glassDark};
+          cursor:pointer;font-size:11.5px;letter-spacing:0;font-weight:500;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);}
         .v2-acc-pill i{font-style:normal;font-size:12px;opacity:.85;}
         .v2-acc-pill.on{background:rgba(28,27,25,.85);}
-        .v2-panel{position:absolute;z-index:52;left:14px;right:14px;max-height:44vh;overflow-y:auto;
+        .v2-panel{max-height:42vh;overflow-y:auto;
           padding:16px 18px;border-radius:18px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
           box-shadow:0 14px 44px rgba(0,0,0,.3);animation:v2-rise .3s ${V2.ease};}
         .v2-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
-        .v2-panel-head span{font-size:10.5px;letter-spacing:.15em;opacity:.75;}
+        .v2-panel-head span{font-size:11.5px;letter-spacing:0;font-weight:500;opacity:.8;}
         .v2-panel-head button{background:none;border:none;font-size:17px;cursor:pointer;color:inherit;opacity:.75;line-height:1;}
-        .v2-panel p{font-size:13.5px;line-height:1.62;font-weight:300;margin:0;}
+        .v2-panel p{font-size:13.5px;line-height:1.62;font-weight:400;margin:0;}
         /* HOW TO STYLE lifts a light card instead of the dark one. */
         .v2-panel.light{color:${V2.ink};background:${V2.glassLight};border:1px solid rgba(255,255,255,.5);max-height:38vh;}
         .v2-style-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
@@ -971,20 +949,20 @@ export default function DiscernV2({
         .v2-crafting{position:absolute;z-index:45;left:50%;translate:-50% 0;display:flex;align-items:center;gap:9px;
           padding:8px 15px;border-radius:999px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
-          box-shadow:inset 0 0 0 1px ${V2.glassEdge};font-size:12.5px;font-weight:300;white-space:nowrap;
+          box-shadow:inset 0 0 0 1px ${V2.glassEdge};font-size:12.5px;font-weight:400;white-space:nowrap;
           animation:v2-fade .3s ${V2.ease};}
 
         /* In-flow dashed card at the foot of the product page. */
-        .v2-doc{margin:34px 16px 0;padding:6px 18px 10px;border:1px dashed ${V2.hairline};border-radius:12px;}
+        .v2-doc{margin:34px 16px 0;padding:2px 18px 6px;border-top:1px solid ${V2.hairline};border-bottom:1px solid ${V2.hairline};}
         .v2-doc-row{display:flex;width:100%;justify-content:space-between;align-items:center;background:none;
-          border:none;padding:14px 0;cursor:pointer;color:inherit;font-size:10.5px;letter-spacing:.15em;}
+          border:none;padding:15px 0;cursor:pointer;color:inherit;font-size:13px;font-weight:500;}
         .v2-doc-row i{font-style:normal;font-size:15px;opacity:.6;}
-        .v2-doc-body p{margin:0 0 14px;font-size:13.5px;line-height:1.62;font-weight:300;}
+        .v2-doc-body p{margin:0 0 14px;font-size:13.5px;line-height:1.62;font-weight:400;}
         .v2-doc-sku{display:block;margin-bottom:12px;font-size:11px;color:${V2.ink45};}
         .v2-doc-list{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:5px;}
-        .v2-doc-list li{font-size:13px;line-height:1.5;font-weight:300;}
+        .v2-doc-list li{font-size:13px;line-height:1.5;font-weight:400;}
         .v2-other{margin-top:38px;}
-        .v2-eyebrow-in{font-size:10px;letter-spacing:.2em;color:${V2.ink45};text-align:center;margin-bottom:16px;}
+        .v2-eyebrow-in{font-size:12.5px;font-weight:500;color:${V2.ink45};text-align:center;margin-bottom:16px;}
         .v2-nested{margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.16);}
         .v2-nested button{display:flex;width:100%;justify-content:space-between;align-items:center;background:none;
           border:none;padding:0;cursor:pointer;font-size:10.5px;letter-spacing:.15em;color:inherit;opacity:.75;}
@@ -1022,14 +1000,17 @@ export default function DiscernV2({
         .v2-loading{position:absolute;left:0;right:0;top:0;bottom:calc(var(--bar) - 10px);z-index:39;
           background:${V2.bone};display:flex;flex-direction:column;
           align-items:center;justify-content:center;gap:26px;padding:0 24px;animation:v2-fade .35s ${V2.ease};}
-        .v2-loading h2{font-family:${V2.serif};font-weight:300;font-size:clamp(26px,7vw,34px);margin:0;
+        .v2-loading h2{font-family:${V2.display};font-weight:600;font-size:clamp(24px,6.4vw,32px);letter-spacing:-.03em;margin:0;
           animation:v2-phrase .5s ${V2.ease};}
         @keyframes v2-phrase{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-        .v2-loading h2 em{font-style:italic;}
-        .v2-sky{width:min(430px,92vw);opacity:.5;stroke-dasharray:1400;stroke-dashoffset:1400;animation:v2-draw 3.4s ${V2.ease} forwards;}
-        @keyframes v2-draw{to{stroke-dashoffset:0}}
-        .v2-orn-spin{animation:v2-pulse 1.3s ease-in-out infinite;}
-        @keyframes v2-pulse{0%,100%{opacity:.4}50%{opacity:1}}
+        .v2-loading h2 em{font-style:normal;color:${V2.ink45};}
+        .v2-prog{display:block;width:132px;height:2px;border-radius:2px;overflow:hidden;
+          background:rgba(26,26,28,.12);}
+        .v2-prog.light{width:26px;background:rgba(255,255,255,.24);}
+        .v2-prog i{display:block;width:40%;height:100%;border-radius:2px;background:${V2.ink};
+          animation:v2-sweep 1.15s ${V2.easeInOut} infinite;}
+        .v2-prog.light i{background:#fff;}
+        @keyframes v2-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
 
         /* Menu + overlay */
         .v2-ov{position:absolute;inset:0;z-index:70;background:rgba(16,14,12,0);pointer-events:none;transition:background .42s ${V2.ease};}
@@ -1044,9 +1025,9 @@ export default function DiscernV2({
           transform-origin:top left;transform:scale(.9);opacity:0;pointer-events:none;
           transition:transform .42s ${V2.ease},opacity .3s ${V2.ease};}
         .v2-menu.on{transform:none;opacity:1;pointer-events:auto;}
-        .v2-eyebrow-s{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;opacity:.55;}
+        .v2-eyebrow-s{font-size:12px;font-weight:500;opacity:.5;}
         .v2-menu ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:11px;}
-        .v2-menu li button{font-family:${V2.serif};font-size:25px;font-weight:300;cursor:pointer;
+        .v2-menu li button{font-family:${V2.display};font-size:26px;font-weight:500;letter-spacing:-.025em;cursor:pointer;
           background:none;border:none;padding:0;color:inherit;text-align:left;line-height:1.18;
           transition:opacity .2s ${V2.ease};}
         .v2-menu li button:hover{opacity:.62;}
@@ -1077,7 +1058,7 @@ export default function DiscernV2({
         @keyframes v2-pop{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:none}}
         .v2-bag-x{position:absolute;top:22px;right:20px;width:32px;height:32px;
           border:none;background:none;cursor:pointer;color:${V2.ink};}
-        .v2-bag h2{font-family:${V2.serif};font-weight:300;font-size:26px;margin:0 0 26px;}
+        .v2-bag h2{font-family:${V2.display};font-weight:600;font-size:24px;letter-spacing:-.025em;margin:0 0 26px;}
         .v2-bag h2 em{font-style:normal;}
         .v2-bag-empty{font-size:14px;color:${V2.ink45};}
         .v2-line{display:flex;gap:14px;padding-bottom:22px;margin-bottom:22px;}
@@ -1093,8 +1074,8 @@ export default function DiscernV2({
         .v2-remove{width:auto !important;margin-left:8px;text-decoration:underline;font-size:12.5px !important;}
         .v2-bag-sum{border-top:1px solid ${V2.hairline};padding-top:16px;display:flex;flex-direction:column;gap:9px;margin-bottom:22px;}
         .v2-bag-sum div{display:flex;justify-content:space-between;font-size:13.5px;}
-        .v2-pay{width:100%;padding:17px;border:none;border-radius:2px;background:${V2.ink};color:#fff;cursor:pointer;
-          font-size:12px;letter-spacing:.14em;display:flex;align-items:center;justify-content:center;gap:10px;}
+        .v2-pay{width:100%;padding:16px;border:none;border-radius:12px;background:${V2.ink};color:#fff;cursor:pointer;
+          font-size:14px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:10px;}
         .v2-bag-note{font-size:11.5px;line-height:1.5;color:${V2.ink45};text-align:center;margin:14px 0 0;}
 
         /* Bar */
@@ -1138,8 +1119,7 @@ export default function DiscernV2({
         }
 
         /* Cart tray */
-        .v2-cart{position:absolute;z-index:50;left:12px;right:12px;
-          margin-bottom:calc(env(safe-area-inset-bottom,0px) + 14px);display:grid;
+        .v2-cart{display:grid;
           grid-template-columns:auto 1fr auto;gap:11px;align-items:center;padding:12px;border-radius:22px;color:#fff;
           background:${V2.glassDark};backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
           box-shadow:0 14px 44px rgba(0,0,0,.32);animation:v2-rise .42s ${V2.ease};}
@@ -1201,12 +1181,13 @@ export default function DiscernV2({
         /* Nothing-found */
         .v2-empty{padding:clamp(90px,22vw,150px) 26px;text-align:center;display:flex;
           flex-direction:column;align-items:center;gap:20px;}
-        .v2-empty h2{font-family:${V2.serif};font-weight:300;font-size:clamp(26px,6.6vw,34px);margin:0;}
-        .v2-empty p{font-size:14px;font-weight:300;color:${V2.ink70};margin:0;max-width:30ch;line-height:1.6;}
+        .v2-empty h2{font-family:${V2.display};font-weight:600;letter-spacing:-.025em;font-size:clamp(26px,6.6vw,34px);margin:0;}
+        .v2-empty p{font-size:14px;font-weight:400;color:${V2.ink70};margin:0;max-width:30ch;line-height:1.6;}
 
         @media(min-width:760px){
           :root{--bar:104px;}
-          .v2-tray,.v2-cart,.v2-acc,.v2-panel{left:50%;translate:-50% 0;width:min(560px,92vw);}
+          .v2-tray{left:50%;translate:-50% 0;width:min(560px,92vw);}
+          .v2-dock{left:50%;right:auto;translate:-50% 0;width:min(560px,92vw);}
           .v2-back{left:50%;margin-left:min(-280px,-46vw);}
           .v2-sugs{max-width:560px;margin:0 auto;}
           /* On a wide screen the sheet hugs its contents and centres, instead
@@ -1222,7 +1203,7 @@ export default function DiscernV2({
            page scrolls its imagery sideways, and the legal lines split to
            opposite corners. */
         @media(min-width:1024px){
-          :root{--bar:112px;--tray:120px;}
+          :root{--bar:112px;}
 
           .v2-head{padding:20px 26px;gap:6px;}
           .v2-menu-btn{width:auto;gap:9px;padding:0 6px;}
@@ -1244,7 +1225,7 @@ export default function DiscernV2({
           /* Results: editorial line + horizontal carousel of full-height cards */
           .v2-sec{padding-top:clamp(80px,7vw,120px);}
           .v2-sec h2{font-size:clamp(34px,3.1vw,46px);}
-          .v2-inspired{display:block;font-family:${V2.serif};font-weight:300;font-size:clamp(24px,2.1vw,30px);
+          .v2-inspired{display:block;font-family:${V2.display};font-weight:600;letter-spacing:-.02em;font-size:clamp(24px,2.1vw,30px);
             text-align:center;margin:clamp(56px,5vw,84px) 0 26px;}
           .v2-mosaic{display:flex;grid-template-columns:none;gap:2px;padding:0 0 8px;
             overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none;align-items:flex-start;}
@@ -1255,7 +1236,6 @@ export default function DiscernV2({
           .v2-tile-name{padding:11px 3px 20px;font-size:13px;}
 
           .v2-sec-hero{max-width:440px;}
-          .v2-editorial p{font-size:clamp(30px,2.6vw,40px);max-width:22ch;}
 
           /* Product page: imagery scrolls sideways, one screen tall */
           .v2-pdp{display:flex;height:100svh;overflow-x:auto;overflow-y:hidden;padding:0;
@@ -1264,9 +1244,8 @@ export default function DiscernV2({
           .v2-pdp-img{width:auto;height:100%;flex:0 0 auto;object-fit:cover;scroll-snap-align:center;}
 
           /* Controls sit left-of-centre over that imagery, larger */
-          .v2-acc{left:26px;right:auto;translate:none;width:auto;}
-          .v2-acc-pill{font-size:10px;padding:9px 15px;}
-          .v2-panel{left:26px;right:auto;translate:none;width:min(680px,54vw);max-height:52vh;
+          .v2-acc-pill{font-size:12px;padding:9px 15px;}
+          .v2-panel{max-height:52vh;
             display:grid;grid-template-columns:1.4fr 1fr;gap:26px;align-items:start;}
           .v2-panel-head{grid-column:1;}
           .v2-panel p{grid-column:1;}

@@ -1,67 +1,56 @@
 // ── Discern v2 design tokens ─────────────────────────────────────────────────
-// Extracted from the reference clips: a luxury-boutique language built on
-// full-bleed imagery, editorial serif display type, and frosted "glass" pill
-// controls that float over the content rather than sitting in a chrome bar.
-//
-// The palette is deliberately warm-neutral (bone / greige / soft black) rather
-// than the cool grey of v1 — every surface in the reference reads as paper,
-// stone or unbleached linen, never as UI.
+// The register is plain and modern rather than boutique: one clean sans, a lot
+// of air, near-black on off-white, and glass controls that float over content
+// instead of sitting in a chrome bar. Nothing decorative earns its place — if a
+// rule, flourish or line of copy isn't doing work, it isn't here.
 
 export const V2 = {
   // Surfaces
-  bone:      '#F2EFEA',  // primary page background (warm off-white / paper)
-  boneDeep:  '#E8E4DD',  // secondary band, alternating sections
-  ink:       '#1C1B19',  // primary text (soft black, never pure #000)
-  ink70:     'rgba(28,27,25,.70)',
-  ink45:     'rgba(28,27,25,.45)',
-  hairline:  'rgba(28,27,25,.12)',
+  bone:      '#F4F3F1',  // page background — off-white, never pure white
+  boneDeep:  '#E9E7E4',  // secondary band
+  ink:       '#1A1A1C',  // primary text — soft black, never pure #000
+  ink70:     'rgba(26,26,28,.70)',
+  ink45:     'rgba(26,26,28,.45)',
+  hairline:  'rgba(26,26,28,.10)',
 
-  // Frosted controls that float over imagery. Two variants: one for light
-  // backdrops, one for dark/photographic backdrops.
-  glassDark:  'rgba(38,35,32,.55)',
-  glassLight: 'rgba(255,255,255,.62)',
-  glassEdge:  'rgba(255,255,255,.22)',
+  // Frosted controls floating over content. Two variants: one for light
+  // backdrops, one for dark or photographic ones.
+  glassDark:  'rgba(32,32,34,.62)',
+  glassLight: 'rgba(255,255,255,.68)',
+  glassEdge:  'rgba(255,255,255,.20)',
 
-  // Type
-  serif: "'Cormorant Garamond', 'Times New Roman', serif",
-  sans:  "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+  // Type. One family throughout — display sizes get tighter tracking and more
+  // weight rather than a second face.
+  display: "'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif",
+  sans:    "'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif",
 
   // Motion — one shared easing so every transition feels like one system.
   ease:      'cubic-bezier(.22,.61,.36,1)',
   easeInOut: 'cubic-bezier(.65,.05,.36,1)',
 } as const
 
-// Rotating prompt suggestions shown in the search bar when it's idle — the
-// reference cycles these to teach people what the assistant can do.
+// Rotating prompt suggestions shown in the bar when it's idle. These teach what
+// the thing can do, so they're specific requests rather than categories.
 export const V2_PROMPTS = [
-  'Suggest me some looks for a weekend outdoor',
-  "I'm looking for an outfit for an elegant dinner",
-  'Show me what’s new',
-  'Find me an outfit for a movie premiere',
-  'Knitwear',
-  'Something I can wear over a shirt in winter',
+  'A white shirt that isn’t see-through',
+  'Winter coat under $300',
+  'What goes with wide-leg jeans',
+  'Something for a summer wedding',
+  'Black boots I can walk all day in',
+  'A jacket for 10°C and rain',
 ]
 
-// The loading screen cycles these while it works, each with one word set in
-// italic — it is a sequence, not a single label, and it cross-fades.
+// Shown while a search runs. A sequence, not one frozen label — it cross-fades
+// through these for as long as the work takes.
 export const V2_LOADING = [
-  ['Crafting your ', 'experience'],
-  ['Gathering ', 'inspiration'],
-  ['Curating ', 'suggestions'],
-  ['Crafting your ', 'answer'],
+  ['Reading your ', 'request'],
+  ['Searching the ', 'catalogue'],
+  ['Comparing the ', 'options'],
+  ['Almost ', 'there'],
 ]
 
-// Tap-to-run suggestions on the "Let yourself be inspired" panel. Full-width
-// pills, left-aligned, stacked above the bar — they seed a query in one tap.
+// Tap-to-run suggestions on the opening panel. Full-width, left-aligned.
 export const V2_SUGGESTIONS = [
-  "Show me women's soft tailoring pieces in subtle neutrals",
-  'Find accessories to complement a classic blazer',
-]
-
-// Editorial interstitials — the dark full-bleed quote panels between product
-// sections. Kept here so copy can be tuned without touching layout code.
-export const V2_EDITORIAL = [
-  'Between creative instinct and sartorial precision, a vision of contemporary elegance creates new balances of style.',
-  'The intensity of shades resonates through refined textures and the essential lines of every creation.',
-  'Where ideas become endless possibilities.',
+  'Build me a capsule wardrobe for work',
+  'Find an everyday bag under $200',
 ]
