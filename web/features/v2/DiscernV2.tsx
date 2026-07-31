@@ -50,26 +50,6 @@ export type V2CartLine = { product: V2Product; color?: string; size?: string; qt
 
 type View = 'home' | 'results' | 'product' | 'look'
 
-// ── Spring ───────────────────────────────────────────────────────────────────
-function useSpring(target: number, stiffness = 220, damping = 26): number {
-  const pos = useRef(target); const vel = useRef(0)
-  const raf = useRef<number | null>(null)
-  const [value, set] = useState(target)
-  useEffect(() => {
-    const tick = () => {
-      const d = pos.current - target
-      vel.current += (-stiffness * d - damping * vel.current) / 60
-      pos.current += vel.current / 60
-      set(pos.current)
-      if (Math.abs(d) > 5e-4 || Math.abs(vel.current) > 5e-4) raf.current = requestAnimationFrame(tick)
-    }
-    if (raf.current) cancelAnimationFrame(raf.current)
-    raf.current = requestAnimationFrame(tick)
-    return () => { if (raf.current) cancelAnimationFrame(raf.current) }
-  }, [target, stiffness, damping])
-  return value
-}
-
 // ── Keyboard offset ──────────────────────────────────────────────────────────
 function useKeyboardOffset(): number {
   const [o, setO] = useState(0)
@@ -189,15 +169,12 @@ export default function DiscernV2({
   const [cart, setCart] = useState<V2CartLine[]>([])
   const [bagOpen, setBagOpen] = useState(false)
   const [cardSeed, setCardSeed] = useState(0)
+  const [headHidden, setHeadHidden] = useState(false)
 
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const lookRailRef = useRef<HTMLDivElement>(null)
   const kb = useKeyboardOffset()
-  const [barPressed, setBarPressed] = useState(false)
-  const [sendPressed, setSendPressed] = useState(false)
-  const barScale = useSpring(barPressed ? .985 : 1, 260, 28)
-  const sendScale = useSpring(sendPressed ? .86 : 1, 380, 24)
 
   const barVar = useMeasuredVar('--bar', 96)
   const trayVar = useMeasuredVar('--tray', 112)
@@ -241,6 +218,42 @@ export default function DiscernV2({
     const t = setInterval(() => setLoadPhase(n => (n + 1) % V2_LOADING.length), 2100)
     return () => clearInterval(t)
   }, [loading])
+
+  // The chrome gets out of the way as you read down and comes back the moment
+  // you head up again — the same behaviour the clips show.
+  const lastY = useRef(0)
+  const onScroll = useCallback(() => {
+    const y = scrollRef.current?.scrollTop ?? 0
+    setShowScroll(y < 40)
+    const dy = y - lastY.current
+    if (Math.abs(dy) > 6) {
+      setHeadHidden(y > 90 && dy > 0)
+      lastY.current = y
+    }
+  }, [])
+
+  // Sections arrive rather than appear: each one fades and lifts into place the
+  // first time it comes into view, then stays put.
+  useEffect(() => {
+    const root = scrollRef.current
+    if (!root || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      entries => entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target) } }),
+      // No inset on the bottom edge: with one, anything that comes to rest
+      // inside that band at full scroll would never reveal and would sit at
+      // zero opacity for good. Entering the viewport at all is the trigger.
+      { root, rootMargin: '0px', threshold: 0.01 },
+    )
+    root.querySelectorAll<HTMLElement>('.v2-rise:not(.in)').forEach(el => {
+      // A zero-size element (one hidden at this breakpoint) can never
+      // intersect, so observing it would strand it at zero opacity if the
+      // viewport later widened and revealed it. Nothing to animate — mark it
+      // arrived and move on.
+      if (!el.offsetWidth && !el.offsetHeight) el.classList.add('in')
+      else io.observe(el)
+    })
+    return () => io.disconnect()
+  }, [sections, view])
 
   const toggleSave = useCallback((id: string) => {
     setSaved(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -300,7 +313,7 @@ export default function DiscernV2({
   return (
     <div className="v2-root" style={{ ...barVar.style, ...trayVar.style }}>
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <header className={`v2-head ${view === 'home' ? '' : 'solid'}`}>
+      <header className={`v2-head ${view === 'home' ? '' : 'solid'} ${headHidden ? 'up' : ''}`}>
         {/* The trigger stays put and morphs into the close control while the
             menu is open, exactly as the reference does — you shut the menu
             from the button you opened it with. */}
@@ -339,7 +352,7 @@ export default function DiscernV2({
       )}
 
       {/* ── Scroller ───────────────────────────────────────────────────────── */}
-      <div className="v2-scroll" ref={scrollRef} onScroll={() => setShowScroll((scrollRef.current?.scrollTop ?? 0) < 40)}>
+      <div className="v2-scroll" ref={scrollRef} onScroll={onScroll}>
 
         {/* 1 · HERO */}
         {view === 'home' && (
@@ -400,6 +413,9 @@ export default function DiscernV2({
         {/* 2 · RESULTS */}
         {view === 'results' && (
           <section className="v2-results">
+            {sections.length > 0 && (
+              <h2 className="v2-intro v2-rise">Discover the creations<br />selected for you</h2>
+            )}
             {sections.length === 0 && (
               <div className="v2-empty">
                 <Ornament />
@@ -409,7 +425,7 @@ export default function DiscernV2({
             )}
             {sections.map((s, si) => (
               <React.Fragment key={si}>
-                <div className="v2-sec">
+                <div className="v2-sec v2-rise">
                   <h2>{s.title}</h2>
                   {s.subtitle && <p>{s.subtitle}</p>}
                   {s.hero && (
@@ -428,7 +444,7 @@ export default function DiscernV2({
                     {/* Desktop reads as an editorial line above a horizontal
                         carousel; phone keeps the masonry. Same markup, the
                         breakpoint swaps the layout. */}
-                    <h3 className="v2-inspired">Get inspired by these creations</h3>
+                    <h3 className="v2-inspired v2-rise">Get inspired by these creations</h3>
                     <div className="v2-mosaic">
                       {s.products.map((p, i) => (
                         <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
@@ -442,7 +458,7 @@ export default function DiscernV2({
                 )}
 
                 {si < sections.length - 1 && (
-                  <div className="v2-editorial">
+                  <div className="v2-editorial v2-rise">
                     <Ornament light /><p>{V2_EDITORIAL[si % V2_EDITORIAL.length]}</p><Ornament light />
                   </div>
                 )}
@@ -570,18 +586,20 @@ export default function DiscernV2({
       {/* Look tray */}
       {lookOpen && look && look.length > 0 && view === 'results' && (
         <div className="v2-tray" style={{ bottom: `calc(var(--bar) + ${kb}px)` }}>
-          <div className="v2-tray-row">
+          {!focused && <div className="v2-tray-row">
             {look.slice(0, 4).map(p => (
               <button key={p.id} className="v2-chip" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} /></button>
             ))}
             <Heart on={look.every(p => saved.has(p.id))} ghost onClick={() => look.forEach(p => toggleSave(p.id))} />
-          </div>
+          </div>}
           <div className="v2-tray-cta">
             <button className="v2-pill" onClick={() => { setView('look'); scrollRef.current?.scrollTo({ top: 0 }) }}>Discover the look</button>
             <button className="v2-pill" onClick={() => run('Other suggestions like these')}>Other suggestions</button>
-            <button className="v2-x" aria-label="Dismiss" onClick={() => setLookOpen(false)}>
-              <svg width="13" height="13" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
-            </button>
+            {!focused && (
+              <button className="v2-x" aria-label="Dismiss" onClick={() => setLookOpen(false)}>
+                <svg width="13" height="13" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -676,9 +694,8 @@ export default function DiscernV2({
 
       {/* ── AI bar ─────────────────────────────────────────────────────────── */}
       {view !== 'product' && (
-        <div className={`v2-bar-wrap ${view === 'home' && !focused ? 'home' : ''}`} ref={barVar.ref} style={{ bottom: kb }}>
-          <div style={{ transform: `scale(${barScale})`, transformOrigin: 'center bottom' }}
-            onPointerDown={() => setBarPressed(true)} onPointerUp={() => setBarPressed(false)} onPointerLeave={() => setBarPressed(false)}>
+        <div className={`v2-bar-wrap ${view === 'home' ? 'home' : ''}`} ref={barVar.ref} style={{ bottom: kb }}>
+          <div className="v2-bar-press">
             <div className={`v2-bar ${focused ? 'focus' : ''}`}>
               <button className="v2-plus" aria-label="Add a photo">
                 <svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
@@ -699,13 +716,10 @@ export default function DiscernV2({
                   <svg width="12" height="12" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
                 </button>
               )}
-              <div style={{ transform: `scale(${sendScale})` }}
-                onPointerDown={() => setSendPressed(true)} onPointerUp={() => setSendPressed(false)} onPointerLeave={() => setSendPressed(false)}>
-                <button className={`v2-send ${canSend ? 'on' : ''}`} aria-label="Send" onClick={submit} disabled={loading}>
-                  {loading ? <Ornament light spin />
-                    : <svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"><path d="M12 19V5M5 12l7-7 7 7" /></svg>}
-                </button>
-              </div>
+              <button className={`v2-send ${canSend ? 'on' : ''}`} aria-label="Send" onClick={submit} disabled={loading}>
+                {loading ? <Ornament light spin />
+                  : <svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"><path d="M12 19V5M5 12l7-7 7 7" /></svg>}
+              </button>
             </div>
           </div>
         </div>
@@ -714,8 +728,8 @@ export default function DiscernV2({
       {/* Legal line — the reference parks it at the very bottom of the window,
           under the bar: centred and stacked on a phone, split to the two
           corners on a wide screen. */}
-      {view === 'home' && !focused && (
-        <div className="v2-foot">
+      {view === 'home' && (
+        <div className={`v2-foot ${focused ? 'off' : ''}`}>
           <span>©2026 DISCERN — EARLY ACCESS</span>
           <span>THIS BOUTIQUE RUNS ON DISCERN</span>
         </div>
@@ -789,7 +803,8 @@ export default function DiscernV2({
         .v2-head{position:absolute;top:0;left:0;right:0;z-index:72;display:flex;align-items:center;gap:2px;
           padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 12px;color:#fff;
           background:linear-gradient(to bottom,rgba(0,0,0,.36),rgba(0,0,0,0));
-          transition:color .45s ${V2.ease},background .45s ${V2.ease};}
+          transition:color .45s ${V2.ease},background .45s ${V2.ease},transform .42s ${V2.ease},opacity .3s ${V2.ease};}
+        .v2-head.up{transform:translateY(-102%);opacity:0;pointer-events:none;}
         .v2-head.solid{color:${V2.ink};background:linear-gradient(to bottom,${V2.bone} 60%,rgba(242,239,234,0));}
         .v2-ic{width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:none;
           border:none;color:inherit;cursor:pointer;position:relative;-webkit-tap-highlight-color:transparent;}
@@ -805,7 +820,17 @@ export default function DiscernV2({
           background:none;box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-minibag img{width:100%;height:100%;object-fit:cover;display:block;}
 
-        .v2-scroll{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+        .v2-scroll{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;
+          scrollbar-width:none;overscroll-behavior-y:contain;scroll-behavior:smooth;}
+        .v2-scroll::-webkit-scrollbar{display:none;}
+
+        /* Reveal-on-enter. One curve, one distance — used by every section so
+           the whole page feels like a single piece of choreography. */
+        .v2-rise{opacity:0;transform:translateY(22px);
+          transition:opacity .7s ${V2.ease},transform .7s ${V2.ease};}
+        .v2-rise.in{opacity:1;transform:none;}
+        .v2-intro{font-family:${V2.serif};font-weight:300;font-size:clamp(26px,7.4vw,36px);line-height:1.16;
+          text-align:center;margin:0;padding:clamp(74px,20vw,120px) 24px 0;}
         .v2-scroll::-webkit-scrollbar{display:none;}
 
         /* Hero */
@@ -835,7 +860,9 @@ export default function DiscernV2({
         /* Below the bar, hard against the bottom of the window. */
         .v2-foot{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 5px);z-index:51;
           display:flex;flex-direction:column;gap:2px;align-items:center;color:rgba(255,255,255,.62);
-          font-size:9px;letter-spacing:.09em;text-align:center;padding:0 16px;pointer-events:none;}
+          font-size:9px;letter-spacing:.09em;text-align:center;padding:0 16px;pointer-events:none;
+          transition:opacity .3s ${V2.ease};}
+        .v2-foot.off{opacity:0;}
         .v2-hero2,.v2-hero3{justify-content:flex-end;}
         .v2-hero3{padding-bottom:calc(var(--bar) + 20px);}
         .v2-hero2 .v2-hero-copy{margin-bottom:auto;margin-top:auto;}
@@ -1085,7 +1112,11 @@ export default function DiscernV2({
         .v2-plus{width:38px;height:38px;background:rgba(255,255,255,.13);}
         .v2-plus:active{transform:scale(.9);}
         .v2-clear{width:26px;height:26px;margin-bottom:6px;background:rgba(255,255,255,.16);}
-        .v2-send{width:33px;height:33px;background:rgba(255,255,255,.13);}
+        .v2-send{width:33px;height:33px;background:rgba(255,255,255,.13);
+          transition:transform .16s ${V2.ease},background .2s ${V2.ease};}
+        .v2-send:active{transform:scale(.86);}
+        .v2-bar-press{transform-origin:center bottom;transition:transform .2s ${V2.ease};}
+        .v2-bar-press:active{transform:scale(.985);}
         .v2-send.on{background:#fff;color:${V2.ink};}
         .v2-field{position:relative;flex:1;min-width:0;padding:9px 0 8px;overflow:hidden;}
         .v2-field textarea{width:100%;border:none;background:none;outline:none;resize:none;font-family:${V2.sans};
@@ -1098,7 +1129,13 @@ export default function DiscernV2({
         .v2-marquee>div{display:flex;gap:44px;width:max-content;animation:v2-drift 44s linear infinite;}
         .v2-marquee span{font-size:16px;line-height:1.42;color:rgba(255,255,255,.6);white-space:nowrap;}
         @keyframes v2-drift{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-        @media(prefers-reduced-motion:reduce){.v2-marquee>div{animation:none}}
+        @media(prefers-reduced-motion:reduce){
+          .v2-marquee>div{animation:none}
+          .v2-rise{opacity:1;transform:none;transition:none}
+          .v2-scroll{scroll-behavior:auto}
+          .v2-head.up{transform:none;opacity:1;pointer-events:auto}
+          .v2-bag,.v2-panel,.v2-crafting,.v2-tray{animation:none}
+        }
 
         /* Cart tray */
         .v2-cart{position:absolute;z-index:50;left:12px;right:12px;
@@ -1112,6 +1149,7 @@ export default function DiscernV2({
         .v2-cart-name{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
         .v2-cart-price{font-size:12px;display:flex;gap:8px;align-items:baseline;}
         .v2-cart-price em{font-style:normal;text-decoration:line-through;opacity:.55;font-size:11px;}
+        .v2-cart-price em::before{content:'|';text-decoration:none;display:inline-block;margin-right:8px;opacity:.7;}
         .v2-cart-color{font-size:11.5px;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
         .v2-cart-cta{grid-column:1/-1;display:flex;gap:8px;align-items:center;margin-top:2px;}
         .v2-buy{flex-shrink:0;padding:11px 16px;border:none;border-radius:999px;cursor:pointer;background:#fff;
