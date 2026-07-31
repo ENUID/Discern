@@ -23,6 +23,7 @@
  *    shipping, subtotal, then PROCEED TO PAYMENT with the redirect notice.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, HeartIcon, HistoryIcon, PlusIcon } from '@/components/icons'
 import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING } from './theme'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -131,9 +132,7 @@ function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: Re
   return (
     <button type="button" aria-label={on ? 'Saved' : 'Save'} onClick={onClick}
       className={`v2-heart ${ghost ? 'ghost' : ''}`} style={{ width: size, height: size }}>
-      <svg width={size * .44} height={size * .44} viewBox="0 0 24 24" fill={on ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.6">
-        <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1L12 21l7.7-7.6 1.1-1a5.5 5.5 0 0 0 0-7.8z" />
-      </svg>
+      <HeartIcon size={Math.round(size * .44)} filled={on} />
     </button>
   )
 }
@@ -331,24 +330,29 @@ export default function DiscernV2({
         <button className={`v2-ic v2-menu-btn ${menuOpen ? 'x' : ''}`}
           aria-label={menuOpen ? 'Close menu' : 'Menu'} aria-expanded={menuOpen}
           onClick={() => setMenuOpen(v => !v)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.4" fill="none" aria-hidden>
-            <path className="v2-bun-t" d="M3 7h18" /><path className="v2-bun-m" d="M3 12h18" /><path className="v2-bun-b" d="M3 17h18" />
+          <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.67"
+            strokeLinecap="round" fill="none" aria-hidden>
+            {/* Three separately-classed bars, NOT the shared MenuIcon: the
+                hamburger morphs into an X, and .v2-menu-btn.x animates these
+                three paths individually. A single-path icon silently kills that
+                transition. Weight still follows the app's optical constant. */}
+            <path className="v2-bun-t" d="M3.6 7h16.8" /><path className="v2-bun-m" d="M3.6 12h16.8" /><path className="v2-bun-b" d="M3.6 17h16.8" />
           </svg>
           <em>{menuOpen ? 'Close' : 'Menu'}</em>
         </button>
         <button className="v2-ic" aria-label="History">
-          <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.4" fill="none"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 2" /></svg>
+          <HistoryIcon size={18} />
         </button>
         <div className="v2-brand">
-          <svg width="24" height="24" viewBox="0 0 40 40" fill="none" stroke="currentColor" strokeWidth=".9" aria-hidden>
+          <svg width="24" height="24" viewBox="0 0 40 40" fill="none" strokeLinecap="round" strokeLinejoin="round" stroke="currentColor" strokeWidth="2.08" aria-hidden>
             <path d="M20 5l9 7v16l-9 7-9-7V12z" /><path d="M20 12l4 3v10l-4 3-4-3V15z" /></svg>
           <span>DISCERN</span>
         </div>
         <button className="v2-ic" aria-label="Saved">
-          <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.4" fill="none"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1L12 21l7.7-7.6 1.1-1a5.5 5.5 0 0 0 0-7.8z" /></svg>
+          <HeartIcon size={18} />
         </button>
         <button className="v2-ic" aria-label="Bag" onClick={() => setBagOpen(true)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.4" fill="none"><path d="M6 7h12l-1 14H7L6 7z" /><path d="M9 7V5a3 3 0 0 1 6 0v2" /></svg>
+          <BagIcon size={18} />
           {cartCount > 0 && <i className="v2-dot" />}
         </button>
       </header>
@@ -639,7 +643,7 @@ export default function DiscernV2({
             {pickedSize ? `Size ${pickedSize}` : 'Select size'}
           </button>
           <button className="v2-x" aria-label="Close" onClick={() => setView('results')}>
-            <svg width="13" height="13" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+            <CloseIcon size={13} />
           </button>
         </div>
       </div>
@@ -660,7 +664,7 @@ export default function DiscernV2({
             <button className="v2-pill" onClick={() => run('Other suggestions like these')}>Other suggestions</button>
             {!focused && (
               <button className="v2-x" aria-label="Dismiss" onClick={() => setLookOpen(false)}>
-                <svg width="13" height="13" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+                <CloseIcon size={13} />
               </button>
             )}
           </div>
@@ -671,7 +675,7 @@ export default function DiscernV2({
       {(view === 'home' || view === 'look') && showScroll && !focused && (
         <button className="v2-hint" style={{ bottom: `calc(var(--bar) + ${kb}px)` }}
           onClick={() => scrollRef.current?.scrollBy({ top: window.innerHeight * .82, behavior: 'smooth' })}>
-          <svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" fill="none"><path d="M6 9l6 6 6-6" /></svg>
+          <ChevronIcon size={13} />
           Scroll to explore
         </button>
       )}
@@ -711,7 +715,7 @@ export default function DiscernV2({
         <div className="v2-bag-ov" onClick={() => setBagOpen(false)} />
         <div className="v2-bag">
           <button className="v2-bag-x" aria-label="Close" onClick={() => setBagOpen(false)}>
-            <svg width="15" height="15" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
+            <CloseIcon size={15} />
           </button>
           <h2>Bag <em>({cartCount})</em></h2>
           <div className="v2-bag-list">
@@ -751,7 +755,7 @@ export default function DiscernV2({
           <div className="v2-bar-press">
             <div className={`v2-bar ${focused ? 'focus' : ''}`}>
               <button className="v2-plus" aria-label="Add a photo">
-                <svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                <PlusIcon size={15} />
               </button>
               <div className="v2-field">
                 <textarea ref={taRef} rows={1} value={input} onChange={e => setInput(e.target.value)}
@@ -766,12 +770,12 @@ export default function DiscernV2({
               </div>
               {input.length > 0 && (
                 <button className="v2-clear" aria-label="Clear" onClick={() => { setInput(''); taRef.current?.focus() }}>
-                  <svg width="12" height="12" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+                  <CloseIcon size={12} />
                 </button>
               )}
               <button className={`v2-send ${canSend ? 'on' : ''}`} aria-label="Send" onClick={submit} disabled={loading}>
                 {loading ? <Progress light />
-                  : <svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"><path d="M12 19V5M5 12l7-7 7 7" /></svg>}
+                  : <ArrowUpIcon size={15} />}
               </button>
             </div>
           </div>
