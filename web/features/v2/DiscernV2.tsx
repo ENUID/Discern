@@ -103,10 +103,21 @@ function Ornament({ light, spin }: { light?: boolean; spin?: boolean }) {
  *  torn-image glyph. This is what lets the whole composition stand up before
  *  the art has been dropped in. */
 function Img({ src, alt = '', className, ...rest }: React.ImgHTMLAttributes<HTMLImageElement>) {
-  const [failed, setFailed] = useState(!src)
-  useEffect(() => { setFailed(!src) }, [src])
-  if (failed) return <span className={`v2-img-ph ${className ?? ''}`} aria-hidden />
-  return <img src={src} alt={alt} className={className} onError={() => setFailed(true)} {...rest} />
+  // Track WHICH src failed, not a bare boolean — a boolean cleared in an effect
+  // races the browser and lets the torn-image glyph back in.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  const ref = useRef<HTMLImageElement>(null)
+  // The page is server-rendered, so the browser starts (and can finish) loading
+  // these before React hydrates. An image that already 404'd by then fired its
+  // error with no handler attached, and onError never fires again — which is why
+  // missing art still showed a broken tile. Re-check on mount: a finished image
+  // with zero intrinsic width is a failed one.
+  useEffect(() => {
+    const el = ref.current
+    if (el && el.complete && el.naturalWidth === 0 && src) setFailedSrc(src)
+  }, [src])
+  if (!src || failedSrc === src) return <span className={`v2-img-ph ${className ?? ''}`} aria-hidden />
+  return <img ref={ref} src={src} alt={alt} className={className} onError={() => setFailedSrc(src)} {...rest} />
 }
 
 function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: React.MouseEvent) => void; size?: number; ghost?: boolean }) {
@@ -274,7 +285,7 @@ export default function DiscernV2({
                 ))}
               </div>
               <div className="v2-hero-copy">
-                <h1>Where ideas become<br />endless possibilities</h1>
+                <h1><span>Where ideas become</span> <span>endless possibilities</span></h1>
                 <p>Welcome to the AI Online Boutique</p>
               </div>
               <div className="v2-foot">
@@ -287,7 +298,7 @@ export default function DiscernV2({
             <section className="v2-hero v2-hero2">
               <div className="v2-hero-media"><Img src="/v2/hero-2.jpg" /><div className="v2-veil" /></div>
               <div className="v2-hero-copy">
-                <h1>Let yourself be<br />inspired</h1>
+                <h1><span>Let yourself be</span> <span>inspired</span></h1>
                 <p>Select a suggestion or start prompting</p>
               </div>
               <div className="v2-sugs">
@@ -628,7 +639,7 @@ export default function DiscernV2({
 
         /* Hero */
         .v2-hero{position:relative;min-height:100svh;display:flex;flex-direction:column;justify-content:flex-end;
-          padding-bottom:calc(var(--bar) + 52px);}
+          padding-bottom:calc(var(--bar) + 108px);}
         .v2-hero-media{position:absolute;inset:0;overflow:hidden;}
         .v2-hero-media img,.v2-hero-media video{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-veil{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(20,17,14,.44) 0%,rgba(20,17,14,.1) 30%,rgba(20,17,14,.56) 76%,rgba(20,17,14,.74) 100%);}
@@ -648,8 +659,9 @@ export default function DiscernV2({
         .v2-hero-copy{position:relative;z-index:2;text-align:center;color:#fff;padding:0 22px;}
         .v2-hero-copy h1{font-family:${V2.serif};font-weight:300;font-size:clamp(30px,8.6vw,46px);line-height:1.08;
           margin:0 0 12px;text-shadow:0 2px 26px rgba(0,0,0,.42);}
+        .v2-hero-copy h1 span{display:block;}
         .v2-hero-copy p{font-size:14px;font-weight:300;margin:0;opacity:.93;}
-        .v2-foot{position:absolute;left:0;right:0;bottom:calc(var(--bar) - 34px);z-index:2;display:flex;
+        .v2-foot{position:absolute;left:0;right:0;bottom:calc(var(--bar) + 56px);z-index:2;display:flex;
           flex-direction:column;gap:3px;align-items:center;color:rgba(255,255,255,.72);
           font-size:9px;letter-spacing:.09em;text-align:center;padding:0 16px;}
         .v2-hero2{justify-content:flex-end;}
@@ -756,7 +768,7 @@ export default function DiscernV2({
           box-shadow:0 2px 10px rgba(0,0,0,.13);transition:transform .16s ${V2.ease};}
         .v2-heart:active{transform:scale(.88);}
 
-        .v2-hint{position:absolute;z-index:41;left:50%;translate:-50% 0;display:inline-flex;align-items:center;gap:9px;
+        .v2-hint{position:absolute;z-index:41;left:50%;translate:-50% 0;margin-bottom:14px;display:inline-flex;align-items:center;gap:9px;
           padding:11px 20px;border:none;border-radius:999px;cursor:pointer;font-size:13.5px;color:#fff;
           background:${V2.glassDark};backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);animation:v2-fade .6s ${V2.ease};}
 
@@ -929,11 +941,11 @@ export default function DiscernV2({
 
           /* Hero: one-line headline, tighter card cluster */
           .v2-hero-copy h1{font-size:clamp(44px,4.4vw,64px);line-height:1.04;}
-          .v2-hero-copy h1 br{display:none;}
+          .v2-hero-copy h1 span{display:inline;}
           .v2-hero-copy p{font-size:15px;}
-          .v2-cards{gap:14px;max-width:640px;margin-left:auto;margin-right:auto;margin-top:120px;}
-          .v2-card{width:26%;}
-          .v2-card.c1{width:31%;}
+          .v2-cards{gap:16px;margin-top:126px;}
+          .v2-card{width:172px;}
+          .v2-card.c1{width:206px;}
           /* Legal lines sit in opposite corners, not stacked centre */
           .v2-foot{flex-direction:row;justify-content:space-between;padding:0 26px;bottom:26px;font-size:9.5px;}
 
