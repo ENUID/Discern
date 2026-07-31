@@ -140,10 +140,13 @@ function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: Re
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function DiscernV2({
-  heroMedia = '/v2/hero.jpg', heroPoster, onQuery,
+  heroMedia = '/v2/hero.jpg', heroPoster, onQuery, onFeatured,
 }: {
   heroMedia?: string; heroPoster?: string
   onQuery?: (q: string) => Promise<{ sections: V2Section[]; look?: V2Product[] }>
+  /** Real catalogue imagery for the three hero cards. Supplying this is what
+   *  keeps the opening screen from depending on hand-placed jpgs. */
+  onFeatured?: () => Promise<string[]>
 }) {
   const [view, setView] = useState<View>('home')
   const [input, setInput] = useState('')
@@ -168,6 +171,7 @@ export default function DiscernV2({
   const [cart, setCart] = useState<V2CartLine[]>([])
   const [bagOpen, setBagOpen] = useState(false)
   const [cardSeed, setCardSeed] = useState(0)
+  const [artwork, setArtwork] = useState<string[]>([])
   const [headHidden, setHeadHidden] = useState(false)
 
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -252,6 +256,15 @@ export default function DiscernV2({
     })
     return () => io.disconnect()
   }, [sections, view])
+
+  useEffect(() => {
+    if (!onFeatured) return
+    let live = true
+    onFeatured()
+      .then(urls => { if (live && urls.length) setArtwork(urls) })
+      .catch(() => { /* the hero degrades to its paper surfaces */ })
+    return () => { live = false }
+  }, [onFeatured])
 
   const toggleSave = useCallback((id: string) => {
     setSaved(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -366,7 +379,9 @@ export default function DiscernV2({
                 <button className="v2-cards-nav prev" aria-label="Previous" onClick={() => setCardSeed(n => n - 1)}>‹</button>
                 {[0, 1, 2].map(i => (
                   <figure key={i} className={`v2-card c${i}`}>
-                    <Img src={`/v2/card-${((cardSeed + i) % 3 + 3) % 3 + 1}.jpg`} />
+                    <Img src={artwork.length
+                      ? artwork[(((cardSeed + i) % artwork.length) + artwork.length) % artwork.length]
+                      : `/v2/card-${((cardSeed + i) % 3 + 3) % 3 + 1}.jpg`} />
                   </figure>
                 ))}
                 <button className="v2-cards-nav next" aria-label="Next" onClick={() => setCardSeed(n => n + 1)}>›</button>

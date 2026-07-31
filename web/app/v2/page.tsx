@@ -80,6 +80,26 @@ function toProduct(p: any): V2Product {
 }
 
 export default function V2Page() {
+  /** Opening-screen imagery, pulled from the same geo-aware feed the live app
+   *  uses. This is why the hero needs no hand-placed art files: it shows real,
+   *  in-stock pieces from the catalogue. Failure is silent — the hero falls
+   *  back to its paper surfaces rather than showing a broken screen. */
+  const onFeatured = useCallback(async () => {
+    const res = await fetch('/api/featured', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ page: 0, excludeIds: [] }),
+    })
+    if (!res.ok) return []
+    const data = await res.json()
+    const items: any[] = Array.isArray(data?.products) ? data.products : []
+    return items
+      .filter(p => p?.in_stock !== false)
+      .map(img)
+      .filter(Boolean)
+      .slice(0, 12)
+  }, [])
+
   const onQuery = useCallback(async (q: string) => {
     const res = await fetch('/api/ai/stylist', {
       method: 'POST',
@@ -119,5 +139,5 @@ export default function V2Page() {
     return { sections, look }
   }, [])
 
-  return <DiscernV2 onQuery={onQuery} />
+  return <DiscernV2 onQuery={onQuery} onFeatured={onFeatured} />
 }
