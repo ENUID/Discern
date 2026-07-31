@@ -158,6 +158,30 @@ export default defineSchema({
   }).index("by_key", ["scope", "conceptKey", "targetId"])
     .index("by_concept", ["conceptKey"]),
 
+  // Queries the hand-curated vocabulary failed to understand — logged by the
+  // stylist route whenever a product search comes back empty and needs the
+  // broad-net rescue, whether or not that rescue succeeded. A weekly cron (web/app/api/cron/vocab-review) clusters these
+  // into suggested canonical mappings, and a human approves or rejects them at
+  // /admin/vocab.
+  //
+  // DELIBERATELY INERT: nothing here feeds live matching. The dictionaries in
+  // lib/queryParser.ts and lib/intentCompiler.ts stay hand-curated, because a
+  // wrong synonym auto-merged into the hot path is a silent, hard-to-trace
+  // search regression. Approving a row records the decision as evidence for a
+  // reviewed code change; it does not alter behaviour by itself.
+  vocab_candidates: defineTable({
+    phrase: v.string(),           // normalised miss, e.g. "co ord set"
+    count: v.number(),            // how many times it has been seen
+    firstSeenAt: v.number(),
+    lastSeenAt: v.number(),
+    reason: v.string(),           // "no-results" | "weak-match"
+    suggestion: v.optional(v.string()),  // cron's proposed canonical mapping
+    status: v.string(),           // "new" | "approved" | "rejected"
+    reviewedAt: v.optional(v.number()),
+    reviewedBy: v.optional(v.string()),
+  }).index("by_phrase", ["phrase"])
+    .index("by_status", ["status", "count"]),
+
   // Emerging style trends distilled from real search volume by the
   // style-signals cron (web/app/api/cron/style-signals) every ~2 days.
   // Read by the LLM relevance judge as light context ("what shoppers are

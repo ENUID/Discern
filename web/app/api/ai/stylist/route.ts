@@ -10,6 +10,7 @@ import { selectKnowledgeModules } from '@/lib/knowledgeModules'
 import { cerebrasChat, cerebrasVisionChat, CEREBRAS_VISION_CONFIGURED } from '@/lib/cerebras'
 import { nvidiaChat, nvidiaVisionChat, NVIDIA_CONFIGURED } from '@/lib/nvidia'
 import { ConvexHttpClient } from 'convex/browser'
+import { anyApi } from 'convex/server'
 import { api } from '@/convex/_generated/api'
 
 export const maxDuration = 60
@@ -59,6 +60,31 @@ function logAiUsage(info: {
     event: 'ai_usage',
     properties: info,
   }).catch(() => {}) // best-effort — never let logging affect the actual response
+}
+
+/**
+ * Record a query the hand-curated vocabulary could not read — either it named
+ * no garment we know, or a real search over it came back near-empty. This is
+ * pure observation: the capture feeds a weekly cron and a human review page
+ * (/admin/vocab), and nothing downstream reads it. The dictionaries stay
+ * hand-edited, because a synonym auto-merged into the hot path is exactly the
+ * kind of silent search regression that is miserable to trace.
+ *
+ * Fire-and-forget, like every other logging write here: a failure must never
+ * touch the shopper's reply.
+ */
+function recordVocabMiss(query: string, reason: 'no-results' | 'weak-match') {
+  if (!convexUsageClient || !process.env.CONVEX_AUTH_SECRET) return
+  const phrase = query.trim()
+  // Sentences cluster badly and read as PII risk; only short, term-like
+  // queries are worth proposing a dictionary entry for.
+  if (phrase.length < 3 || phrase.length > 60 || phrase.split(/\s+/).length > 6) return
+  // anyApi: the generated types only refresh on `npx convex dev/deploy`.
+  convexUsageClient.mutation(anyApi.vocabCandidates.recordMiss, {
+    phrase,
+    reason,
+    serverSecret: process.env.CONVEX_AUTH_SECRET,
+  }).catch(() => {})
 }
 
 // Best-of-best cap — applied to BOTH the first page of a fresh search AND
@@ -2183,6 +2209,10 @@ Use concrete garment, colour, and material words only, never a brand or product 
         if (broad.length > 0) foundProducts = dedupeById(broad).slice(0, INITIAL_RESULT_CAP)
       } catch (e) { console.error('[stylist] fallback broad search failed:', e) }
       const stillNothing = (!foundProducts || foundProducts.length === 0) && !outfitSlots
+      // The primary search could not read this one — log it for review. The
+      // reason distinguishes a hard miss from one the broad net rescued, since
+      // the two justify very different dictionary edits.
+      recordVocabMiss(searchQuery || question, stillNothing ? 'no-results' : 'weak-match')
       if (stillNothing) {
         reply2 = reply2.replace(/\bhere they are\b\s*:?/i, '').replace(/\s{2,}/g, ' ').trim()
         const honest = "I'm not pulling those up right now. Want me to try a different colour, brand, or price?"
