@@ -69,6 +69,9 @@ function toProduct(p: any): V2Product {
     images: media.length ? media.slice(0, 5) : undefined,
     vendor: p?.vendor,
     sku: p?.handle ? String(p.handle).toUpperCase().replace(/-/g, '').slice(0, 18) : undefined,
+    // The catalogue returns this and the bag needs it to hand off to the brand.
+    // It was being dropped here, which is why Checkout had nowhere to go.
+    storeUrl: p?.store_url || p?.url || undefined,
     colorName: opt(p, /colou?r/i)[0],
     colors: toColors(p),
     sizes: opt(p, /size/i).slice(0, 10),

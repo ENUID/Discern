@@ -38,6 +38,9 @@ export type V2Product = {
   images?: string[]
   vendor?: string
   sku?: string
+  /** The brand's own product page. Checkout hands off to it — without this the
+   *  bag is a dead end, which is exactly what it was. */
+  storeUrl?: string
   colorName?: string
   colors?: V2Color[]
   sizes?: string[]
@@ -169,6 +172,7 @@ export default function DiscernV2({
   const [adding, setAdding] = useState(false)
   const [cart, setCart] = useState<V2CartLine[]>([])
   const [bagOpen, setBagOpen] = useState(false)
+  const [blockedStores, setBlockedStores] = useState<string[]>([])
   const [cardSeed, setCardSeed] = useState(0)
   const [artwork, setArtwork] = useState<string[]>([])
   const [headHidden, setHeadHidden] = useState(false)
@@ -222,6 +226,39 @@ export default function DiscernV2({
   const idle = !focused && input.length === 0
   const cartCount = cart.reduce((n, l) => n + l.qty, 0)
   const subtotal = cart.reduce((n, l) => n + (l.product.price ?? 0) * l.qty, 0)
+
+  // ── Checkout ───────────────────────────────────────────────────────────────
+  // Discern never takes payment: every line hands off to the brand that sells
+  // it. The button had no handler at all, so the bag was a dead end — items in,
+  // subtotal shown, nothing out. A bag can hold several brands, so this opens
+  // one tab per distinct store rather than pretending there is a single basket.
+  //
+  // Browsers only reliably allow ONE window.open per user gesture, so anything
+  // after the first is likely to be blocked. Rather than fail silently, blocked
+  // stores are surfaced as real links the shopper can click themselves.
+  const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return u } }
+  const payHosts = useMemo(
+    () => Array.from(new Set(cart.map(l => l.product.storeUrl).filter((u): u is string => !!u))),
+    [cart],
+  )
+  const checkout = useCallback(() => {
+    if (!cart.length) return
+    if (!payHosts.length) { setBlockedStores([]); return }
+    const blocked: string[] = []
+    payHosts.forEach((url, i) => {
+      // The first open rides the click gesture; later ones usually will not.
+      // NOT 'noopener' in the feature string: with it, window.open returns null
+      // by specification, so a perfectly successful tab is indistinguishable
+      // from a blocked one and every checkout claimed to be blocked. Opening
+      // plainly and severing `opener` afterwards gives the same protection
+      // while keeping the handle that tells us whether it actually worked.
+      const w = window.open(url, '_blank')
+      if (!w) { blocked.push(url); return }
+      try { w.opener = null } catch { /* cross-origin: already isolated */ }
+      if (i === 0) w.focus?.()
+    })
+    setBlockedStores(blocked)
+  }, [cart, payHosts])
 
   // DETAILS reads as a short list of construction facts, one per line — split
   // whatever the catalog gives us on the separators it actually uses.
@@ -781,8 +818,23 @@ export default function DiscernV2({
             <div><span>Shipping Costs</span><span>FREE</span></div>
             <div><span>Subtotal (tax incl.)</span><span>{money(subtotal)}</span></div>
           </div>
-          <button className="v2-pay">Checkout <span aria-hidden>↗</span></button>
-          <p className="v2-bag-note">Checkout happens on the brand’s own store.</p>
+          <button className="v2-pay" onClick={checkout} disabled={!cart.length}>
+            Checkout <span aria-hidden>↗</span>
+          </button>
+          <p className="v2-bag-note">
+            {blockedStores.length
+              ? 'Your browser blocked the new tab. Open the brand directly:'
+              : payHosts.length > 1
+                ? `Your bag spans ${payHosts.length} brands — each opens in its own tab.`
+                : 'Checkout happens on the brand’s own store.'}
+          </p>
+          {blockedStores.length > 0 && (
+            <div className="v2-bag-fallback">
+              {blockedStores.map(u => (
+                <a key={u} href={u} target="_blank" rel="noopener noreferrer">{host(u)}</a>
+              ))}
+            </div>
+          )}
         </div>
         </>
       )}
@@ -1144,7 +1196,16 @@ export default function DiscernV2({
         .v2-bag-sum div{display:flex;justify-content:space-between;font-size:13.5px;}
         .v2-pay{width:100%;padding:16px;border:none;border-radius:12px;background:${V2.ink};color:#fff;cursor:pointer;
           font-size:14px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:10px;}
+        /* An empty bag must not offer a live Checkout — it was fully clickable
+           at zero items, which is a promise the button could not keep. */
+        .v2-pay:disabled{opacity:.34;cursor:not-allowed;}
         .v2-bag-note{font-size:11.5px;line-height:1.5;color:${V2.ink45};text-align:center;margin:14px 0 0;}
+        /* Only rendered when the browser refused a tab, so the shopper still has
+           a way through to the brand. */
+        .v2-bag-fallback{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:10px 0 0;}
+        .v2-bag-fallback a{font-size:12px;padding:7px 12px;border-radius:999px;
+          border:1px solid rgba(0,0,0,.14);color:inherit;text-decoration:none;}
+        .v2-bag-fallback a:hover{background:rgba(0,0,0,.05);}
 
         /* Bar */
         .v2-bar-wrap.home{padding-bottom:calc(env(safe-area-inset-bottom,0px) + 38px);}
