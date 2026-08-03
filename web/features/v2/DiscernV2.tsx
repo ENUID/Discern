@@ -151,7 +151,7 @@ function Aside({ text, onDone }: { text: string; onDone: () => void }) {
   const [held, setHeld] = useState(false)
   useEffect(() => {
     if (held) return
-    const t = setTimeout(onDone, 4200)
+    const t = setTimeout(onDone, Math.min(11000, 3200 + text.length * 45))
     return () => clearTimeout(t)
   }, [held, onDone, text])
   return (
@@ -445,10 +445,11 @@ export default function DiscernV2({
         : { sections: [], look: undefined, answer: undefined, didSearch: false, light: false }
       const sections = res.sections ?? []
 
-      // Light replies leave no trace. Without this every "thanks" would put
-      // "Anytime." between two product spreads.
-      const isLight = res.light === true || (!sections.length && !res.didSearch && (res.answer?.length ?? 0) < 80)
-      if (isLight && res.answer) {
+      // Words go to the transient line, never onto the page. If Fabrics found
+      // pieces, those are the answer and it says nothing. If it only has words
+      // — advice, a greeting, a clarifying question — they surface above the
+      // composer and clear, which is the only place prose belongs here.
+      if (!sections.length && res.answer && !res.didSearch) {
         setAside(res.answer)
         setLoading(false)
         return
@@ -627,20 +628,14 @@ export default function DiscernV2({
           <section className="v2-results">
             {turns.map((turn, ti) => (
             <div className="v2-spread" key={turn.id}>
-              {/* The answer occupies the slot the static "Here's what fits."
-                  headline used to. It is not a chat bubble and not a caption —
-                  it is the lede, and the products below are its evidence.
-                  Deliberately NO echo of the question: the shopper typed it
-                  seconds ago, and reprinting it above the answer is chat
-                  convention, which is exactly what makes a page stop reading as
-                  a page. What was asked lives in History, not in the scroll. */}
-              {turn.answer ? (
-                <div className="v2-say v2-rise">
-                  <p>{turn.answer}</p>
-                </div>
-              ) : ti === 0 && turn.sections.length > 0 ? (
-                <h2 className="v2-intro v2-rise">Here’s what fits.</h2>
-              ) : null}
+              {/* Nothing goes above the products. Not the answer, not a
+                  headline, not the question. When Fabrics has found something,
+                  the pieces are the answer and prose on top of them is just
+                  noise between the shopper and what they came to see. When it
+                  has only words — advice, a greeting — those surface briefly at
+                  the composer and clear, so the scroll never stops being a
+                  lookbook. The stylist still runs, still remembers, still
+                  reasons; it simply does it without narrating. */}
 
               {/* "No match" is only honest when a search actually ran. It used
                   to fire for every conversational turn, so asking "does navy go
@@ -1134,16 +1129,6 @@ export default function DiscernV2({
         .v2-spread:last-child{margin-bottom:4vh;}
         /* The answer sticks while its own products scroll past, so the question
            being answered is never off-screen and out of mind. */
-        .v2-say{position:sticky;top:calc(env(safe-area-inset-top,0px) + 54px);z-index:3;
-          padding:22px 20px 24px;margin:0 0 12px;text-align:center;
-          background:linear-gradient(${V2.bone} 78%, rgba(244,243,241,0));}
-        /* Centred and measured, because the sections below are centred — a
-           left-flush answer over centred results reads as two layouts stapled
-           together. The measure keeps it a lede rather than a paragraph. */
-        .v2-say p{font-family:${V2.display};font-weight:500;font-size:clamp(20px,3vw,27px);
-          line-height:1.26;letter-spacing:-.028em;color:${V2.ink};margin:0 auto;
-          max-width:24ch;text-align:center;text-wrap:balance;}
-        @media(min-width:760px){.v2-say p{max-width:34ch;}}
 
         /* The transient reply. Sits above the bar, never in the scroll. */
         .v2-aside{position:absolute;z-index:78;left:50%;transform:translateX(-50%);
