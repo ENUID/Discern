@@ -629,12 +629,13 @@ export default function DiscernV2({
             <div className="v2-spread" key={turn.id}>
               {/* The answer occupies the slot the static "Here's what fits."
                   headline used to. It is not a chat bubble and not a caption —
-                  it is the lede, and the products below are its evidence. It
-                  sticks while you browse them, so which question you are seeing
-                  the answer to is never in doubt. */}
+                  it is the lede, and the products below are its evidence.
+                  Deliberately NO echo of the question: the shopper typed it
+                  seconds ago, and reprinting it above the answer is chat
+                  convention, which is exactly what makes a page stop reading as
+                  a page. What was asked lives in History, not in the scroll. */}
               {turn.answer ? (
                 <div className="v2-say v2-rise">
-                  <span className="v2-say-q">{turn.question}</span>
                   <p>{turn.answer}</p>
                 </div>
               ) : ti === 0 && turn.sections.length > 0 ? (
@@ -1134,13 +1135,15 @@ export default function DiscernV2({
         /* The answer sticks while its own products scroll past, so the question
            being answered is never off-screen and out of mind. */
         .v2-say{position:sticky;top:calc(env(safe-area-inset-top,0px) + 54px);z-index:3;
-          padding:18px 20px 20px;margin:0 0 26px;
+          padding:22px 20px 24px;margin:0 0 12px;text-align:center;
           background:linear-gradient(${V2.bone} 78%, rgba(244,243,241,0));}
-        .v2-say-q{display:block;font-size:11px;letter-spacing:.15em;text-transform:uppercase;
-          color:${V2.ink45};margin:0 0 10px;}
-        .v2-say p{font-family:${V2.display};font-weight:500;font-size:clamp(21px,3.4vw,30px);
-          line-height:1.24;letter-spacing:-.028em;color:${V2.ink};margin:0;max-width:22ch;}
-        @media(min-width:760px){.v2-say p{max-width:30ch;}}
+        /* Centred and measured, because the sections below are centred — a
+           left-flush answer over centred results reads as two layouts stapled
+           together. The measure keeps it a lede rather than a paragraph. */
+        .v2-say p{font-family:${V2.display};font-weight:500;font-size:clamp(20px,3vw,27px);
+          line-height:1.26;letter-spacing:-.028em;color:${V2.ink};margin:0 auto;
+          max-width:24ch;text-align:center;text-wrap:balance;}
+        @media(min-width:760px){.v2-say p{max-width:34ch;}}
 
         /* The transient reply. Sits above the bar, never in the scroll. */
         .v2-aside{position:absolute;z-index:78;left:50%;transform:translateX(-50%);
