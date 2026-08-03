@@ -145,22 +145,6 @@ function Img({ src, alt = '', className, ...rest }: React.ImgHTMLAttributes<HTML
   return <img ref={ref} src={src} alt={alt} className={className} onError={() => setFailedSrc(src)} {...rest} />
 }
 
-/** Shows for a few seconds above the composer, then clears itself. Hovering
- *  holds it, so a reply is never yanked away mid-read. */
-function Aside({ text, onDone }: { text: string; onDone: () => void }) {
-  const [held, setHeld] = useState(false)
-  useEffect(() => {
-    if (held) return
-    const t = setTimeout(onDone, Math.min(11000, 3200 + text.length * 45))
-    return () => clearTimeout(t)
-  }, [held, onDone, text])
-  return (
-    <div className="v2-aside" role="status" onMouseEnter={() => setHeld(true)} onMouseLeave={() => setHeld(false)}>
-      {text}
-    </div>
-  )
-}
-
 function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: React.MouseEvent) => void; size?: number; ghost?: boolean }) {
   return (
     <button type="button" aria-label={on ? 'Saved' : 'Save'} onClick={onClick}
@@ -193,7 +177,6 @@ export default function DiscernV2({
   const [turns, setTurns] = useState<V2Turn[]>([])
   /** A one-line reply that surfaces at the composer and fades. Small talk must
    *  not become a spread in what is otherwise a lookbook. */
-  const [aside, setAside] = useState<string | null>(null)
   const [look, setLook] = useState<V2Product[] | null>(null)
   const [lookOpen, setLookOpen] = useState(false)
   const [product, setProduct] = useState<V2Product | null>(null)
@@ -445,12 +428,12 @@ export default function DiscernV2({
         : { sections: [], look: undefined, answer: undefined, didSearch: false, light: false }
       const sections = res.sections ?? []
 
-      // Words go to the transient line, never onto the page. If Fabrics found
-      // pieces, those are the answer and it says nothing. If it only has words
-      // — advice, a greeting, a clarifying question — they surface above the
-      // composer and clear, which is the only place prose belongs here.
-      if (!sections.length && res.answer && !res.didSearch) {
-        setAside(res.answer)
+      // Nothing to show, and nothing was searched — a greeting, an aside. The
+      // reference boutique answers every query with a selection or with
+      // nothing; it never writes a sentence on the page. So this leaves the
+      // shopper exactly where they were rather than inventing a surface to put
+      // prose on.
+      if (!sections.length && !res.didSearch) {
         setLoading(false)
         return
       }
@@ -626,7 +609,7 @@ export default function DiscernV2({
         {/* 2 · RESULTS */}
         {view === 'results' && (
           <section className="v2-results">
-            {turns.map((turn, ti) => (
+            {turns.slice(0, 1).map(turn => (
             <div className="v2-spread" key={turn.id}>
               {/* Nothing goes above the products. Not the answer, not a
                   headline, not the question. When Fabrics has found something,
@@ -925,10 +908,6 @@ export default function DiscernV2({
         </div>
       </nav>
 
-      {/* A light reply — "Anytime." — surfaces here and fades. It deliberately
-          creates no spread, so the scroll stays a lookbook. */}
-      {aside && <Aside text={aside} onDone={() => setAside(null)} />}
-
       {/* Saved — the hearts finally have somewhere to lead. Same sheet family as
           the bag, because both are "things you have set aside". */}
       {savedOpen && (
@@ -1130,15 +1109,6 @@ export default function DiscernV2({
         /* The answer sticks while its own products scroll past, so the question
            being answered is never off-screen and out of mind. */
 
-        /* The transient reply. Sits above the bar, never in the scroll. */
-        .v2-aside{position:absolute;z-index:78;left:50%;transform:translateX(-50%);
-          bottom:calc(var(--bar) + env(safe-area-inset-bottom,0px) + 18px);
-          max-width:min(440px,calc(100% - 32px));padding:13px 18px;border-radius:13px;
-          background:${V2.glassDark};backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-          border:1px solid ${V2.glassEdge};color:#fff;font-family:${V2.sans};font-size:14px;
-          line-height:1.45;animation:v2-aside-in .32s ${V2.ease};}
-        @keyframes v2-aside-in{from{opacity:0;transform:translateX(-50%) translateY(8px)}
-          to{opacity:1;transform:translateX(-50%) translateY(0)}}
 
         /* Saved grid — two up, image-led, the name and price quiet beneath. */
         .v2-saved-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 12px;}
