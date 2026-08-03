@@ -24,7 +24,9 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, HeartIcon, HistoryIcon, PlusIcon } from '@/components/icons'
+import { useSession } from 'next-auth/react'
 import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING } from './theme'
+import V2Auth, { type V2AuthReason } from './V2Auth'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export type V2Color = { name: string; code?: string; image: string; available?: boolean }
@@ -159,7 +161,23 @@ export default function DiscernV2({
   const [look, setLook] = useState<V2Product[] | null>(null)
   const [lookOpen, setLookOpen] = useState(false)
   const [product, setProduct] = useState<V2Product | null>(null)
-  const [saved, setSaved] = useState<Set<string>>(new Set())
+  // Saved kept the ids only, so there was no way to render a saved list even
+  // though the hearts worked — the products themselves were thrown away. Keep
+  // the piece, not just its id.
+  const [saved, setSaved] = useState<Map<string, V2Product>>(new Map())
+  const [savedOpen, setSavedOpen] = useState(false)
+  const [histOpen, setHistOpen] = useState(false)
+  const [asked, setAsked] = useState<string[]>([])
+  const [photos, setPhotos] = useState<string[]>([])
+  const { status: authStatus } = useSession()
+  const [authReason, setAuthReason] = useState<V2AuthReason>(null)
+  /** Ask for an account only at the moment one is genuinely needed, and say
+   *  which moment it was. Returns false when the caller should stop. */
+  const requireAccount = useCallback((why: Exclude<V2AuthReason, null>) => {
+    if (authStatus === 'authenticated') return true
+    setAuthReason(why)
+    return false
+  }, [authStatus])
   const [menuOpen, setMenuOpen] = useState(false)
   const [acc, setAcc] = useState<'materials' | 'style' | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -340,12 +358,34 @@ export default function DiscernV2({
     return () => { live = false }
   }, [onFeatured])
 
-  const toggleSave = useCallback((id: string) => {
-    setSaved(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+  // Takes the product, not an id — see the `saved` declaration. Saving is the
+  // first thing that genuinely needs an account, so it is the first thing that
+  // asks for one; un-saving never does.
+  const toggleSave = useCallback((p: V2Product) => {
+    const already = saved.has(p.id)
+    if (!already && !requireAccount('save')) return
+    setSaved(prev => {
+      const n = new Map(prev)
+      if (already) n.delete(p.id); else n.set(p.id, p)
+      return n
+    })
+  }, [saved, requireAccount])
+
+  /** Attached photos become object URLs for the strip; they are revoked when
+   *  cleared so a long session does not leak them. */
+  const addPhotos = useCallback((files: FileList | null) => {
+    if (!files?.length) return
+    const urls = Array.from(files).slice(0, 4).map(f => URL.createObjectURL(f))
+    setPhotos(p => [...p, ...urls].slice(0, 4))
+  }, [])
+  const dropPhoto = useCallback((url: string) => {
+    setPhotos(p => p.filter(u => u !== url))
+    URL.revokeObjectURL(url)
   }, [])
 
   const run = useCallback(async (q: string) => {
     if (!q.trim() || loading) return
+    setAsked(a => [q.trim(), ...a.filter(x => x !== q.trim())].slice(0, 12))
     taRef.current?.blur()
     setLoadPhase(0)
     setLoading(true); setLookOpen(false)
@@ -364,6 +404,17 @@ export default function DiscernV2({
       setLoading(false)
     }
   }, [loading, onQuery])
+
+  // Browsing entries genuinely are searches. The rest are destinations, and
+  // used to be searches for their own label.
+  const MENU = [
+    { label: 'New in',  go: () => run('new in') },
+    { label: 'Women',   go: () => run('womenswear') },
+    { label: 'Men',     go: () => run('menswear') },
+    { label: 'Saved',   go: () => { if (requireAccount('save')) setSavedOpen(true) } },
+    { label: 'Orders',  go: () => { if (requireAccount('orders')) setBagOpen(true) } },
+    { label: 'Help',    go: () => run('how does Discern work') },
+  ]
 
   const submit = () => run(input)
 
@@ -415,7 +466,8 @@ export default function DiscernV2({
           </svg>
           <em>{menuOpen ? 'Close' : 'Menu'}</em>
         </button>
-        <button className="v2-ic" aria-label="History">
+        <button className="v2-ic" aria-label="History"
+          onClick={() => setHistOpen(v => !v)} aria-expanded={histOpen}>
           <HistoryIcon size={18} />
         </button>
         <div className="v2-brand">
@@ -423,8 +475,10 @@ export default function DiscernV2({
             <path d="M20 5l9 7v16l-9 7-9-7V12z" /><path d="M20 12l4 3v10l-4 3-4-3V15z" /></svg>
           <span>DISCERN</span>
         </div>
-        <button className="v2-ic" aria-label="Saved">
+        <button className="v2-ic" aria-label="Saved"
+          onClick={() => { if (requireAccount('save')) setSavedOpen(true) }}>
           <HeartIcon size={18} />
+          {saved.size > 0 && <i className="v2-dot" />}
         </button>
         <button className="v2-ic" aria-label="Bag" onClick={() => setBagOpen(true)}>
           <BagIcon size={18} />
@@ -522,7 +576,7 @@ export default function DiscernV2({
                   {s.hero && (
                     <div className="v2-sec-hero">
                       <button className="v2-shot" onClick={() => openProduct(s.hero!)}><Img src={s.hero.image} alt={s.hero.title} /></button>
-                      <Heart on={saved.has(s.hero.id)} onClick={e => { e.stopPropagation(); toggleSave(s.hero!.id) }} />
+                      <Heart on={saved.has(s.hero.id)} onClick={e => { e.stopPropagation(); toggleSave(s.hero!) }} />
                     </div>
                   )}
                   <button className="v2-discover" onClick={() => s.hero && openProduct(s.hero)}>
@@ -540,7 +594,7 @@ export default function DiscernV2({
                       {s.products.map((p, i) => (
                         <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
                           <button className="v2-tile-btn" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} loading="lazy" /></button>
-                          <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p.id) }} />
+                          <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p) }} />
                           <span className="v2-tile-name">{p.title} <i aria-hidden>›</i></span>
                         </div>
                       ))}
@@ -560,7 +614,7 @@ export default function DiscernV2({
               {look.map(p => (
                 <div key={p.id} className="v2-rail-item">
                   <button className="v2-shot" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} /></button>
-                  <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p.id) }} />
+                  <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p) }} />
                   <span className="v2-rail-name">{p.title} <i aria-hidden>›</i></span>
                 </div>
               ))}
@@ -608,7 +662,7 @@ export default function DiscernV2({
                   {styleWith.map(p => (
                     <div key={p.id} className="v2-rail-item">
                       <button className="v2-shot" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} /></button>
-                      <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p.id) }} />
+                      <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p) }} />
                       <span className="v2-rail-name">{p.title} <i aria-hidden>›</i></span>
                     </div>
                   ))}
@@ -704,7 +758,7 @@ export default function DiscernV2({
                 {pickedSize ? ` | Size ${pickedSize}` : ''}
               </span>
             </div>
-            <Heart on={saved.has(product.id)} onClick={() => toggleSave(product.id)} />
+            <Heart on={saved.has(product.id)} onClick={() => toggleSave(product)} />
           </>
         )}
         <div className="v2-cart-cta">
@@ -732,7 +786,7 @@ export default function DiscernV2({
             {look.slice(0, 4).map(p => (
               <button key={p.id} className="v2-chip" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} /></button>
             ))}
-            <Heart on={look.every(p => saved.has(p.id))} ghost onClick={() => look.forEach(p => toggleSave(p.id))} />
+            <Heart on={look.every(p => saved.has(p.id))} ghost onClick={() => look.forEach(p => toggleSave(p))} />
           </div>}
           <div className="v2-tray-cta">
             <button className="v2-pill" onClick={() => { setView('look'); scrollRef.current?.scrollTo({ top: 0 }) }}>Discover the look</button>
@@ -776,13 +830,76 @@ export default function DiscernV2({
       <div className={`v2-ov ${menuOpen ? 'on' : ''}`} onClick={() => setMenuOpen(false)} />
       <nav className={`v2-menu ${menuOpen ? 'on' : ''}`} aria-hidden={!menuOpen}>
         <span className="v2-eyebrow-s">Menu</span>
-        <ul>{['New in', 'Women', 'Men', 'Saved', 'Orders', 'Help'].map(x => (
-          <li key={x}><button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); run(x) }}>{x}</button></li>
+        {/* 'Saved', 'Orders' and 'Help' used to run a catalogue search for their
+            own label, so tapping Help searched the shop for the word "help".
+            Browsing entries still search; the rest go where they say. */}
+        <ul>{MENU.map(m => (
+          <li key={m.label}>
+            <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); m.go() }}>
+              {m.label}
+            </button>
+          </li>
         ))}</ul>
         <div className="v2-menu-meta">
           <a href="mailto:help@discern.com">help@discern.com</a>
         </div>
       </nav>
+
+      {/* Saved — the hearts finally have somewhere to lead. Same sheet family as
+          the bag, because both are "things you have set aside". */}
+      {savedOpen && (
+        <>
+        <div className="v2-bag-ov" onClick={() => setSavedOpen(false)} />
+        <div className="v2-bag">
+          <button className="v2-bag-x" aria-label="Close" onClick={() => setSavedOpen(false)}>
+            <CloseIcon size={15} />
+          </button>
+          <h2>Saved <em>({saved.size})</em></h2>
+          {saved.size === 0 ? (
+            <p className="v2-bag-empty">Nothing saved yet. Tap the heart on anything worth coming back to.</p>
+          ) : (
+            <div className="v2-saved-grid">
+              {Array.from(saved.values()).map(p => (
+                <div className="v2-saved-cell" key={p.id}>
+                  <button className="v2-shot" onClick={() => { setSavedOpen(false); openProduct(p) }}>
+                    <Img src={p.image} alt={p.title} />
+                  </button>
+                  <Heart on onClick={e => { e.stopPropagation(); toggleSave(p) }} />
+                  <span className="v2-saved-name">{p.title}</span>
+                  <span className="v2-saved-price">{money(p.price, p.currency)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        </>
+      )}
+
+      {/* History — this session's questions. The button existed with no handler;
+          the list is the natural thing behind it. */}
+      {histOpen && (
+        <>
+        <div className="v2-ov on" onClick={() => setHistOpen(false)} />
+        <nav className="v2-hist" aria-label="Recent questions">
+          <span className="v2-eyebrow-s">This session</span>
+          {asked.length === 0 ? (
+            <p className="v2-hist-empty">Nothing asked yet.</p>
+          ) : (
+            <ul>{asked.map(q => (
+              <li key={q}>
+                <button onClick={() => { setHistOpen(false); run(q) }}>{q}</button>
+              </li>
+            ))}</ul>
+          )}
+        </nav>
+        </>
+      )}
+
+      <V2Auth
+        open={authReason !== null}
+        reason={authReason}
+        onClose={() => setAuthReason(null)}
+      />
 
       {/* Bag sheet */}
       {bagOpen && (
@@ -844,9 +961,26 @@ export default function DiscernV2({
         <div className={`v2-bar-wrap ${view === 'home' ? 'home' : ''}`} ref={barVar.ref} style={{ bottom: kb }}>
           <div className="v2-bar-press">
             <div className={`v2-bar ${focused ? 'focus' : ''}`}>
-              <button className="v2-plus" aria-label="Add a photo">
+              {/* Was a button with no handler at all — it offered to take a photo
+                  and did nothing. A label over a hidden input keeps the same
+                  glyph and hit area while actually opening the picker. */}
+              <label className="v2-plus" aria-label="Add a photo">
                 <PlusIcon size={15} />
-              </button>
+                <input type="file" accept="image/*" multiple hidden
+                  onChange={e => addPhotos(e.target.files)} />
+              </label>
+              {photos.length > 0 && (
+                <div className="v2-shots" aria-label="Attached photos">
+                  {photos.map(u => (
+                    <span className="v2-shot-chip" key={u}>
+                      <img src={u} alt="" />
+                      <button aria-label="Remove photo" onClick={() => dropPhoto(u)}>
+                        <CloseIcon size={9} color="#fff" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="v2-field">
                 <textarea ref={taRef} rows={1} value={input} onChange={e => setInput(e.target.value)}
                   onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
@@ -905,6 +1039,30 @@ export default function DiscernV2({
         .v2-brand{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;pointer-events:none;}
         .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.36em;text-indent:.36em;white-space:nowrap;}
         .v2-dot{position:absolute;top:6px;right:5px;width:5px;height:5px;border-radius:50%;background:currentColor;}
+
+        /* Saved grid — two up, image-led, the name and price quiet beneath. */
+        .v2-saved-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 12px;}
+        .v2-saved-cell{position:relative;display:flex;flex-direction:column;}
+        .v2-saved-cell .v2-shot{width:100%;aspect-ratio:3/4;overflow:hidden;border:none;padding:0;
+          background:${V2.boneDeep};cursor:pointer;border-radius:8px;}
+        .v2-saved-cell .v2-shot img{width:100%;height:100%;object-fit:cover;display:block;}
+        .v2-saved-cell .v2-heart{position:absolute;top:6px;right:6px;}
+        .v2-saved-name{font-size:12.5px;margin:9px 0 2px;line-height:1.3;}
+        .v2-saved-price{font-size:12px;color:${V2.ink45};}
+        @media(min-width:760px){.v2-saved-grid{grid-template-columns:repeat(3,1fr);}}
+
+        /* History — same panel language as the menu, anchored under its button. */
+        .v2-hist{position:absolute;z-index:80;left:12px;right:12px;
+          top:calc(env(safe-area-inset-top,0px) + 52px);max-width:340px;
+          background:${V2.glassDark};backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+          border:1px solid ${V2.glassEdge};border-radius:16px;padding:18px 18px 14px;
+          color:#fff;animation:v2-pop .34s ${V2.ease};max-height:66vh;overflow-y:auto;}
+        .v2-hist ul{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:2px;}
+        .v2-hist li button{width:100%;text-align:left;background:none;border:none;cursor:pointer;
+          color:#fff;font-family:${V2.sans};font-size:14px;line-height:1.4;padding:9px 8px;
+          border-radius:8px;transition:background .18s ${V2.ease};}
+        .v2-hist li button:hover{background:rgba(255,255,255,.1);}
+        .v2-hist-empty{font-size:13px;color:rgba(255,255,255,.55);margin:10px 0 4px;}
 
         .v2-minibag{position:absolute;z-index:46;top:calc(env(safe-area-inset-top,0px) + 62px);right:12px;
           display:flex;gap:6px;padding:6px;border-radius:12px;background:${V2.glassDark};
@@ -1219,7 +1377,17 @@ export default function DiscernV2({
         .v2-bar.focus{background:rgba(26,24,21,.9);}
         .v2-plus,.v2-send,.v2-clear{flex-shrink:0;border:none;cursor:pointer;display:flex;align-items:center;
           justify-content:center;border-radius:50%;color:#fff;transition:background .2s ${V2.ease},transform .12s ${V2.ease};}
-        .v2-plus{width:38px;height:38px;background:rgba(255,255,255,.13);}
+        .v2-plus{width:38px;height:38px;background:rgba(255,255,255,.13);
+          display:flex;align-items:center;justify-content:center;border-radius:50%;
+          cursor:pointer;flex-shrink:0;color:inherit;}
+        .v2-plus:active{transform:scale(.9);}
+        /* Attached photos sit above the field, inside the same glass bar. */
+        .v2-shots{display:flex;gap:7px;flex-wrap:wrap;width:100%;order:-1;margin:0 0 9px;}
+        .v2-shot-chip{position:relative;width:44px;height:44px;border-radius:8px;overflow:hidden;}
+        .v2-shot-chip img{width:100%;height:100%;object-fit:cover;display:block;}
+        .v2-shot-chip button{position:absolute;top:2px;right:2px;width:15px;height:15px;
+          display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
+          background:rgba(0,0,0,.62);cursor:pointer;padding:0;}
         .v2-plus:active{transform:scale(.9);}
         .v2-clear{width:26px;height:26px;margin-bottom:6px;background:rgba(255,255,255,.16);}
         .v2-send{width:33px;height:33px;background:rgba(255,255,255,.13);
