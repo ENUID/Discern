@@ -413,9 +413,6 @@ export default function DiscernV2({
     setLoadPhase(0)
     setLoading(true); setLookOpen(false)
     const question = q.trim()
-    // Clear the composer on send. It was only ever emptied by the manual Clear
-    // button, so asking a second question appended it to the first.
-    setInput('')
     // The transcript so far, so a follow-up like "cheaper" has something to
     // refine rather than arriving as a fresh conversation.
     const history: V2Msg[] = turns.slice(0, 4).reverse().flatMap(t => ([
@@ -434,6 +431,7 @@ export default function DiscernV2({
       // shopper exactly where they were rather than inventing a surface to put
       // prose on.
       if (!sections.length && !res.didSearch) {
+        setInput('')
         setLoading(false)
         return
       }
@@ -449,6 +447,13 @@ export default function DiscernV2({
       console.error('[v2] query failed:', e)
       setTurns(prev => [{ id: `err-${prev.length}`, question, didSearch: true, sections: [] }, ...prev])
     } finally {
+      // Cleared here, not at send: the reference keeps what you asked visible in
+      // the bar for the whole wait, so the query and the loading state read as
+      // one continuous act, and the bar only empties once there is something to
+      // look at. Clearing on send made the question vanish the instant you
+      // committed to it. (It previously never cleared at all, which is what let
+      // a second question concatenate onto the first.)
+      setInput('')
       setView('results')
       scrollRef.current?.scrollTo({ top: 0 })
       setLoading(false)
