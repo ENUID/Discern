@@ -51,6 +51,18 @@ export type V2Product = {
   howToStyle?: string
   details?: string
 }
+/** One exchange. The answer and the products it produced are one object,
+ *  because they are one response — the reply used to be sliced to 90 characters
+ *  as a caption and otherwise thrown away. */
+export type V2Turn = {
+  id: string
+  question: string
+  answer?: string
+  didSearch: boolean
+  sections: V2Section[]
+}
+/** Transcript entry sent back to the stylist so follow-ups have context. */
+export type V2Msg = { role: 'user' | 'assistant'; content: string }
 export type V2Section = { title: string; subtitle?: string; hero?: V2Product; products: V2Product[] }
 export type V2CartLine = { product: V2Product; color?: string; size?: string; qty: number }
 
@@ -133,6 +145,22 @@ function Img({ src, alt = '', className, ...rest }: React.ImgHTMLAttributes<HTML
   return <img ref={ref} src={src} alt={alt} className={className} onError={() => setFailedSrc(src)} {...rest} />
 }
 
+/** Shows for a few seconds above the composer, then clears itself. Hovering
+ *  holds it, so a reply is never yanked away mid-read. */
+function Aside({ text, onDone }: { text: string; onDone: () => void }) {
+  const [held, setHeld] = useState(false)
+  useEffect(() => {
+    if (held) return
+    const t = setTimeout(onDone, 4200)
+    return () => clearTimeout(t)
+  }, [held, onDone, text])
+  return (
+    <div className="v2-aside" role="status" onMouseEnter={() => setHeld(true)} onMouseLeave={() => setHeld(false)}>
+      {text}
+    </div>
+  )
+}
+
 function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: React.MouseEvent) => void; size?: number; ghost?: boolean }) {
   return (
     <button type="button" aria-label={on ? 'Saved' : 'Save'} onClick={onClick}
@@ -147,7 +175,10 @@ export default function DiscernV2({
   heroMedia = '/v2/hero.jpg', heroPoster, onQuery, onFeatured,
 }: {
   heroMedia?: string; heroPoster?: string
-  onQuery?: (q: string) => Promise<{ sections: V2Section[]; look?: V2Product[] }>
+  onQuery?: (q: string, history: V2Msg[]) => Promise<{
+    sections: V2Section[]; look?: V2Product[]
+    answer?: string; didSearch?: boolean; light?: boolean
+  }>
   /** Real catalogue imagery for the three hero cards. Supplying this is what
    *  keeps the opening screen from depending on hand-placed jpgs. */
   onFeatured?: () => Promise<string[]>
@@ -157,7 +188,12 @@ export default function DiscernV2({
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadPhase, setLoadPhase] = useState(0)
-  const [sections, setSections] = useState<V2Section[]>([])
+  // Turns, not sections. Each query used to replace the results wholesale, so
+  // the previous answer and its products were destroyed on every follow-up.
+  const [turns, setTurns] = useState<V2Turn[]>([])
+  /** A one-line reply that surfaces at the composer and fades. Small talk must
+   *  not become a spread in what is otherwise a lookbook. */
+  const [aside, setAside] = useState<string | null>(null)
   const [look, setLook] = useState<V2Product[] | null>(null)
   const [lookOpen, setLookOpen] = useState(false)
   const [product, setProduct] = useState<V2Product | null>(null)
@@ -294,6 +330,10 @@ export default function DiscernV2({
 
   // Pieces offered under HOW TO STYLE. The current look is the truest answer to
   // "what finishes this"; failing that, fall back to the rest of the results.
+  /** The newest turn's results — what "the current results" meant before turns
+   *  existed. */
+  const sections = useMemo(() => turns[0]?.sections ?? [], [turns])
+
   const styleWith = useMemo(() => {
     if (!product) return []
     const pool = (look?.length ? look : sections.flatMap(s => [...(s.hero ? [s.hero] : []), ...s.products]))
@@ -347,7 +387,7 @@ export default function DiscernV2({
       else io.observe(el)
     })
     return () => io.disconnect()
-  }, [sections, view])
+  }, [turns, view])
 
   useEffect(() => {
     if (!onFeatured) return
@@ -389,21 +429,47 @@ export default function DiscernV2({
     taRef.current?.blur()
     setLoadPhase(0)
     setLoading(true); setLookOpen(false)
+    const question = q.trim()
+    // Clear the composer on send. It was only ever emptied by the manual Clear
+    // button, so asking a second question appended it to the first.
+    setInput('')
+    // The transcript so far, so a follow-up like "cheaper" has something to
+    // refine rather than arriving as a fresh conversation.
+    const history: V2Msg[] = turns.slice(0, 4).reverse().flatMap(t => ([
+      { role: 'user' as const, content: t.question },
+      ...(t.answer ? [{ role: 'assistant' as const, content: t.answer }] : []),
+    ]))
     try {
-      const res = onQuery ? await onQuery(q.trim()) : { sections: [], look: undefined }
-      setSections(res.sections ?? [])
+      const res = onQuery
+        ? await onQuery(question, history)
+        : { sections: [], look: undefined, answer: undefined, didSearch: false, light: false }
+      const sections = res.sections ?? []
+
+      // Light replies leave no trace. Without this every "thanks" would put
+      // "Anytime." between two product spreads.
+      const isLight = res.light === true || (!sections.length && !res.didSearch && (res.answer?.length ?? 0) < 80)
+      if (isLight && res.answer) {
+        setAside(res.answer)
+        setLoading(false)
+        return
+      }
+
+      setTurns(prev => [{
+        id: `${prev.length}-${question.slice(0, 24)}`,
+        question, answer: res.answer, didSearch: res.didSearch === true, sections,
+      }, ...prev].slice(0, 12))
       if (res.look?.length) { setLook(res.look); setLookOpen(true) }
     } catch (e) {
       // A failed lookup still lands on the results view — the empty state says
       // so plainly, which is calmer than an error dialog over the boutique.
       console.error('[v2] query failed:', e)
-      setSections([])
+      setTurns(prev => [{ id: `err-${prev.length}`, question, didSearch: true, sections: [] }, ...prev])
     } finally {
       setView('results')
       scrollRef.current?.scrollTo({ top: 0 })
       setLoading(false)
     }
-  }, [loading, onQuery])
+  }, [loading, onQuery, turns])
 
   // Browsing entries genuinely are searches. The rest are destinations, and
   // used to be searches for their own label.
@@ -559,16 +625,32 @@ export default function DiscernV2({
         {/* 2 · RESULTS */}
         {view === 'results' && (
           <section className="v2-results">
-            {sections.length > 0 && (
-              <h2 className="v2-intro v2-rise">Here’s what fits.</h2>
-            )}
-            {sections.length === 0 && (
-              <div className="v2-empty">
-                <h2>No match</h2>
-                <p>Nothing in the catalogue genuinely fits that. Change the colour, fabric or budget and I’ll look again.</p>
-              </div>
-            )}
-            {sections.map((s, si) => (
+            {turns.map((turn, ti) => (
+            <div className="v2-spread" key={turn.id}>
+              {/* The answer occupies the slot the static "Here's what fits."
+                  headline used to. It is not a chat bubble and not a caption —
+                  it is the lede, and the products below are its evidence. It
+                  sticks while you browse them, so which question you are seeing
+                  the answer to is never in doubt. */}
+              {turn.answer ? (
+                <div className="v2-say v2-rise">
+                  <span className="v2-say-q">{turn.question}</span>
+                  <p>{turn.answer}</p>
+                </div>
+              ) : ti === 0 && turn.sections.length > 0 ? (
+                <h2 className="v2-intro v2-rise">Here’s what fits.</h2>
+              ) : null}
+
+              {/* "No match" is only honest when a search actually ran. It used
+                  to fire for every conversational turn, so asking "does navy go
+                  with olive" was answered by blaming the catalogue. */}
+              {turn.sections.length === 0 && turn.didSearch && (
+                <div className="v2-empty">
+                  <h2>No match</h2>
+                  <p>Nothing in the catalogue genuinely fits that. Change the colour, fabric or budget and I’ll look again.</p>
+                </div>
+              )}
+            {turn.sections.map((s, si) => (
               <React.Fragment key={si}>
                 <div className="v2-sec v2-rise">
                   <h2>{s.title}</h2>
@@ -603,6 +685,8 @@ export default function DiscernV2({
                 )}
 
               </React.Fragment>
+            ))}
+            </div>
             ))}
           </section>
         )}
@@ -813,13 +897,13 @@ export default function DiscernV2({
           the screen — there is nothing behind it worth keeping. Every search
           after that keeps your results on screen and narrates itself with a
           small pill instead. */}
-      {loading && sections.length > 0 && (
+      {loading && turns.length > 0 && (
         <div className="v2-crafting" style={{ bottom: `calc(var(--bar) + 54px + ${kb}px)` }}>
           <Progress light />
           <span>{V2_LOADING[loadPhase][0]}{V2_LOADING[loadPhase][1]}</span>
         </div>
       )}
-      {loading && sections.length === 0 && (
+      {loading && turns.length === 0 && (
         <div className="v2-loading">
           <h2 key={loadPhase}>{V2_LOADING[loadPhase][0]}<em>{V2_LOADING[loadPhase][1]}</em></h2>
           <Progress />
@@ -844,6 +928,10 @@ export default function DiscernV2({
           <a href="mailto:help@discern.com">help@discern.com</a>
         </div>
       </nav>
+
+      {/* A light reply — "Anytime." — surfaces here and fades. It deliberately
+          creates no spread, so the scroll stays a lookbook. */}
+      {aside && <Aside text={aside} onDone={() => setAside(null)} />}
 
       {/* Saved — the hearts finally have somewhere to lead. Same sheet family as
           the bag, because both are "things you have set aside". */}
@@ -1039,6 +1127,30 @@ export default function DiscernV2({
         .v2-brand{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;pointer-events:none;}
         .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.36em;text-indent:.36em;white-space:nowrap;}
         .v2-dot{position:absolute;top:6px;right:5px;width:5px;height:5px;border-radius:50%;background:currentColor;}
+
+        /* ── A spread: one exchange, answer then evidence ─────────────────── */
+        .v2-spread{margin:0 0 8vh;}
+        .v2-spread:last-child{margin-bottom:4vh;}
+        /* The answer sticks while its own products scroll past, so the question
+           being answered is never off-screen and out of mind. */
+        .v2-say{position:sticky;top:calc(env(safe-area-inset-top,0px) + 54px);z-index:3;
+          padding:18px 20px 20px;margin:0 0 26px;
+          background:linear-gradient(${V2.bone} 78%, rgba(244,243,241,0));}
+        .v2-say-q{display:block;font-size:11px;letter-spacing:.15em;text-transform:uppercase;
+          color:${V2.ink45};margin:0 0 10px;}
+        .v2-say p{font-family:${V2.display};font-weight:500;font-size:clamp(21px,3.4vw,30px);
+          line-height:1.24;letter-spacing:-.028em;color:${V2.ink};margin:0;max-width:22ch;}
+        @media(min-width:760px){.v2-say p{max-width:30ch;}}
+
+        /* The transient reply. Sits above the bar, never in the scroll. */
+        .v2-aside{position:absolute;z-index:78;left:50%;transform:translateX(-50%);
+          bottom:calc(var(--bar) + env(safe-area-inset-bottom,0px) + 18px);
+          max-width:min(440px,calc(100% - 32px));padding:13px 18px;border-radius:13px;
+          background:${V2.glassDark};backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+          border:1px solid ${V2.glassEdge};color:#fff;font-family:${V2.sans};font-size:14px;
+          line-height:1.45;animation:v2-aside-in .32s ${V2.ease};}
+        @keyframes v2-aside-in{from{opacity:0;transform:translateX(-50%) translateY(8px)}
+          to{opacity:1;transform:translateX(-50%) translateY(0)}}
 
         /* Saved grid — two up, image-led, the name and price quiet beneath. */
         .v2-saved-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 12px;}

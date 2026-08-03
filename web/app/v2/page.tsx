@@ -9,6 +9,7 @@
  */
 import React, { useCallback } from 'react'
 import DiscernV2, { type V2Product, type V2Section } from '@/features/v2/DiscernV2'
+import type { V2Msg } from '@/features/v2/DiscernV2'
 
 // The stylist endpoint streams newline-delimited JSON: many {type:'progress'}
 // lines then a single {type:'result'}. Same reader shape as the main app.
@@ -103,11 +104,14 @@ export default function V2Page() {
       .slice(0, 12)
   }, [])
 
-  const onQuery = useCallback(async (q: string) => {
+  // `messages` was hardcoded to [] — v2 had no memory at all, so every turn
+  // arrived as turn one and a follow-up like "cheaper" was a brand-new
+  // conversation. The caller owns the transcript and passes it in.
+  const onQuery = useCallback(async (q: string, history: V2Msg[] = []) => {
     const res = await fetch('/api/ai/stylist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: q, messages: [] }),
+      body: JSON.stringify({ question: q, messages: history.slice(-6) }),
     })
     const data = await readStream(res)
 
@@ -120,7 +124,7 @@ export default function V2Page() {
       for (const g of data.foundProductGroups) {
         const products = (g?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
         if (!products.length) continue
-        sections.push({ title: g.label ?? 'Selection', subtitle: data?.reply?.slice(0, 90), hero: products[0], products: products.slice(1) })
+        sections.push({ title: g.label ?? 'Selection', hero: products[0], products: products.slice(1) })
       }
     }
 
@@ -128,7 +132,7 @@ export default function V2Page() {
     if (!sections.length && Array.isArray(data?.foundProducts) && data.foundProducts.length > 0) {
       const products = data.foundProducts.map(toProduct).filter((p: V2Product) => p.image)
       if (products.length) {
-        sections.push({ title: 'The Selection', subtitle: data?.reply?.slice(0, 90), hero: products[0], products: products.slice(1) })
+        sections.push({ title: 'The Selection', hero: products[0], products: products.slice(1) })
       }
     }
 
@@ -139,7 +143,19 @@ export default function V2Page() {
       look = (data.outfitGroups[0]?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
     }
 
-    return { sections, look }
+    // The reply was previously used only as a 90-character section caption and
+    // otherwise discarded, and a conversational turn (no products) rendered as
+    // "No match — nothing in the catalogue fits that", blaming the catalogue
+    // for something that was never a catalogue query. Both are fixed by
+    // carrying two more fields: the answer itself, and whether the model
+    // actually searched. `searchQuery` is already on the wire.
+    return {
+      sections,
+      look,
+      answer: typeof data?.reply === 'string' ? data.reply : undefined,
+      didSearch: typeof data?.searchQuery === 'string' && data.searchQuery.length > 0,
+      light: data?.light === true,
+    }
   }, [])
 
   return <DiscernV2 onQuery={onQuery} onFeatured={onFeatured} />
