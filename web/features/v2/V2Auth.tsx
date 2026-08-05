@@ -34,12 +34,27 @@ import { ArrowUpIcon, CloseIcon } from '@/components/icons'
 
 export type V2AuthReason = 'save' | 'bag' | 'orders' | 'account' | null
 
-/** The reason is the headline. A generic one wastes the only moment you have. */
+/**
+ * The reason is the headline, and each one names a real consequence rather than
+ * a feature. The rejected drafts were all the same generic register — "wherever
+ * you are", "pick up where you left off", "everything in one place" — sentences
+ * that could sit on any product's login and therefore mean nothing on this one.
+ *
+ * Each line below is instead specific to how Discern actually works: pieces come
+ * from hundreds of independent brands, the bag spans several of them at once,
+ * and Fabrics is a stylist whose whole value is remembering what suits you.
+ */
 const COPY: Record<Exclude<V2AuthReason, null>, { eyebrow: string; title: string }> = {
-  save:    { eyebrow: 'To keep this piece', title: 'Everything you save,\nwherever you are.' },
-  bag:     { eyebrow: 'To hold your bag',   title: 'What you gather\nstays gathered.' },
-  orders:  { eyebrow: 'To find your orders', title: 'Every order,\nin one place.' },
-  account: { eyebrow: 'Your account',        title: 'Pick up exactly\nwhere you left off.' },
+  // The real pain isn't "sync" — it's losing something good and not being able
+  // to find your way back to it.
+  save:    { eyebrow: 'Keep this piece', title: 'Nothing good should have\nto be found twice.' },
+  // Concrete and physical. A bag that survives you closing the tab.
+  bag:     { eyebrow: 'Hold your bag',   title: 'Close the tab.\nKeep the bag.' },
+  // True to the model: you buy across many brands, and nobody else collects
+  // those in one place for you.
+  orders:  { eyebrow: 'Find your orders', title: 'Bought across ten brands.\nKept in one.' },
+  // The actual differentiator. An account is what makes the memory real.
+  account: { eyebrow: 'Your account',     title: 'A stylist who stops\nstarting over.' },
 }
 
 const CODE_LEN = 6
@@ -86,7 +101,7 @@ export default function V2Auth({
 
   const sendCode = useCallback(async () => {
     const addr = email.trim().toLowerCase()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) { setErr('That address looks incomplete.'); return }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) { setErr('That address is missing something.'); return }
     setBusy(true); setErr('')
     try {
       const r = await fetch('/api/auth/send-code', {
@@ -95,13 +110,13 @@ export default function V2Auth({
       })
       if (!r.ok) {
         const d = await r.json().catch(() => ({}))
-        setErr(d?.error === 'rate_limited' ? 'Too many codes just now. Give it a minute.' : 'Could not send that code.')
+        setErr(d?.error === 'rate_limited' ? 'A few too many just now. One minute and try again.' : 'That did not send. Try once more.')
         return
       }
       setStep('code'); setCooldown(30)
       setTimeout(() => cellRefs.current[0]?.focus(), 300)
     } catch {
-      setErr('Could not reach the server.')
+      setErr('No connection. Check your signal and try again.')
     } finally { setBusy(false) }
   }, [email])
 
@@ -112,13 +127,13 @@ export default function V2Auth({
         email: email.trim().toLowerCase(), code: full, redirect: false,
       })
       if (res?.error) {
-        setErr('That code did not match.')
+        setErr('That code did not match. Retype it, or send a fresh one.')
         setCode(Array(CODE_LEN).fill('')); cellRefs.current[0]?.focus()
         return
       }
       onSignedIn?.(); onClose()
     } catch {
-      setErr('Something went wrong signing you in.')
+      setErr('That did not go through. Try the code once more.')
     } finally { setBusy(false) }
   }, [email, onClose, onSignedIn])
 
@@ -153,8 +168,9 @@ export default function V2Auth({
         <button className="v2a-x" aria-label="Close" onClick={onClose}><CloseIcon size={16} color="#fff" /></button>
 
         <div className="v2a-body">
-          <span className="v2a-eyebrow">{step === 'email' ? copy.eyebrow : 'Check your email'}</span>
-          <h2>{step === 'email' ? copy.title : `Six digits, sent to\n${email.trim().toLowerCase()}`}</h2>
+          <span className="v2a-eyebrow">{step === 'email' ? copy.eyebrow : 'Check your inbox'}</span>
+          <h2>{step === 'email' ? copy.title : `Six digits are on\ntheir way to you.`}</h2>
+          {step === 'code' && <p className="v2a-sent">{email.trim().toLowerCase()}</p>}
 
           {step === 'email' ? (
             <>
@@ -163,7 +179,7 @@ export default function V2Auth({
               <div className={`v2a-bar ${valid ? 'ready' : ''}`}>
                 <input
                   ref={emailRef} type="email" inputMode="email" autoComplete="email"
-                  value={email} placeholder="your email"
+                  value={email} placeholder="where should the code go?"
                   onChange={e => { setEmail(e.target.value); setErr('') }}
                   onKeyDown={e => { if (e.key === 'Enter' && valid && !busy) sendCode() }}
                   aria-label="Email address"
@@ -201,15 +217,19 @@ export default function V2Auth({
               <div className="v2a-quiets">
                 <button disabled={cooldown > 0 || busy}
                   onClick={() => { setCode(Array(CODE_LEN).fill('')); sendCode() }}>
-                  {cooldown > 0 ? `Send another in ${cooldown}s` : 'Send another code'}
+                  {cooldown > 0 ? `Another in ${cooldown}s` : 'Send another'}
                 </button>
-                <button onClick={() => { setStep('email'); setErr('') }}>Different email</button>
+                <button onClick={() => { setStep('email'); setErr('') }}>Wrong address</button>
               </div>
             </>
           )}
 
           {err && <p className="v2a-err" role="alert">{err}</p>}
-          <p className="v2a-fine">Browsing needs no account. This is only for what you keep.</p>
+          <p className="v2a-fine">
+            {step === 'email'
+              ? 'No password, and no separate sign-up. The code does both.'
+              : 'The code lasts fifteen minutes. Nothing else is needed.'}
+          </p>
         </div>
       </div>
 
@@ -238,7 +258,8 @@ export default function V2Auth({
         /* One family, display weight, editorial scale — the register the rest of
            v2 sets its headlines in. */
         .v2a h2{font-family:${V2.display};font-weight:500;font-size:clamp(28px,6.6vw,42px);
-          line-height:1.08;letter-spacing:-.035em;margin:0 0 30px;white-space:pre-line;}
+          line-height:1.06;letter-spacing:-.035em;margin:0 0 32px;white-space:pre-line;
+          text-wrap:balance;}
 
         /* ── The composer, reused ─────────────────────────────────────────── */
         .v2a-bar{display:flex;align-items:center;gap:8px;padding:7px 7px 7px 20px;
@@ -283,7 +304,14 @@ export default function V2Auth({
         .v2a-quiets button:hover:not(:disabled){color:#fff;}
         .v2a-quiets button:disabled{opacity:.45;cursor:default;}
 
-        .v2a-err{font-size:12.5px;color:#FF9B93;margin:16px 0 0;}
+        /* The address, set apart from the headline. It is the one thing on this
+           step the shopper needs to check, so it gets its own line and its own
+           weight rather than being swallowed into a sentence. */
+        .v2a-sent{font-family:${V2.sans};font-size:14.5px;color:#fff;margin:-18px 0 26px;
+          padding:9px 16px;border-radius:999px;display:inline-block;
+          background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);
+          backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);}
+        .v2a-err{font-size:12.5px;line-height:1.5;color:#FF9B93;margin:16px 0 0;}
         .v2a-fine{font-size:11px;line-height:1.5;color:rgba(255,255,255,.42);margin:22px 0 0;}
 
         @media(min-width:760px){
