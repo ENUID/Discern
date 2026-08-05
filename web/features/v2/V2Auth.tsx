@@ -127,13 +127,13 @@ export default function V2Auth({
         email: email.trim().toLowerCase(), code: full, redirect: false,
       })
       if (res?.error) {
-        setErr('That code did not match. Retype it, or send a fresh one.')
+        setErr('Those six do not match. Retype them, or send a new code.')
         setCode(Array(CODE_LEN).fill('')); cellRefs.current[0]?.focus()
         return
       }
       onSignedIn?.(); onClose()
     } catch {
-      setErr('That did not go through. Try the code once more.')
+      setErr('That did not go through. Try those six once more.')
     } finally { setBusy(false) }
   }, [email, onClose, onSignedIn])
 
@@ -168,8 +168,8 @@ export default function V2Auth({
         <button className="v2a-x" aria-label="Close" onClick={onClose}><CloseIcon size={16} color="#fff" /></button>
 
         <div className="v2a-body">
-          <span className="v2a-eyebrow">{step === 'email' ? copy.eyebrow : 'Check your inbox'}</span>
-          <h2>{step === 'email' ? copy.title : `Six digits are on\ntheir way to you.`}</h2>
+          <span className="v2a-eyebrow">{step === 'email' ? copy.eyebrow : 'Just sent'}</span>
+          <h2>{step === 'email' ? copy.title : `Six digits now.\nNothing to remember later.`}</h2>
           {step === 'code' && <p className="v2a-sent">{email.trim().toLowerCase()}</p>}
 
           {step === 'email' ? (
@@ -189,10 +189,15 @@ export default function V2Auth({
                 </button>
               </div>
 
+              {/* The mark, not just the word. A Google button without the G is
+                  the one thing on a sign-in that people scan for rather than
+                  read, and its absence reads as a link to something else. Same
+                  four-colour asset the main app already ships. */}
               <button
                 className="v2a-alt"
                 onClick={() => signIn('google', { callbackUrl: window.location.origin + '/v2' })}
               >
+                <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20s20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/><path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/></svg>
                 Continue with Google
               </button>
             </>
@@ -217,7 +222,7 @@ export default function V2Auth({
               <div className="v2a-quiets">
                 <button disabled={cooldown > 0 || busy}
                   onClick={() => { setCode(Array(CODE_LEN).fill('')); sendCode() }}>
-                  {cooldown > 0 ? `Another in ${cooldown}s` : 'Send another'}
+                  {cooldown > 0 ? `New code in ${cooldown}s` : 'Send a new one'}
                 </button>
                 <button onClick={() => { setStep('email'); setErr('') }}>Wrong address</button>
               </div>
@@ -227,8 +232,8 @@ export default function V2Auth({
           {err && <p className="v2a-err" role="alert">{err}</p>}
           <p className="v2a-fine">
             {step === 'email'
-              ? 'No password, and no separate sign-up. The code does both.'
-              : 'The code lasts fifteen minutes. Nothing else is needed.'}
+              ? 'No password to invent, and none to forget.'
+              : 'Good for fifteen minutes.'}
           </p>
         </div>
       </div>
@@ -283,6 +288,7 @@ export default function V2Auth({
         @keyframes v2a-rot{to{transform:rotate(360deg)}}
 
         .v2a-alt{width:100%;margin:12px 0 0;padding:15px;border-radius:30px;cursor:pointer;
+          display:flex;align-items:center;justify-content:center;gap:10px;
           border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.07);
           backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
           font-family:${V2.sans};font-size:14px;color:#fff;transition:background .24s ${V2.ease};}
