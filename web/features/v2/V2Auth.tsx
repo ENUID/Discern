@@ -138,7 +138,7 @@ export default function V2Auth({
           <div className="v2a-sub">
             {step === 'code'
               ? 'Enter the code we sent to your email.'
-              : 'Stop comparing tabs.\nStart understanding products.'}
+              : 'Stop comparing tabs.\nStart understanding fashion.'}
           </div>
 
           {step === 'email' && (
