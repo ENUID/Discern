@@ -3,27 +3,27 @@
 /**
  * Sign-in for v2.
  *
- * The first version of this was a white card in the middle of the screen — a
- * generic auth modal that happened to be sitting inside v2. It matched nothing.
- * This is built out of v2's own language instead:
+ * Third attempt, and the two earlier ones were wrong in opposite directions. The
+ * first was a white card that matched nothing. The second went full-bleed, which
+ * on a phone meant a whole screen of blurred nothing with a paragraph floating
+ * at the bottom — and it left a large empty area above the copy where an image
+ * plainly belonged.
  *
- *   · Full-bleed. The boutique stays visible, blurred, behind a scrim. v2 is an
- *     imagery-first interface and its overlays float over the imagery rather
- *     than covering it with a panel.
- *   · The field IS the composer. v2's single signature control is a frosted
- *     pill you type into with a round button on its right. Signing in reuses
- *     that exact shape and weight, so the moment reads as the same app rather
- *     than a form bolted on. Nothing here is a boxed input.
- *   · One family, display weight. Per features/v2/theme.ts the type never
- *     switches face — display sizes get tighter tracking and more weight. The
- *     headline is Geist at editorial scale with -.035em tracking, the same
- *     register as "Know what to buy."
+ * This is a compact sheet, image-led:
  *
- * Two behaviours carried over deliberately: it is never a wall (browsing needs
- * no account, and this is always dismissible), and the headline is the reason
- * you were asked rather than a generic "Sign in".
+ *   · It is sized like the rest of v2's overlays, not like a takeover. A phone
+ *     gets a sheet, not a screen.
+ *   · The image comes first, and it is the actual piece you were trying to keep.
+ *     The words underneath refer to that image rather than to accounts in the
+ *     abstract, which is what makes the moment specific instead of generic.
+ *   · The copy is plain. Earlier drafts reached for aphorisms — "Nothing good
+ *     should have to be found twice" — which is exactly the register that reads
+ *     as written-by-a-machine. A sign-in should say what it is and get out of
+ *     the way. Two short lines, no slogans.
  *
- * Auth itself is the existing system — POST /api/auth/send-code, then
+ * It is never a wall: browsing needs no account, and this is always dismissible.
+ *
+ * Auth is the existing system — POST /api/auth/send-code, then
  * signIn('email-otp', {email, code}), plus signIn('google').
  */
 
@@ -34,36 +34,24 @@ import { ArrowUpIcon, CloseIcon } from '@/components/icons'
 
 export type V2AuthReason = 'save' | 'bag' | 'orders' | 'account' | null
 
-/**
- * The reason is the headline, and each one names a real consequence rather than
- * a feature. The rejected drafts were all the same generic register — "wherever
- * you are", "pick up where you left off", "everything in one place" — sentences
- * that could sit on any product's login and therefore mean nothing on this one.
- *
- * Each line below is instead specific to how Discern actually works: pieces come
- * from hundreds of independent brands, the bag spans several of them at once,
- * and Fabrics is a stylist whose whole value is remembering what suits you.
- */
-const COPY: Record<Exclude<V2AuthReason, null>, { eyebrow: string; title: string }> = {
-  // The real pain isn't "sync" — it's losing something good and not being able
-  // to find your way back to it.
-  save:    { eyebrow: 'Keep this piece', title: 'Nothing good should have\nto be found twice.' },
-  // Concrete and physical. A bag that survives you closing the tab.
-  bag:     { eyebrow: 'Hold your bag',   title: 'Close the tab.\nKeep the bag.' },
-  // True to the model: you buy across many brands, and nobody else collects
-  // those in one place for you.
-  orders:  { eyebrow: 'Find your orders', title: 'Bought across ten brands.\nKept in one.' },
-  // The actual differentiator. An account is what makes the memory real.
-  account: { eyebrow: 'Your account',     title: 'A stylist who stops\nstarting over.' },
+/** Plain, two lines, no slogans. The image carries the specificity. */
+const COPY: Record<Exclude<V2AuthReason, null>, { title: string; sub: string }> = {
+  save:    { title: 'Save this piece', sub: 'Sign in to keep it.' },
+  bag:     { title: 'Keep your bag',   sub: 'Sign in so it is still here later.' },
+  orders:  { title: 'Your orders',     sub: 'Sign in to see them.' },
+  account: { title: 'Sign in',         sub: 'For your saves and your bag.' },
 }
 
 const CODE_LEN = 6
 
 export default function V2Auth({
-  open, reason, onClose, onSignedIn,
+  open, reason, image, onClose, onSignedIn,
 }: {
   open: boolean
   reason: V2AuthReason
+  /** The piece this was triggered by. The copy refers to it, so it is the
+   *  whole reason the sheet has a picture at all. */
+  image?: string
   onClose: () => void
   onSignedIn?: () => void
 }) {
@@ -82,7 +70,7 @@ export default function V2Auth({
   useEffect(() => {
     if (!open) return
     setStep('email'); setCode(Array(CODE_LEN).fill('')); setErr(''); setBusy(false)
-    const t = setTimeout(() => emailRef.current?.focus(), 380)
+    const t = setTimeout(() => emailRef.current?.focus(), 360)
     return () => clearTimeout(t)
   }, [open])
 
@@ -101,7 +89,7 @@ export default function V2Auth({
 
   const sendCode = useCallback(async () => {
     const addr = email.trim().toLowerCase()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) { setErr('That address is missing something.'); return }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) { setErr('Check the address.'); return }
     setBusy(true); setErr('')
     try {
       const r = await fetch('/api/auth/send-code', {
@@ -110,13 +98,13 @@ export default function V2Auth({
       })
       if (!r.ok) {
         const d = await r.json().catch(() => ({}))
-        setErr(d?.error === 'rate_limited' ? 'A few too many just now. One minute and try again.' : 'That did not send. Try once more.')
+        setErr(d?.error === 'rate_limited' ? 'Too many just now. Wait a minute.' : 'That did not send.')
         return
       }
       setStep('code'); setCooldown(30)
-      setTimeout(() => cellRefs.current[0]?.focus(), 300)
+      setTimeout(() => cellRefs.current[0]?.focus(), 280)
     } catch {
-      setErr('No connection. Check your signal and try again.')
+      setErr('No connection.')
     } finally { setBusy(false) }
   }, [email])
 
@@ -127,19 +115,18 @@ export default function V2Auth({
         email: email.trim().toLowerCase(), code: full, redirect: false,
       })
       if (res?.error) {
-        setErr('Those six do not match. Retype them, or send a new code.')
+        setErr('Wrong code.')
         setCode(Array(CODE_LEN).fill('')); cellRefs.current[0]?.focus()
         return
       }
       onSignedIn?.(); onClose()
     } catch {
-      setErr('That did not go through. Try those six once more.')
+      setErr('That did not work.')
     } finally { setBusy(false) }
   }, [email, onClose, onSignedIn])
 
   /** Auto-advances, backspaces into the previous cell, and takes a pasted code
-   *  into all six at once — the behaviours that separate a code field from six
-   *  text boxes. */
+   *  into all six at once. */
   const setCell = (i: number, raw: string) => {
     const chars = raw.replace(/\D/g, '')
     if (!chars) { setCode(c => { const n = [...c]; n[i] = ''; return n }); return }
@@ -164,166 +151,150 @@ export default function V2Auth({
   return (
     <>
       <div className="v2a-scrim" onClick={onClose} />
-      <div className="v2a" role="dialog" aria-modal="true" aria-label="Sign in">
-        <button className="v2a-x" aria-label="Close" onClick={onClose}><CloseIcon size={16} color="#fff" /></button>
+      <div className="v2a-wrap" role="dialog" aria-modal="true" aria-label="Sign in">
+        <div className="v2a">
+          <button className="v2a-x" aria-label="Close" onClick={onClose}><CloseIcon size={14} /></button>
 
-        <div className="v2a-body">
-          <span className="v2a-eyebrow">{step === 'email' ? copy.eyebrow : 'Just sent'}</span>
-          <h2>{step === 'email' ? copy.title : `Six digits now.\nNothing to remember later.`}</h2>
-          {step === 'code' && <p className="v2a-sent">{email.trim().toLowerCase()}</p>}
+          {/* The piece itself. Without it the sheet is a form, and the words
+              above the fields have nothing to point at. */}
+          {image && <div className="v2a-shot"><img src={image} alt="" /></div>}
 
-          {step === 'email' ? (
-            <>
-              {/* The composer, reused. Same frosted pill, same round action on
-                  the right — signing in is the same gesture as asking. */}
-              <div className={`v2a-bar ${valid ? 'ready' : ''}`}>
-                <input
-                  ref={emailRef} type="email" inputMode="email" autoComplete="email"
-                  value={email} placeholder="where should the code go?"
-                  onChange={e => { setEmail(e.target.value); setErr('') }}
-                  onKeyDown={e => { if (e.key === 'Enter' && valid && !busy) sendCode() }}
-                  aria-label="Email address"
-                />
-                <button className="v2a-go" onClick={sendCode} disabled={!valid || busy} aria-label="Continue">
-                  {busy ? <i className="v2a-spin" /> : <ArrowUpIcon size={16} color="#fff" />}
-                </button>
-              </div>
+          <div className="v2a-pad">
+            {step === 'email' ? (
+              <>
+                <h2>{copy.title}</h2>
+                <p className="v2a-sub">{copy.sub}</p>
 
-              {/* The mark, not just the word. A Google button without the G is
-                  the one thing on a sign-in that people scan for rather than
-                  read, and its absence reads as a link to something else. Same
-                  four-colour asset the main app already ships. */}
-              <button
-                className="v2a-alt"
-                onClick={() => signIn('google', { callbackUrl: window.location.origin + '/v2' })}
-              >
-                <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20s20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/><path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/></svg>
-                Continue with Google
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="v2a-code">
-                {code.map((c, i) => (
+                <div className={`v2a-bar ${valid ? 'ready' : ''}`}>
                   <input
-                    key={i}
-                    ref={el => { cellRefs.current[i] = el }}
-                    value={c}
-                    onChange={e => setCell(i, e.target.value)}
-                    onKeyDown={e => onCellKey(i, e)}
-                    inputMode="numeric"
-                    autoComplete={i === 0 ? 'one-time-code' : 'off'}
-                    maxLength={CODE_LEN}
-                    aria-label={`Digit ${i + 1}`}
-                    disabled={busy}
+                    ref={emailRef} type="email" inputMode="email" autoComplete="email"
+                    value={email} placeholder="Email"
+                    onChange={e => { setEmail(e.target.value); setErr('') }}
+                    onKeyDown={e => { if (e.key === 'Enter' && valid && !busy) sendCode() }}
+                    aria-label="Email address"
                   />
-                ))}
-              </div>
-              <div className="v2a-quiets">
-                <button disabled={cooldown > 0 || busy}
-                  onClick={() => { setCode(Array(CODE_LEN).fill('')); sendCode() }}>
-                  {cooldown > 0 ? `New code in ${cooldown}s` : 'Send a new one'}
-                </button>
-                <button onClick={() => { setStep('email'); setErr('') }}>Wrong address</button>
-              </div>
-            </>
-          )}
+                  <button className="v2a-go" onClick={sendCode} disabled={!valid || busy} aria-label="Continue">
+                    {busy ? <i className="v2a-spin" /> : <ArrowUpIcon size={15} color="#fff" />}
+                  </button>
+                </div>
 
-          {err && <p className="v2a-err" role="alert">{err}</p>}
-          <p className="v2a-fine">
-            {step === 'email'
-              ? 'No password to invent, and none to forget.'
-              : 'Good for fifteen minutes.'}
-          </p>
+                <button
+                  className="v2a-alt"
+                  onClick={() => signIn('google', { callbackUrl: window.location.origin + '/v2' })}
+                >
+                  <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden>
+                    <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C12.955 4 4 12.955 4 24s8.955 20 20 20s20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
+                    <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4C16.318 4 9.656 8.337 6.306 14.691z"/>
+                    <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
+                    <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+                  </svg>
+                  Continue with Google
+                </button>
+              </>
+            ) : (
+              <>
+                <h2>Enter the code</h2>
+                <p className="v2a-sub">Sent to {email.trim().toLowerCase()}</p>
+
+                <div className="v2a-code">
+                  {code.map((c, i) => (
+                    <input
+                      key={i}
+                      ref={el => { cellRefs.current[i] = el }}
+                      value={c}
+                      onChange={e => setCell(i, e.target.value)}
+                      onKeyDown={e => onCellKey(i, e)}
+                      inputMode="numeric"
+                      autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                      maxLength={CODE_LEN}
+                      aria-label={`Digit ${i + 1}`}
+                      disabled={busy}
+                    />
+                  ))}
+                </div>
+
+                <div className="v2a-quiets">
+                  <button disabled={cooldown > 0 || busy}
+                    onClick={() => { setCode(Array(CODE_LEN).fill('')); sendCode() }}>
+                    {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend'}
+                  </button>
+                  <button onClick={() => { setStep('email'); setErr('') }}>Change email</button>
+                </div>
+              </>
+            )}
+
+            {err && <p className="v2a-err" role="alert">{err}</p>}
+          </div>
         </div>
       </div>
 
       <style>{`
-        /* Full-bleed, over the boutique. The imagery stays — v2 never covers it
-           with a panel. */
-        .v2a-scrim{position:absolute;inset:0;z-index:85;background:rgba(18,17,16,.66);
-          backdrop-filter:blur(30px) saturate(120%);-webkit-backdrop-filter:blur(30px) saturate(120%);
-          animation:v2a-fade .42s ${V2.ease};}
+        .v2a-scrim{position:absolute;inset:0;z-index:85;background:rgba(20,18,16,.4);
+          backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);animation:v2a-fade .3s ${V2.ease};}
         @keyframes v2a-fade{from{opacity:0}to{opacity:1}}
 
-        .v2a{position:absolute;inset:0;z-index:86;display:flex;align-items:flex-end;justify-content:center;
-          padding:0 20px calc(var(--bar, 84px) + env(safe-area-inset-bottom,0px) + 26px);pointer-events:none;
-          font-family:${V2.sans};color:#fff;}
-        .v2a-body{pointer-events:auto;width:100%;max-width:min(560px,92vw);
-          animation:v2a-rise .52s ${V2.ease};}
-        @keyframes v2a-rise{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:none}}
+        /* A sheet, not a screen. It stops well short of the edges on a phone,
+           which is the whole difference from the version this replaces. */
+        .v2a-wrap{position:absolute;inset:0;z-index:86;display:flex;align-items:center;
+          justify-content:center;padding:20px;pointer-events:none;}
+        .v2a{pointer-events:auto;position:relative;width:100%;max-width:340px;
+          background:${V2.bone};border-radius:18px;overflow:hidden;
+          box-shadow:0 26px 70px rgba(0,0,0,.4);font-family:${V2.sans};color:${V2.ink};
+          animation:v2a-pop .4s ${V2.ease};}
+        @keyframes v2a-pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:none}}
 
-        .v2a-x{position:absolute;top:calc(env(safe-area-inset-top,0px) + 14px);right:16px;
-          width:40px;height:40px;display:flex;align-items:center;justify-content:center;
-          border:none;border-radius:50%;background:rgba(255,255,255,.13);cursor:pointer;pointer-events:auto;
-          backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);}
+        .v2a-x{position:absolute;top:12px;right:12px;z-index:2;width:28px;height:28px;
+          display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
+          background:rgba(255,255,255,.85);cursor:pointer;color:${V2.ink};
+          backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
 
-        .v2a-eyebrow{display:block;font-size:11px;letter-spacing:.18em;text-transform:uppercase;
-          color:rgba(255,255,255,.5);margin:0 0 14px;}
-        /* One family, display weight, editorial scale — the register the rest of
-           v2 sets its headlines in. */
-        .v2a h2{font-family:${V2.display};font-weight:500;font-size:clamp(28px,6.6vw,42px);
-          line-height:1.06;letter-spacing:-.035em;margin:0 0 32px;white-space:pre-line;
-          text-wrap:balance;}
+        /* The piece. 4:3 so it reads as a picture rather than a banner, and it
+           is the first thing in the sheet. */
+        .v2a-shot{width:100%;aspect-ratio:4/3;background:${V2.boneDeep};overflow:hidden;}
+        .v2a-shot img{width:100%;height:100%;object-fit:cover;display:block;}
 
-        /* ── The composer, reused ─────────────────────────────────────────── */
-        .v2a-bar{display:flex;align-items:center;gap:8px;padding:7px 7px 7px 20px;
-          border-radius:30px;background:${V2.glassDark};
-          backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%);
-          box-shadow:0 10px 40px rgba(0,0,0,.26),inset 0 1px 0 ${V2.glassEdge};
-          transition:background .3s ${V2.ease};}
-        .v2a-bar:focus-within{background:rgba(26,24,21,.9);}
+        .v2a-pad{padding:20px 20px 22px;}
+        .v2a h2{font-family:${V2.display};font-weight:600;font-size:19px;letter-spacing:-.02em;
+          margin:0 0 4px;}
+        .v2a-sub{font-size:13px;line-height:1.45;color:${V2.ink45};margin:0 0 16px;
+          overflow-wrap:anywhere;}
+
+        .v2a-bar{display:flex;align-items:center;gap:6px;padding:5px 5px 5px 14px;
+          border-radius:26px;background:rgba(26,26,28,.055);
+          border:1px solid rgba(26,26,28,.08);transition:border-color .22s ${V2.ease};}
+        .v2a-bar:focus-within{border-color:rgba(26,26,28,.3);}
         .v2a-bar input{flex:1;min-width:0;border:none;background:none;outline:none;
-          font-family:${V2.sans};font-size:16px;color:#fff;padding:12px 0;}
-        .v2a-bar input::placeholder{color:rgba(255,255,255,.42);}
-        .v2a-go{flex-shrink:0;width:40px;height:40px;display:flex;align-items:center;justify-content:center;
-          border:none;border-radius:50%;background:rgba(255,255,255,.13);cursor:pointer;
-          transition:background .24s ${V2.ease},transform .14s ${V2.ease};}
-        .v2a-bar.ready .v2a-go{background:#fff;}
-        .v2a-bar.ready .v2a-go svg{stroke:${V2.ink};}
-        .v2a-go:active{transform:scale(.88);}
-        .v2a-go:disabled{cursor:default;}
-        .v2a-spin{width:15px;height:15px;border:1.5px solid rgba(255,255,255,.3);border-top-color:#fff;
-          border-radius:50%;animation:v2a-rot .7s linear infinite;}
+          font-family:${V2.sans};font-size:15px;color:${V2.ink};padding:10px 0;}
+        .v2a-bar input::placeholder{color:rgba(26,26,28,.32);}
+        .v2a-go{flex-shrink:0;width:34px;height:34px;display:flex;align-items:center;
+          justify-content:center;border:none;border-radius:50%;background:rgba(26,26,28,.22);
+          cursor:pointer;transition:background .22s ${V2.ease},transform .12s ${V2.ease};}
+        .v2a-bar.ready .v2a-go{background:${V2.ink};}
+        .v2a-go:active{transform:scale(.9);}
+        .v2a-spin{width:13px;height:13px;border:1.5px solid rgba(255,255,255,.35);
+          border-top-color:#fff;border-radius:50%;animation:v2a-rot .7s linear infinite;}
         @keyframes v2a-rot{to{transform:rotate(360deg)}}
 
-        .v2a-alt{width:100%;margin:12px 0 0;padding:15px;border-radius:30px;cursor:pointer;
-          display:flex;align-items:center;justify-content:center;gap:10px;
-          border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.07);
-          backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-          font-family:${V2.sans};font-size:14px;color:#fff;transition:background .24s ${V2.ease};}
-        .v2a-alt:hover{background:rgba(255,255,255,.13);}
+        .v2a-alt{width:100%;margin:9px 0 0;padding:11px;border-radius:26px;cursor:pointer;
+          display:flex;align-items:center;justify-content:center;gap:9px;
+          border:1px solid rgba(26,26,28,.12);background:none;
+          font-family:${V2.sans};font-size:13.5px;color:${V2.ink};transition:background .2s ${V2.ease};}
+        .v2a-alt:hover{background:rgba(26,26,28,.04);}
 
-        /* ── Code ─────────────────────────────────────────────────────────── */
-        .v2a-code{display:grid;grid-template-columns:repeat(6,1fr);gap:9px;}
-        .v2a-code input{width:100%;aspect-ratio:1/1.2;text-align:center;border-radius:15px;
-          border:1px solid rgba(255,255,255,.14);background:${V2.glassDark};
-          backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
-          font-family:${V2.display};font-size:22px;font-weight:500;color:#fff;outline:none;
-          transition:border-color .22s ${V2.ease},background .22s ${V2.ease};}
-        .v2a-code input:focus{border-color:rgba(255,255,255,.62);background:rgba(26,24,21,.9);}
+        .v2a-code{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;}
+        .v2a-code input{width:100%;aspect-ratio:1/1.2;text-align:center;border-radius:10px;
+          border:1px solid rgba(26,26,28,.12);background:rgba(26,26,28,.04);
+          font-family:${V2.display};font-size:17px;font-weight:500;color:${V2.ink};outline:none;
+          transition:border-color .2s ${V2.ease};}
+        .v2a-code input:focus{border-color:${V2.ink};}
 
-        .v2a-quiets{display:flex;gap:18px;justify-content:center;margin:18px 0 0;}
-        .v2a-quiets button{border:none;background:none;cursor:pointer;padding:6px 2px;
-          font-family:${V2.sans};font-size:12.5px;color:rgba(255,255,255,.55);
-          transition:color .2s ${V2.ease};}
-        .v2a-quiets button:hover:not(:disabled){color:#fff;}
-        .v2a-quiets button:disabled{opacity:.45;cursor:default;}
+        .v2a-quiets{display:flex;gap:16px;margin:14px 0 0;}
+        .v2a-quiets button{border:none;background:none;cursor:pointer;padding:2px 0;
+          font-family:${V2.sans};font-size:12.5px;color:${V2.ink45};transition:color .2s ${V2.ease};}
+        .v2a-quiets button:hover:not(:disabled){color:${V2.ink};}
+        .v2a-quiets button:disabled{opacity:.5;cursor:default;}
 
-        /* The address, set apart from the headline. It is the one thing on this
-           step the shopper needs to check, so it gets its own line and its own
-           weight rather than being swallowed into a sentence. */
-        .v2a-sent{font-family:${V2.sans};font-size:14.5px;color:#fff;margin:-18px 0 26px;
-          padding:9px 16px;border-radius:999px;display:inline-block;
-          background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);
-          backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);}
-        .v2a-err{font-size:12.5px;line-height:1.5;color:#FF9B93;margin:16px 0 0;}
-        .v2a-fine{font-size:11px;line-height:1.5;color:rgba(255,255,255,.42);margin:22px 0 0;}
-
-        @media(min-width:760px){
-          .v2a{align-items:center;padding-bottom:0;}
-          .v2a h2{font-size:clamp(34px,3.6vw,46px);}
-        }
+        .v2a-err{font-size:12.5px;color:#B3261E;margin:12px 0 0;}
       `}</style>
     </>
   )

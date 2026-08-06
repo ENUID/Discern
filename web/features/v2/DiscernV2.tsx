@@ -190,11 +190,15 @@ export default function DiscernV2({
   const [photos, setPhotos] = useState<string[]>([])
   const { status: authStatus } = useSession()
   const [authReason, setAuthReason] = useState<V2AuthReason>(null)
-  /** Ask for an account only at the moment one is genuinely needed, and say
-   *  which moment it was. Returns false when the caller should stop. */
-  const requireAccount = useCallback((why: Exclude<V2AuthReason, null>) => {
+  /** The piece that triggered the ask. The sheet leads with its picture, and
+   *  its two lines of copy refer to it — that is what stops the moment being a
+   *  generic form. */
+  const [authShot, setAuthShot] = useState<string | undefined>()
+  /** Ask for an account only at the moment one is genuinely needed. Returns
+   *  false when the caller should stop. */
+  const requireAccount = useCallback((why: Exclude<V2AuthReason, null>, shot?: string) => {
     if (authStatus === 'authenticated') return true
-    setAuthReason(why)
+    setAuthShot(shot); setAuthReason(why)
     return false
   }, [authStatus])
   const [menuOpen, setMenuOpen] = useState(false)
@@ -386,7 +390,7 @@ export default function DiscernV2({
   // asks for one; un-saving never does.
   const toggleSave = useCallback((p: V2Product) => {
     const already = saved.has(p.id)
-    if (!already && !requireAccount('save')) return
+    if (!already && !requireAccount('save', p.image)) return
     setSaved(prev => {
       const n = new Map(prev)
       if (already) n.delete(p.id); else n.set(p.id, p)
@@ -466,8 +470,8 @@ export default function DiscernV2({
     { label: 'New in',  go: () => run('new in') },
     { label: 'Women',   go: () => run('womenswear') },
     { label: 'Men',     go: () => run('menswear') },
-    { label: 'Saved',   go: () => { if (requireAccount('save')) setSavedOpen(true) } },
-    { label: 'Orders',  go: () => { if (requireAccount('orders')) setBagOpen(true) } },
+    { label: 'Saved',   go: () => { if (requireAccount('save', turns[0]?.sections?.[0]?.hero?.image ?? artwork[0])) setSavedOpen(true) } },
+    { label: 'Orders',  go: () => { if (requireAccount('orders', cart[0]?.product.image ?? artwork[0])) setBagOpen(true) } },
     { label: 'Help',    go: () => run('how does Discern work') },
   ]
 
@@ -531,7 +535,7 @@ export default function DiscernV2({
           <span>DISCERN</span>
         </div>
         <button className="v2-ic" aria-label="Saved"
-          onClick={() => { if (requireAccount('save')) setSavedOpen(true) }}>
+          onClick={() => { if (requireAccount('save', turns[0]?.sections?.[0]?.hero?.image ?? artwork[0])) setSavedOpen(true) }}>
           <HeartIcon size={18} />
           {saved.size > 0 && <i className="v2-dot" />}
         </button>
@@ -966,6 +970,7 @@ export default function DiscernV2({
       <V2Auth
         open={authReason !== null}
         reason={authReason}
+        image={authShot}
         onClose={() => setAuthReason(null)}
       />
 
