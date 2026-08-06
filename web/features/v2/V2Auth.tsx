@@ -250,8 +250,6 @@ export default function V2Auth({
           border:none;cursor:pointer;font-family:${V2.sans};font-size:14px;font-weight:500;
           transition:opacity .2s ${V2.ease};}
         .v2a-primary:disabled{opacity:.4;cursor:default;}
-        .v2a-primary.caps{font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
-          margin-bottom:12px;}
 
         .v2a-otp{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:12px;}
         .v2a-otp input{width:100%;aspect-ratio:1/1.1;text-align:center;border-radius:12px;
@@ -260,7 +258,7 @@ export default function V2Auth({
           transition:border-color .2s ${V2.ease},background .2s ${V2.ease};}
         .v2a-otp input:focus{border-color:rgba(255,255,255,.62);background:rgba(255,255,255,.12);}
 
-        .v2a-row{display:flex;justify-content:space-between;}
+        .v2a-row{display:flex;justify-content:space-between;gap:16px;margin-top:16px;}
         .v2a-row button{background:none;border:none;padding:0;cursor:pointer;
           font-family:${V2.sans};font-size:12px;color:rgba(255,255,255,.5);transition:color .2s ${V2.ease};}
         .v2a-row button:disabled{opacity:.45;cursor:default;}
@@ -273,7 +271,7 @@ export default function V2Auth({
           line-height:1.7;}
         .v2a-terms a{color:rgba(255,255,255,.6);text-decoration:underline;text-underline-offset:2px;}
 
-        @media(min-width:768px){
+        @media(min-width:600px){
           .v2a-outer{align-items:center;padding:18px;}
           .v2a-card{max-width:420px;border-radius:26px;padding:36px 32px 28px;
             border:1px solid ${V2.glassEdge};
