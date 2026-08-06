@@ -134,11 +134,11 @@ export default function V2Auth({
 
           <div className="v2a-logo">DISCERN</div>
 
-          <div className="v2a-title">{step === 'code' ? 'Check your email' : 'Decide Better.'}</div>
+          <div className="v2a-title">{step === 'code' ? 'Verify your email' : 'Decide better.'}</div>
           <div className="v2a-sub">
             {step === 'code'
-              ? `We sent a 6-digit code to\n${email.trim()}`
-              : "Describe what you're looking for.\nDiscern helps you decide what to buy."}
+              ? 'Enter the code we sent to your email.'
+              : 'Stop comparing tabs.\nStart understanding products.'}
           </div>
 
           {step === 'email' && (
@@ -175,13 +175,13 @@ export default function V2Auth({
             }}>
               <OtpBoxes value={code} onChange={setCode} autoFocus />
               {error && <div className="v2a-err center">{error}</div>}
-              <button type="submit" className="v2a-primary caps" disabled={code.length < LEN || verifying}>
-                {verifying ? 'Verifying…' : 'Verify & continue'}
+              <button type="submit" className="v2a-primary" disabled={code.length < LEN || verifying}>
+                {verifying ? 'Verifying…' : 'Continue'}
               </button>
               <div className="v2a-row">
                 <button type="button" onClick={() => { setStep('email'); setCode(''); setError(null) }}>← Change email</button>
                 <button type="button" disabled={resendIn > 0} onClick={send}>
-                  {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
+                  {resendIn > 0 ? `Didn't get it? ${resendIn}s` : "Didn't get it? Resend"}
                 </button>
               </div>
             </form>
@@ -189,8 +189,8 @@ export default function V2Auth({
 
           <div className="v2a-terms">
             By continuing, you agree to our{' '}
-            <a href="/terms" target="_blank" rel="noopener">Terms</a> and{' '}
-            <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.
+            <a href="/terms" target="_blank" rel="noopener">Terms</a> &{' '}
+            <a href="/privacy" target="_blank" rel="noopener">Privacy</a>.
           </div>
         </div>
       </div>
@@ -212,12 +212,19 @@ export default function V2Auth({
         @keyframes v2a-up{from{transform:translateY(100%)}to{transform:none}}
         .v2a-handle{width:40px;height:4px;border-radius:4px;background:rgba(255,255,255,.26);margin:-8px auto 20px;}
 
-        .v2a-logo{font-family:${V2.display};font-size:13px;font-weight:500;letter-spacing:.36em;
-          text-indent:.36em;text-align:center;margin:0 0 22px;color:rgba(255,255,255,.9);}
-        .v2a-title{font-family:${V2.display};font-size:clamp(22px,4vw,30px);font-weight:600;
-          text-align:center;line-height:1.2;letter-spacing:-.025em;color:#fff;}
-        .v2a-sub{font-size:13px;color:rgba(255,255,255,.55);text-align:center;margin:8px 0 24px;
-          line-height:1.65;white-space:pre-line;overflow-wrap:anywhere;}
+        .v2a-logo{font-family:${V2.sans};font-size:10px;font-weight:400;letter-spacing:.42em;
+          text-indent:.42em;text-align:center;margin:0 0 26px;color:rgba(255,255,255,.42);}
+        /* Magazine cover, not app header. Large, light, generous, and set in the
+           serif — this single contrast is most of what separates editorial from
+           iOS. Weight stays at 400: Instrument Serif carries at size and any
+           extra weight makes it shout. */
+        .v2a-title{font-family:${V2.editorial};font-size:clamp(38px,10vw,52px);font-weight:400;
+          text-align:center;line-height:1.02;letter-spacing:-.018em;color:#fff;}
+        /* Small, sans, and a lot of air under it. Quiet enough that the headline
+           does the work. */
+        .v2a-sub{font-family:${V2.sans};font-size:13px;font-weight:300;
+          color:rgba(255,255,255,.5);text-align:center;margin:16px 0 34px;
+          line-height:1.85;letter-spacing:.005em;white-space:pre-line;overflow-wrap:anywhere;}
 
         /* Google keeps its white plate — the mark is drawn for light ground and
            inverting it would break the brand asset. */

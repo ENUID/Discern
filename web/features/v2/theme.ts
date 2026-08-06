@@ -1,7 +1,7 @@
 // ── Discern v2 design tokens ─────────────────────────────────────────────────
-// The register is plain and modern rather than boutique: one clean sans, a lot
-// of air, near-black on off-white, and glass controls that float over content
-// instead of sitting in a chrome bar. Nothing decorative earns its place — if a
+// The register is editorial rather than app-like: a serif display against a
+// clean sans, a lot of air, near-black on off-white, and glass controls that
+// float over content instead of sitting in a chrome bar. Nothing decorative earns its place — if a
 // rule, flourish or line of copy isn't doing work, it isn't here.
 
 export const V2 = {
@@ -19,8 +19,17 @@ export const V2 = {
   glassLight: 'rgba(255,255,255,.68)',
   glassEdge:  'rgba(255,255,255,.20)',
 
-  // Type. One family throughout — display sizes get tighter tracking and more
-  // weight rather than a second face.
+  // Type. A serif display against a sans body — the contrast Aesop, COS and
+  // Veilance-register editorial all run on, and the thing that stops an
+  // interface reading as another iOS app.
+  //
+  // `editorial` is Instrument Serif. The faces this was specified against —
+  // Canela, Austin, Ivar Display, Noe Display, PP Editorial New, Saol Display —
+  // are all commercial licences and none can ship here. Instrument Serif is the
+  // closest freely-licensed face in that register: contemporary, slightly
+  // condensed, high contrast without tipping into didone. Swap the stack below
+  // if a licence is bought; nothing else needs to change.
+  editorial: "'Instrument Serif', 'Canela', 'Saol Display', 'Ivar Display', Georgia, serif",
   display: "'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif",
   sans:    "'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif",
 
