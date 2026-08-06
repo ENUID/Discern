@@ -5,8 +5,9 @@
  *
  * This is the main app's account gate (DiscernPage.tsx, the .fr-gate-card
  * block), ported across unchanged in structure and wording. Only the skin is
- * different: v2's bone/ink palette, Geist throughout instead of the warm palette
- * and Cormorant serif, and v2's radii and easing.
+ * different: the frosted dark glass the menu and composer are cut from, Geist
+ * throughout instead of the warm palette and Cormorant serif, and v2's radii and
+ * easing.
  *
  * That is deliberate and it is the correction to three earlier attempts. Each of
  * those invented a new layout and new copy from scratch — a full-bleed takeover,
@@ -195,74 +196,82 @@ export default function V2Auth({
       </div>
 
       <style>{`
-        /* Same sheet geometry as the main app's gate — bottom sheet on a phone,
-           centred card from 768px — with v2's surface and type. */
+        /* Dark glass, the same frosted chrome the menu and the composer are cut
+           from, rather than the bag sheet's white. Geometry is untouched — this
+           is the main app's gate, only the surface differs. */
         .v2a-outer{position:absolute;inset:0;z-index:86;display:flex;align-items:flex-end;
-          justify-content:center;background:rgba(20,18,16,.34);
-          backdrop-filter:blur(6px) saturate(130%);-webkit-backdrop-filter:blur(6px) saturate(130%);}
-        .v2a-card{width:100%;background:${V2.bone};color:${V2.ink};border-radius:28px 28px 0 0;
-          padding:28px 24px 36px;border-top:1px solid ${V2.hairline};
-          box-shadow:0 -12px 60px rgba(0,0,0,.24);max-height:94vh;overflow-y:auto;
+          justify-content:center;background:rgba(16,15,14,.46);
+          backdrop-filter:blur(10px) saturate(130%);-webkit-backdrop-filter:blur(10px) saturate(130%);}
+        .v2a-card{width:100%;color:#fff;border-radius:28px 28px 0 0;
+          padding:28px 24px 36px;max-height:94vh;overflow-y:auto;
+          background:${V2.glassDark};
+          backdrop-filter:blur(30px) saturate(160%);-webkit-backdrop-filter:blur(30px) saturate(160%);
+          border-top:1px solid ${V2.glassEdge};
+          box-shadow:0 -14px 60px rgba(0,0,0,.4),inset 0 1px 0 ${V2.glassEdge};
           font-family:${V2.sans};animation:v2a-up .34s ${V2.ease};}
         @keyframes v2a-up{from{transform:translateY(100%)}to{transform:none}}
-        .v2a-handle{width:40px;height:4px;border-radius:4px;background:rgba(26,26,28,.18);margin:-8px auto 20px;}
+        .v2a-handle{width:40px;height:4px;border-radius:4px;background:rgba(255,255,255,.26);margin:-8px auto 20px;}
 
         .v2a-logo{font-family:${V2.display};font-size:13px;font-weight:500;letter-spacing:.36em;
-          text-indent:.36em;text-align:center;margin:0 0 22px;}
-        /* One family — the main app sets this in Cormorant; v2 does not have a
-           second face, so it is Geist at display weight. */
+          text-indent:.36em;text-align:center;margin:0 0 22px;color:rgba(255,255,255,.9);}
         .v2a-title{font-family:${V2.display};font-size:clamp(22px,4vw,30px);font-weight:600;
-          text-align:center;line-height:1.2;letter-spacing:-.025em;}
-        .v2a-sub{font-size:13px;color:${V2.ink45};text-align:center;margin:8px 0 24px;
+          text-align:center;line-height:1.2;letter-spacing:-.025em;color:#fff;}
+        .v2a-sub{font-size:13px;color:rgba(255,255,255,.55);text-align:center;margin:8px 0 24px;
           line-height:1.65;white-space:pre-line;overflow-wrap:anywhere;}
 
+        /* Google keeps its white plate — the mark is drawn for light ground and
+           inverting it would break the brand asset. */
         .v2a-google{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
-          padding:13px 16px;border-radius:30px;background:#fff;border:1px solid ${V2.hairline};
-          font-family:${V2.sans};font-size:14px;font-weight:500;color:${V2.ink};cursor:pointer;
-          margin-bottom:18px;transition:background .2s ${V2.ease};}
-        .v2a-google:hover{background:rgba(26,26,28,.03);}
+          padding:13px 16px;border-radius:30px;background:#fff;border:none;
+          font-family:${V2.sans};font-size:14px;font-weight:500;color:#1A1A1C;cursor:pointer;
+          margin-bottom:18px;transition:opacity .2s ${V2.ease};}
+        .v2a-google:hover{opacity:.9;}
 
         .v2a-or{display:flex;align-items:center;gap:12px;margin:0 0 18px;}
-        .v2a-or::before,.v2a-or::after{content:'';flex:1;height:1px;background:${V2.hairline};}
-        .v2a-or span{font-size:11px;color:${V2.ink45};letter-spacing:.08em;}
+        .v2a-or::before,.v2a-or::after{content:'';flex:1;height:1px;background:rgba(255,255,255,.16);}
+        .v2a-or span{font-size:11px;color:rgba(255,255,255,.45);letter-spacing:.08em;}
 
         .v2a-email{width:100%;box-sizing:border-box;padding:13px 16px;border-radius:12px;margin-bottom:12px;
-          border:1px solid ${V2.hairline};font-family:${V2.sans};font-size:14px;color:${V2.ink};
-          background:#fff;outline:none;transition:border-color .2s ${V2.ease};}
-        .v2a-email:focus{border-color:rgba(26,26,28,.34);}
-        .v2a-email::placeholder{color:rgba(26,26,28,.3);}
+          border:1px solid rgba(255,255,255,.16);font-family:${V2.sans};font-size:14px;color:#fff;
+          background:rgba(255,255,255,.07);outline:none;transition:border-color .2s ${V2.ease},background .2s ${V2.ease};}
+        .v2a-email:focus{border-color:rgba(255,255,255,.5);background:rgba(255,255,255,.11);}
+        .v2a-email::placeholder{color:rgba(255,255,255,.38);}
 
-        .v2a-primary{width:100%;padding:14px;border-radius:30px;background:${V2.ink};color:${V2.bone};
+        /* Inverted from the main app: on dark glass the primary action is the
+           light one. */
+        .v2a-primary{width:100%;padding:14px;border-radius:30px;background:#fff;color:${V2.ink};
           border:none;cursor:pointer;font-family:${V2.sans};font-size:14px;font-weight:500;
           transition:opacity .2s ${V2.ease};}
-        .v2a-primary:disabled{opacity:.5;cursor:default;}
+        .v2a-primary:disabled{opacity:.4;cursor:default;}
         .v2a-primary.caps{font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
           margin-bottom:12px;}
 
         .v2a-otp{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:12px;}
         .v2a-otp input{width:100%;aspect-ratio:1/1.1;text-align:center;border-radius:12px;
-          border:1px solid ${V2.hairline};background:#fff;font-family:${V2.display};
-          font-size:19px;font-weight:500;color:${V2.ink};outline:none;
-          transition:border-color .2s ${V2.ease};}
-        .v2a-otp input:focus{border-color:${V2.ink};}
+          border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.07);
+          font-family:${V2.display};font-size:19px;font-weight:500;color:#fff;outline:none;
+          transition:border-color .2s ${V2.ease},background .2s ${V2.ease};}
+        .v2a-otp input:focus{border-color:rgba(255,255,255,.62);background:rgba(255,255,255,.12);}
 
         .v2a-row{display:flex;justify-content:space-between;}
         .v2a-row button{background:none;border:none;padding:0;cursor:pointer;
-          font-family:${V2.sans};font-size:12px;color:${V2.ink45};}
+          font-family:${V2.sans};font-size:12px;color:rgba(255,255,255,.5);transition:color .2s ${V2.ease};}
         .v2a-row button:disabled{opacity:.45;cursor:default;}
-        .v2a-row button:not(:disabled):hover{color:${V2.ink};}
+        .v2a-row button:not(:disabled):hover{color:#fff;}
 
-        .v2a-err{font-family:${V2.sans};font-size:12px;color:#c0392b;margin-bottom:12px;}
+        .v2a-err{font-family:${V2.sans};font-size:12px;color:#FF9B93;margin-bottom:12px;}
         .v2a-err.center{text-align:center;}
 
-        .v2a-terms{font-size:11px;color:${V2.ink45};text-align:center;margin-top:22px;
-          line-height:1.7;opacity:.75;}
-        .v2a-terms a{color:${V2.ink45};text-decoration:underline;text-underline-offset:2px;}
+        .v2a-terms{font-size:11px;color:rgba(255,255,255,.42);text-align:center;margin-top:22px;
+          line-height:1.7;}
+        .v2a-terms a{color:rgba(255,255,255,.6);text-decoration:underline;text-underline-offset:2px;}
 
         @media(min-width:768px){
           .v2a-outer{align-items:center;padding:18px;}
           .v2a-card{max-width:420px;border-radius:26px;padding:36px 32px 28px;
-            box-shadow:0 28px 80px rgba(0,0,0,.3);animation:v2a-pop .28s ${V2.ease};}
+            border:1px solid ${V2.glassEdge};
+            box-shadow:0 28px 80px rgba(0,0,0,.46),inset 0 1px 0 ${V2.glassEdge};
+            animation:v2a-pop .28s ${V2.ease};}
           @keyframes v2a-pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
           .v2a-handle{display:none;}
         }
