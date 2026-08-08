@@ -41,6 +41,24 @@ async function readStream(res: Response): Promise<any> {
 const img = (p: any): string =>
   p?.media?.[0]?.url || p?.image_url || p?.image || p?.images?.[0] || ''
 
+/** The catalogue hands back images at ?width=400 — a tile size. The hero cards
+ *  are the largest imagery on the opening screen and were upscaling those, which
+ *  is what made them look soft. Shopify's CDN honours the parameter, so ask for
+ *  the size actually being drawn; anything not on that CDN is returned as-is. */
+function atWidth(src: string, width = 1200): string {
+  try {
+    const u = new URL(src.startsWith('//') ? `https:${src}` : src)
+    if (u.hostname.includes('cdn.shopify') || u.hostname.includes('shopifycdn') || u.pathname.includes('/cdn/shop/')) {
+      u.searchParams.set('width', String(width))
+      u.searchParams.delete('height')
+      return u.toString()
+    }
+    return src
+  } catch {
+    return src
+  }
+}
+
 const opt = (p: any, re: RegExp): string[] =>
   (Array.isArray(p?.options) ? p.options.find((o: any) => re.test(o?.name ?? ''))?.values ?? [] : [])
 
@@ -130,6 +148,7 @@ export default function Boutique({ buyerCurrency, buyerCountry }: {
       .filter(p => p?.in_stock !== false)
       .map(img)
       .filter(Boolean)
+      .map(atWidth)
       .slice(0, 12)
   }, [])
 
@@ -147,13 +166,25 @@ export default function Boutique({ buyerCurrency, buyerCountry }: {
     const sections: V2Section[] = []
     let look: V2Product[] | undefined
 
+    /** Section headings name what was actually looked for — the group's own
+     *  label, or failing that the query the model ran. Never an invented
+     *  phrase: "The Selection" and "Selection" were words nobody chose, sitting
+     *  where the reference puts a real collection name, and a heading that says
+     *  nothing is worse than no heading. Falls back to the shopper's own
+     *  wording, which is at least true. */
+    const heading = (label?: string) => {
+      const s = (label || data?.searchQuery || q || '').trim()
+      if (!s) return ''
+      return s.charAt(0).toUpperCase() + s.slice(1)
+    }
+
     // A multi-garment search comes back as labelled groups — one editorial
     // section per garment, which maps exactly onto this layout.
     if (Array.isArray(data?.foundProductGroups) && data.foundProductGroups.length > 0) {
       for (const g of data.foundProductGroups) {
         const products = (g?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
         if (!products.length) continue
-        sections.push({ title: g.label ?? 'Selection', hero: products[0], products: products.slice(1) })
+        sections.push({ title: heading(g?.label), hero: products[0], products: products.slice(1) })
       }
     }
 
@@ -161,7 +192,7 @@ export default function Boutique({ buyerCurrency, buyerCountry }: {
     if (!sections.length && Array.isArray(data?.foundProducts) && data.foundProducts.length > 0) {
       const products = data.foundProducts.map(toProduct).filter((p: V2Product) => p.image)
       if (products.length) {
-        sections.push({ title: 'The Selection', hero: products[0], products: products.slice(1) })
+        sections.push({ title: heading(), hero: products[0], products: products.slice(1) })
       }
     }
 

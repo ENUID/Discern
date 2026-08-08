@@ -590,11 +590,52 @@ export default function DiscernV2({
     setCart(c => c.map((l, x) => x === i ? { ...l, qty: Math.max(1, l.qty + d) } : l))
 
   const heroIsVideo = /\.(mp4|webm|mov)$/i.test(heroMedia)
+
+  /** The brand's full gallery for the open product, fetched on demand.
+   *
+   *  A search result carries one or two thumbnails at ?width=400 — enough for a
+   *  tile, nowhere near a product page. The chat UI already pulled the real set
+   *  from /api/product-images (every shot the store publishes, at 2048, plus
+   *  the colour→images map); this screen never did, so tapping a piece showed a
+   *  single upscaled thumbnail where the reference shows eight photographs.
+   */
+  const [gallery, setGallery] = useState<{
+    images: string[]
+    colors: string[]
+    byColor: Record<string, string[]>
+  } | null>(null)
+
+  useEffect(() => {
+    setGallery(null)
+    const url = product?.storeUrl
+    if (!url) return
+    let cancelled = false
+    fetch(`/api/product-images?url=${encodeURIComponent(url)}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled || !d) return
+        if (Array.isArray(d.images) && d.images.length > 0) {
+          setGallery({
+            images: d.images,
+            colors: Array.isArray(d.colors) ? d.colors : [],
+            byColor: d.byColor && typeof d.byColor === 'object' ? d.byColor : {},
+          })
+        }
+      })
+      .catch(() => { /* the thumbnails below still stand the page up */ })
+    return () => { cancelled = true }
+  }, [product?.id, product?.storeUrl])
+
   const pdpImages = useMemo(() => {
     if (!product) return []
+    // A picked colour narrows the gallery to that colourway — the whole point
+    // of byColor — and only falls back to the swatch's single image.
+    const forColor = pickedColor?.name ? gallery?.byColor?.[pickedColor.name] : undefined
+    if (forColor?.length) return forColor
+    if (gallery?.images.length) return gallery.images
     if (pickedColor?.image) return [pickedColor.image, ...(product.images ?? []).slice(1)]
     return product.images?.length ? product.images : [product.image]
-  }, [product, pickedColor])
+  }, [product, pickedColor, gallery])
   const soldOut = pickedColor ? pickedColor.available === false : false
 
   return (
@@ -741,17 +782,20 @@ export default function DiscernV2({
                       <Heart on={saved.has(s.hero.id)} onClick={e => { e.stopPropagation(); toggleSave(s.hero!) }} />
                     </div>
                   )}
-                  <button className="v2-discover" onClick={() => s.hero && openProduct(s.hero)}>
-                    See all {s.title} <span aria-hidden>›</span>
-                  </button>
+                  {s.title && (
+                    <button className="v2-discover" onClick={() => s.hero && openProduct(s.hero)}>
+                      Discover all {s.title} <span aria-hidden>›</span>
+                    </button>
+                  )}
                 </div>
 
                 {s.products.length > 0 && (
                   <>
-                    {/* Desktop reads as an editorial line above a horizontal
-                        carousel; phone keeps the masonry. Same markup, the
-                        breakpoint swaps the layout. */}
-                    <h3 className="v2-inspired v2-rise">More options</h3>
+                    {/* The grid follows the hero directly. There used to be a
+                        "More options" line here — a heading nobody wrote,
+                        naming nothing, in a layout whose whole argument is that
+                        the clothes speak. Desktop still swaps to a horizontal
+                        carousel at the breakpoint. */}
                     <div className="v2-mosaic">
                       {s.products.map((p, i) => (
                         <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
@@ -851,7 +895,7 @@ export default function DiscernV2({
           {acc === 'materials' && (
             <div className="v2-panel">
               <div className="v2-panel-head">
-                <span>Materials</span>
+                <span>MATERIALS</span>
                 <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
               </div>
               {composition && <span className="v2-comp">{composition}</span>}
@@ -861,7 +905,7 @@ export default function DiscernV2({
           {acc === 'style' && (
             <div className="v2-panel light">
               <div className="v2-panel-head">
-                <span>Wear it with</span>
+                <span>HOW TO STYLE</span>
                 <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
               </div>
               {styleWith.length > 0 ? (
@@ -881,7 +925,7 @@ export default function DiscernV2({
           <div className="v2-acc">
             {(['materials', 'style'] as const).map(k => (
               <button key={k} className={`v2-acc-pill ${acc === k ? 'on' : ''}`} onClick={() => setAcc(acc === k ? null : k)}>
-                {k === 'materials' ? 'Materials' : 'Wear it with'}<i aria-hidden>{acc === k ? '−' : '+'}</i>
+                {k === 'materials' ? 'MATERIALS' : 'HOW TO STYLE'}<i aria-hidden>{acc === k ? '−' : '+'}</i>
               </button>
             ))}
           </div>
@@ -1282,7 +1326,10 @@ export default function DiscernV2({
         .v2-veil{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(20,17,14,.44) 0%,rgba(20,17,14,.1) 30%,rgba(20,17,14,.56) 76%,rgba(20,17,14,.74) 100%);}
         .v2-cards{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;gap:9px;
           padding:0 14px;margin:0 0 30px;}
-        .v2-card{margin:0;width:28%;aspect-ratio:3/4;overflow:hidden;flex-shrink:0;
+        /* 9/16, not 3/4. The reference's cards are near twice as tall as they
+           are wide — a fashion plate, the full figure standing in it. At 3/4
+           they cropped to head-and-shoulders and read as squat thumbnails. */
+        .v2-card{margin:0;width:29%;aspect-ratio:9/16;overflow:hidden;flex-shrink:0;
           box-shadow:0 18px 44px rgba(0,0,0,.36);animation:v2-float 7s ease-in-out infinite;}
         .v2-card img{width:100%;height:100%;object-fit:cover;display:block;animation:v2-swap 12s ease-in-out infinite;}
         /* The outer two mirror each other exactly. They were -1.5deg/+1.7deg at
@@ -1293,7 +1340,7 @@ export default function DiscernV2({
            phase, which is what keeps the deck from looking mechanical. */
         .v2-card.c0{transform:translateY(16px) rotate(-1.6deg);animation-delay:-1.2s;}
         .v2-card.c0 img{animation-delay:-8s;}
-        .v2-card.c1{width:36%;z-index:2;transform:translateY(-12px);}
+        .v2-card.c1{width:37%;z-index:2;transform:translateY(-12px);}
         .v2-card.c1 img{animation-delay:-4s;}
         .v2-card.c2{transform:translateY(16px) rotate(1.6deg);animation-delay:-3.6s;}
         @keyframes v2-float{0%,100%{translate:0 0}50%{translate:0 -7px}}
@@ -1348,8 +1395,11 @@ export default function DiscernV2({
         @media(min-width:1180px){.v2-mosaic{grid-template-columns:repeat(4,1fr);}}
         .v2-tile{position:relative;background:${V2.boneDeep};}
         .v2-tile-btn{display:block;width:100%;padding:0;border:none;background:none;cursor:pointer;}
-        .v2-tile img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;transition:transform .7s ${V2.ease};}
-        .v2-tile.tall img{aspect-ratio:2/3;}
+        /* Every tile the same height. The grid alternated 3/4 and 2/3 tiles as a
+           masonry, which staggered the rows and left the names on a ragged
+           baseline — the reference runs an even two-up where each row reads as
+           a pair. The .tall class is kept as a no-op so nothing depends on it. */
+        .v2-tile img,.v2-tile.tall img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;transition:transform .7s ${V2.ease};}
         @media(hover:hover){.v2-tile:hover img{transform:scale(1.035);}}
         .v2-tile .v2-heart{position:absolute;right:9px;bottom:38px;}
         .v2-tile-name{display:block;padding:9px 5px 16px;font-size:12.5px;text-align:left;}
@@ -1383,7 +1433,9 @@ export default function DiscernV2({
         .v2-dock{position:absolute;z-index:52;left:12px;right:12px;display:flex;flex-direction:column;
           align-items:stretch;gap:10px;margin-bottom:calc(env(safe-area-inset-bottom,0px) + 14px);}
         .v2-acc{display:flex;gap:9px;}
+        /* Set as the reference sets them: uppercase, tracked out. */
         .v2-acc-pill{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border:none;border-radius:999px;
+          letter-spacing:.08em;
           cursor:pointer;font-size:11.5px;letter-spacing:0;font-weight:500;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);}
         .v2-acc-pill i{font-style:normal;font-size:12px;opacity:.85;}
@@ -1662,7 +1714,6 @@ export default function DiscernV2({
         @keyframes v2-fade{from{opacity:0}to{opacity:1}}
 
         .v2-menu-btn em{display:none;}
-        .v2-inspired{display:none;}
 
         /* Missing art reads as unphotographed paper, never as a broken tile:
            it keeps the element's exact geometry so layout never shifts when the
@@ -1725,8 +1776,6 @@ export default function DiscernV2({
           /* Results: editorial line + horizontal carousel of full-height cards */
           .v2-sec{padding-top:clamp(80px,7vw,120px);}
           .v2-sec h2{font-size:clamp(34px,3.1vw,46px);}
-          .v2-inspired{display:block;font-family:${V2.display};font-weight:600;letter-spacing:-.02em;font-size:clamp(24px,2.1vw,30px);
-            text-align:center;margin:clamp(56px,5vw,84px) 0 26px;}
           .v2-mosaic{display:flex;grid-template-columns:none;gap:2px;padding:0 0 8px;
             overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none;align-items:flex-start;}
           .v2-mosaic::-webkit-scrollbar{display:none;}
