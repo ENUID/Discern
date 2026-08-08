@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { BagIcon, FigureFeminineIcon, FigureMasculineIcon, CheckIcon, CloseIcon, EditIcon, ExternalLinkIcon, ImageIcon, PlusIcon, ShieldIcon, SparkleIcon, SpinnerIcon, TrashIcon, UserIcon } from '@/components/icons'
 import { useSession, signIn, signOut } from 'next-auth/react'
 import { useQuery, useMutation } from 'convex/react'
 import { api } from '@/convex/_generated/api'
@@ -35,6 +36,37 @@ const GEIST = "'Geist', 'DM Sans', system-ui, sans-serif"
 // literal brand mark rendered by DiscernLogo below. Jost kept as the
 // fallback in the stack in case the webfont fails to load.
 const WORDMARK = "'PP Gatwick', 'Jost', 'Geist', 'DM Sans', system-ui, sans-serif"
+
+// ── Layering scale ───────────────────────────────────────────────────────────
+// Every overlay in the app stacks through these names, never a bare number.
+// The old values grew by "pick one higher than the last thing" and ended up as
+// 4100 / 9000 / 9001 / 9100 / 9101 / 9992 / 9998 / 9999 — fourteen magic
+// numbers whose relative order was accidental rather than designed. Two
+// consequences worth naming:
+//
+//   • the mandatory sign-in gate sat at 4100, BELOW every sheet, menu, modal
+//     and toast in the app. It is documented as a hard block with no dismiss,
+//     so anything that opened over it silently defeated it.
+//   • sheets, modals and menus were interleaved (9101 sheet vs 9992 modal vs
+//     9001 menu) with no rule about which wins.
+//
+// The order below is the intended one, top wins. Gaps of 100 leave room to
+// insert a layer without renumbering. A menu sits above its sheet because it is
+// spawned from one; the gate sits above ordinary app UI because nothing should
+// be reachable behind it; toasts sit above everything because they are
+// transient and must never be the thing that is covered.
+const Z = {
+  base:     0,
+  raised:   1,     // a card lifting over its neighbours
+  sticky:   10,    // sticky headers, badges pinned onto imagery
+  nav:      100,   // persistent app chrome
+  scrim:    1000,  // the dimmed backdrop behind any overlay
+  sheet:    1100,  // bottom sheets and drawers
+  menu:     1200,  // context menus, spawned from a sheet or a card
+  modal:    1300,  // blocking modals
+  gate:     1400,  // mandatory sign-in gate — above all ordinary app UI
+  toast:    1500,  // transient, above everything
+} as const
 
 // ── One-time localStorage migration: from → discern (the FROM → Discern
 // rebrand) ───────────────────────────────────────────────────────────────────
@@ -114,7 +146,12 @@ function useLight(elRef: React.RefObject<HTMLDivElement | null>) {
 // ── Discern wordmark ─────────────────────────────────────────────────────────────
 // Fabrics mark — a fanned set of fabric swatches pinned at the base, the way a
 // stylist flips through a swatch book to choose materials. Original to Fabrics.
-function FabricsIcon({ size = 15, stroke = 'currentColor', strokeWidth = 1.0 }: { size?: number; stroke?: string; strokeWidth?: number }) {
+function FabricsIcon({ size = 15, stroke = 'currentColor', strokeWidth }: { size?: number; stroke?: string; strokeWidth?: number }) {
+  // Default to the app-wide optical weight (see components/icons.tsx): a
+  // stroke on a 24 grid scales with the render size, so a fixed number drew
+  // this mark at 0.63px in the header and 1.4px in the sheet. The bold/thin
+  // contrast below is part of the drawing and is preserved as a ratio.
+  strokeWidth = strokeWidth ?? +(1.25 * 24 / size).toFixed(2)
   // The whole craft of Fabrics in one mark: a spool of thread, its thread
   // running out into a woven running-stitch, then up through a needle — spool,
   // weave, thread and needle unified into a single line-art glyph.
@@ -292,7 +329,7 @@ function Accordion({ label, children, defaultOpen = false }: { label: string; ch
         padding: "17px 0", background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
       }}>
         <span style={{ fontFamily: SANS, fontSize: 12, fontWeight: 600, letterSpacing: ".07em", textTransform: "uppercase", color: INK }}>{label}</span>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth="1.6" strokeLinecap="round">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth="2.0" strokeLinecap="round" strokeLinejoin="round">
           <line x1="5" y1="12" x2="19" y2="12" />
           {!open && <line x1="12" y1="5" x2="12" y2="19" />}
         </svg>
@@ -447,9 +484,7 @@ function CardCarousel({ images, onOpen }: { images: string[]; onOpen: () => void
   if (imgs.length === 0) {
     return (
       <div style={{ width:'100%',height:'100%',background:'#e4e4e4',display:'flex',alignItems:'center',justifyContent:'center' }}>
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.4" opacity=".4">
-          <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
+        <ImageIcon size={22} color={INK3} style={{ opacity: .4 }} />
       </div>
     )
   }
@@ -561,7 +596,7 @@ function ExploreTile({ p, animDelay, pressHandlers, onOpen }: {
       onKeyDown={e => e.key === 'Enter' && onOpen()}>
       <CardCarousel images={imgs} onOpen={onOpen} />
       <div className="fr-mtile-views">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.73" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
         </svg>
         {formatCount(socialProofCount(p.id))}
@@ -791,7 +826,7 @@ function ColorSwatch({ name, imageUrl, size, shape, selected, available, onClick
       {!available && size >= 20 && (
         <span style={{ position: 'absolute', inset: 0, display: 'flex', pointerEvents: 'none' }}>
           <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-            <line x1={size * 0.2} y1={size * 0.8} x2={size * 0.8} y2={size * 0.2} stroke={INK} strokeWidth="1.1" />
+            <line x1={size * 0.2} y1={size * 0.8} x2={size * 0.8} y2={size * 0.2} stroke={INK} strokeWidth="1.25" strokeLinecap="round" />
           </svg>
         </span>
       )}
@@ -822,13 +857,7 @@ function ProductMeta({ p, rates, saved, onSave, onOpen, activeColor, onSelectCol
           onClick={e => { e.stopPropagation(); onSave() }}
           style={{ flexShrink: 0, width: 20, height: 20, marginTop: 1, padding: 0, border: 'none', background: 'none',
             cursor: 'pointer', color: INK, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            {/* Handle drawn in white when filled — otherwise it's the same
-                color as the solid fill and disappears into a blank blob. */}
-            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" fill={saved ? 'currentColor' : 'none'} />
-            <line x1="3" y1="6" x2="21" y2="6" stroke={saved ? '#fff' : 'currentColor'} />
-            <path d="M16 10a4 4 0 0 1-8 0" stroke={saved ? '#fff' : 'currentColor'} />
-          </svg>
+          <BagIcon size={14} color={saved ? '#fff' : 'currentColor'} />
         </button>
       </div>
       <div style={{ fontFamily: SANS, fontSize: 12.5, color: INK, fontWeight: 500, letterSpacing: '.01em' }}>
@@ -1595,7 +1624,9 @@ const STYLIST_FLICKER_GUARD_MS = 320
 // handle, not a magnifying glass; filter is a pin through narrowing pleats,
 // not funnel lines; curate is a finishing thread-loop, not an AI sparkle.
 function StylistStepIcon({ icon, size = 13 }: { icon: StylistLoadingIcon; size?: number }) {
-  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  // Weight tracks the render size so these sit at the same 1.25px as every
+  // other icon; the geometry stays bespoke on purpose (see comment above).
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: +(1.25 * 24 / size).toFixed(2), strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
   switch (icon) {
     case 'read':
       // A needle at the head of a stitched line — tracing/reading the thread of the request.
@@ -2759,11 +2790,7 @@ export default function DiscernApp({
                 not saved, filled when saved) — a "+" here read as ambiguous
                 (add to list? follow?) where a bag icon reads as exactly what
                 the action does, and matches the app's own "Bag it" language. */}
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" fill={isSaved ? 'currentColor' : 'none'} />
-              <line x1="3" y1="6" x2="21" y2="6" stroke={isSaved ? '#fff' : 'currentColor'} />
-              <path d="M16 10a4 4 0 0 1-8 0" stroke={isSaved ? '#fff' : 'currentColor'} />
-            </svg>
+            <BagIcon size={13} color={isSaved ? '#fff' : 'currentColor'} />
           </button>
         </div>
         <div style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 500, letterSpacing: '-0.01em', color: INK, marginTop: 8, lineHeight: 1.25, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'normal' } as React.CSSProperties}>{p.title}</div>
@@ -4082,7 +4109,13 @@ export default function DiscernApp({
           display:flex;flex-direction:column;gap:10px;
           width:100%;max-width:min(820px,96vw);margin:0 auto;
           border-radius:24px;border:none;
-          padding:18px 18px 10px 12px;
+          /* Horizontal padding must stay symmetric: the composer is centred by
+             margin:0 auto, so unequal side padding silently shifts every child
+             off-centre. This was 12px left / 18px right, which pushed the field
+             and both round buttons 3px left of the pill's true centre. Top and
+             bottom stay unequal on purpose — the button row at the bottom
+             carries its own optical inset. */
+          padding:18px 16px 10px;
           will-change:transform;
           background:rgba(255,255,255,0.82);
           box-shadow:
@@ -4227,7 +4260,7 @@ export default function DiscernApp({
 
         /* Auth/consent gate — CSS-only responsive so correct layout is applied
            before JS hydrates, eliminating the bottom-sheet flash on tablet/desktop. */
-        .fr-gate-outer{position:fixed;inset:0;z-index:4000;display:flex;align-items:flex-end;justify-content:center;background:rgba(28,12,4,0.28);backdrop-filter:blur(4px) saturate(130%);-webkit-backdrop-filter:blur(4px) saturate(130%);}
+        .fr-gate-outer{position:fixed;inset:0;z-index:${Z.gate};display:flex;align-items:flex-end;justify-content:center;background:rgba(28,12,4,0.28);backdrop-filter:blur(4px) saturate(130%);-webkit-backdrop-filter:blur(4px) saturate(130%);}
         .fr-gate-card{
           width:100%;
           background:#ffffff;
@@ -4427,13 +4460,13 @@ export default function DiscernApp({
 
       {/* ── User consent sheet (shown once after first sign-in) ── */}
       {showConsent && (
-        <div className="fr-gate-outer" style={{ zIndex: 4100 }}>
+        <div className="fr-gate-outer">
           <div className="fr-gate-card">
             <div className="fr-gate-handle" />
             {consentFromSettings && (
               <button onClick={() => { setShowConsent(false); setConsentFromSettings(false); setSettingsOpen(true) }}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 16px', fontFamily: SANS, fontSize: 13, color: INK3 }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.88" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                 Back
               </button>
             )}
@@ -4490,14 +4523,14 @@ export default function DiscernApp({
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
                 {settingsView === 'profile' ? (
                   <button onClick={() => setSettingsView('main')} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', fontFamily: SANS, fontSize: 15, fontWeight: 500, color: INK, padding: 0 }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.67" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                     My Profile
                   </button>
                 ) : (
                   <span style={{ fontFamily: SANS, fontSize: 17, fontWeight: 600, color: INK }}>Settings</span>
                 )}
                 <button onClick={() => { setSettingsOpen(false); setSettingsView('main') }} style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(0,0,0,.07)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
               </div>
               {settingsView === 'main' && (
@@ -4518,7 +4551,7 @@ export default function DiscernApp({
                   <div style={{ width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', background: 'rgba(0,0,0,.08)', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     {session?.user?.image
                       ? <img src={session.user.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      : <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,.35)" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+                      : <UserIcon size={28} color="rgba(0,0,0,.35)" />
                     }
                   </div>
                   <div style={{ fontFamily: SANS, fontSize: 12, color: INK3 }}>{session?.user?.email || ''}</div>
@@ -4540,8 +4573,8 @@ export default function DiscernApp({
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                     {([
-                      { g: 'Men', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="6" r="3.5"/><path d="M6 21v-2a6 6 0 0 1 12 0v2"/><line x1="9" y1="15" x2="15" y2="15"/></svg> },
-                      { g: 'Women', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="6" r="3.5"/><path d="M8 21l4-10 4 10"/><path d="M7 17h10"/></svg> },
+                      { g: 'Men', icon: <FigureMasculineIcon size={20} /> },
+                      { g: 'Women', icon: <FigureFeminineIcon size={20} /> },
                     ] as const).map(({ g, icon }) => {
                       const active = profileGender === g
                       return (
@@ -4602,13 +4635,13 @@ export default function DiscernApp({
                   {
                     label: 'My Profile',
                     sub: userRecord?.name ? userRecord.name : 'Name, sizes, gender',
-                    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={INK2} strokeWidth="1.7" strokeLinecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>,
+                    icon: <UserIcon size={16} color={INK2} />,
                     action: () => openProfileView(),
                   },
                   {
                     label: isPremium ? 'Community Member' : 'Free plan',
                     sub: isPremium ? 'Your plan is active' : 'All features included',
-                    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={INK2} strokeWidth="1.7" strokeLinecap="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>,
+                    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={INK2} strokeWidth="1.88" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>,
                     action: undefined,
                     badge: null,
                   },
@@ -4625,7 +4658,7 @@ export default function DiscernApp({
                         <div style={{ fontFamily: SANS, fontSize: 12, color: INK3, marginTop: 1 }}>{sub}</div>
                       </div>
                       {badge && <span style={{ fontFamily: SANS, fontSize: 11, fontWeight: 600, color: '#fff', background: INK, borderRadius: 20, padding: '3px 10px', letterSpacing: '.04em' }}>{badge}</span>}
-                      {action && !badge && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.8" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>}
+                      {action && !badge && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="2.14" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>}
                     </button>
                     {i < arr.length - 1 && <div style={{ height: '0.5px', background: 'rgba(0,0,0,.08)', margin: '0 14px' }} />}
                   </div>
@@ -4639,13 +4672,13 @@ export default function DiscernApp({
                   {
                     label: 'Data & Consent',
                     sub: 'Manage what Discern can collect',
-                    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={INK2} strokeWidth="1.7" strokeLinecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+                    icon: <ShieldIcon size={16} color={INK2} />,
                     action: () => { setSettingsOpen(false); setConsentFromSettings(true); setShowConsent(true) },
                   },
                   {
                     label: 'Privacy Policy',
                     sub: 'How Discern handles your data',
-                    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={INK2} strokeWidth="1.7" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
+                    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={INK2} strokeWidth="1.88" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
                     href: '/privacy',
                   },
                 ].map(({ label, sub, icon, action, href }: any, i, arr) => (
@@ -4657,7 +4690,7 @@ export default function DiscernApp({
                           <div style={{ fontFamily: SANS, fontSize: 14, fontWeight: 500, color: INK }}>{label}</div>
                           <div style={{ fontFamily: SANS, fontSize: 12, color: INK3, marginTop: 1 }}>{sub}</div>
                         </div>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.8" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="2.14" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
                       </a>
                     ) : (
                       <button onClick={action} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '13px 14px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}
@@ -4669,7 +4702,7 @@ export default function DiscernApp({
                           <div style={{ fontFamily: SANS, fontSize: 14, fontWeight: 500, color: INK }}>{label}</div>
                           <div style={{ fontFamily: SANS, fontSize: 12, color: INK3, marginTop: 1 }}>{sub}</div>
                         </div>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.8" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="2.14" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
                       </button>
                     )}
                     {i < arr.length - 1 && <div style={{ height: '0.5px', background: 'rgba(0,0,0,.08)', margin: '0 14px' }} />}
@@ -4683,7 +4716,7 @@ export default function DiscernApp({
                 onPointerDown={e => (e.currentTarget.style.background = 'rgba(192,57,43,.08)')}
                 onPointerUp={e => (e.currentTarget.style.background = 'rgba(0,0,0,.03)')}
                 onPointerLeave={e => (e.currentTarget.style.background = 'rgba(0,0,0,.03)')}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c0392b" strokeWidth="1.7" strokeLinecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                <ExternalLinkIcon size={16} color="#c0392b" />
                 <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 500, color: '#c0392b' }}>Sign out</span>
               </button>
 
@@ -4728,9 +4761,7 @@ export default function DiscernApp({
                     {(session?.user?.name || userName).charAt(0).toUpperCase()}
                   </span>
                 ) : (
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={sidebarView === 'profile' ? '#fff' : INK3} strokeWidth="1.7" strokeLinecap="round">
-                    <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
-                  </svg>
+                  <UserIcon size={17} color={sidebarView === 'profile' ? '#fff' : INK3} />
                 )}
               </div>
             </div>
@@ -4749,7 +4780,7 @@ export default function DiscernApp({
                 onPointerEnter={e => (e.currentTarget.style.opacity = ".8")}
                 onPointerLeave={e => (e.currentTarget.style.opacity = "1")}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                <PlusIcon size={13} />
                 New chat
               </button>
             </div>
@@ -4765,11 +4796,7 @@ export default function DiscernApp({
                 setTimeout(() => setExploreToastOut(true), 2200)
                 setTimeout(() => setExploreToast(false), 2650)
               }}>
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"/>
-                  <path d="M19 3l.8 2.2L22 6l-2.2.8L19 9l-.8-2.2L16 6l2.2-.8z"/>
-                  <path d="M5 17l.5 1.5L7 19l-1.5.5L5 21l-.5-1.5L3 19l1.5-.5z"/>
-                </svg>
+                <SparkleIcon size={17} color={INK3} />
                 Explore
               </div>
 
@@ -4781,7 +4808,7 @@ export default function DiscernApp({
                 setTimeout(() => setExploreToastOut(true), 2200)
                 setTimeout(() => setExploreToast(false), 2650)
               }}>
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.76" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="7" height="7" rx="1"/>
                   <rect x="14" y="3" width="7" height="7" rx="1"/>
                   <rect x="3" y="14" width="7" height="7" rx="1"/>
@@ -4792,11 +4819,7 @@ export default function DiscernApp({
 
               {/* Bag (saved products) */}
               <div className={`fr-hi${sidebarView === 'saved' ? ' on' : ''}`} onClick={() => setSidebarView(v => v === 'saved' ? 'nav' : 'saved')}>
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
-                  <line x1="3" y1="6" x2="21" y2="6"/>
-                  <path d="M16 10a4 4 0 0 1-8 0"/>
-                </svg>
+                <BagIcon size={17} color={INK3} />
                 Bag
                 {savedProducts.length > 0 && (
                   <span style={{ marginLeft: 'auto', fontFamily: SANS, fontSize: 11, fontWeight: 500, color: INK, background: "rgba(0,0,0,.07)", borderRadius: 20, padding: "2px 8px" }}>
@@ -4888,11 +4911,7 @@ export default function DiscernApp({
                       onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.05)')}
                       onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                     >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                        <polyline points="16 17 21 12 16 7"/>
-                        <line x1="21" y1="12" x2="9" y2="12"/>
-                      </svg>
+                      <ExternalLinkIcon size={16} />
                       Sign out
                     </button>
                   </>) : (<>
@@ -5109,8 +5128,8 @@ export default function DiscernApp({
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                         <defs><clipPath id="fwcs"><circle cx="12" cy="12" r="9.6"/></clipPath></defs>
-                        <circle cx="12" cy="12" r="9.6" stroke={INK3} strokeWidth="1.3" fill="none"/>
-                        <g clipPath="url(#fwcs)" stroke={INK3} strokeWidth="1.05" strokeLinecap="butt">
+                        <circle cx="12" cy="12" r="9.6" stroke={INK3} strokeWidth="2.5" fill="none"/>
+                        <g clipPath="url(#fwcs)" stroke={INK3} strokeWidth="2.5" strokeLinecap="butt">
                           <line x1="2.4" y1="8" x2="21.6" y2="8"/><line x1="2.4" y1="12" x2="21.6" y2="12"/><line x1="2.4" y1="16" x2="21.6" y2="16"/>
                           <line x1="8" y1="2.4" x2="8" y2="21.6"/><line x1="12" y1="2.4" x2="12" y2="21.6"/><line x1="16" y1="2.4" x2="16" y2="21.6"/>
                         </g>
@@ -5208,7 +5227,7 @@ export default function DiscernApp({
                 onPointerEnter={e => (e.currentTarget.style.boxShadow = "0 4px 14px rgba(0,0,0,.14), inset 0 1px 0 #fff")}
                 onPointerLeave={e => (e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.95)")}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth="1.88" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 20h9"/>
                   <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
                 </svg>
@@ -5254,14 +5273,7 @@ export default function DiscernApp({
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 transition: pulling.current ? 'none' : 'height .32s cubic-bezier(.22,.61,.36,1)',
               }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                  style={{
-                    opacity: pullRefreshing ? 1 : Math.min(1, pullY / 56),
-                    animation: pullRefreshing ? 'spin .7s linear infinite' : 'none',
-                    transform: pullRefreshing ? 'none' : `rotate(${pullY * 4}deg)`,
-                  }}>
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                </svg>
+                <SpinnerIcon size={22} color={INK3} />
               </div>
             )}
 
@@ -5401,7 +5413,7 @@ export default function DiscernApp({
                                 {/* Remove only — an edit can drop a photo, never add a new one */}
                                 <button type="button" onClick={() => setEditImages(prev => prev.filter((_, x) => x !== ii))}
                                   style={{ position: 'absolute', top: -5, right: -5, width: 18, height: 18, borderRadius: '50%', background: INK, border: '1.5px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}>
-                                  <svg width="8" height="8" viewBox="0 0 10 10" fill="none"><path d="M2 2l6 6M8 2l-6 6" stroke="white" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                                  <CloseIcon size={8} color="white" />
                                 </button>
                               </div>
                             ))}
@@ -5472,10 +5484,7 @@ export default function DiscernApp({
                             <button type="button" onClick={() => startEditMsg(i, m)} title="Edit message" className="fr-msg-edit-btn"
                               style={{ marginTop: 4, flexShrink: 0, width: 22, height: 22, padding: 0, border: 'none', background: 'none',
                                 cursor: 'pointer', color: INK3, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                              </svg>
+                              <EditIcon size={13} />
                             </button>
                           )}
                         </div>
@@ -5489,7 +5498,7 @@ export default function DiscernApp({
                       <div style={{ marginTop: 6, width: '100%' }}>
                         <button type="button" onClick={() => setOpenTraceIdx(openTraceIdx === i ? null : i)}
                           style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer', fontFamily: SANS, fontSize: 11, fontWeight: 500, color: INK3 }}>
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.0" strokeLinecap="round" strokeLinejoin="round"
                             style={{ transform: openTraceIdx === i ? 'rotate(90deg)' : 'none', transition: 'transform .18s ease' }}>
                             <polyline points="9 18 15 12 9 6" />
                           </svg>
@@ -5722,11 +5731,7 @@ export default function DiscernApp({
                                     style={{ position: 'absolute', top: 5, right: 5, width: 22, height: 22, borderRadius: '50%', border: 'none',
                                       background: 'rgba(255,255,255,.92)', boxShadow: '0 1px 4px rgba(0,0,0,.18)', cursor: 'pointer',
                                       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, color: INK }}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                                      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" fill={isSaved ? 'currentColor' : 'none'} />
-                                      <line x1="3" y1="6" x2="21" y2="6" stroke={isSaved ? '#fff' : 'currentColor'} />
-                                      <path d="M16 10a4 4 0 0 1-8 0" stroke={isSaved ? '#fff' : 'currentColor'} />
-                                    </svg>
+                                    <BagIcon size={12} color={isSaved ? '#fff' : 'currentColor'} />
                                   </button>
                                 </div>
                                 <div style={{ padding: '7px 8px' }}>
@@ -5807,9 +5812,7 @@ export default function DiscernApp({
                                 ) : (
                                   // Completed step: settles into a filled tick.
                                   <span style={{ width: 16, height: 16, borderRadius: '50%', background: INK, display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'fadeScale .28s ease both' }}>
-                                    <svg width="10" height="10" viewBox="0 0 11 11">
-                                      <path className="fr-tick" d="M2.4 5.8 L4.5 7.9 L8.6 3.2" fill="none" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
+                                    <CheckIcon size={10} color="#fff" />
                                   </span>
                                 )}
                                 {!isLast && <span className="fr-thread" style={{ width: 2, flex: 1, minHeight: 9, marginTop: 3, marginBottom: 1 }} />}
@@ -5868,7 +5871,7 @@ export default function DiscernApp({
                           </div>
                           <button type="button" onClick={() => removeBarProduct(p.id)}
                             style={{ position: 'absolute', top: -5, right: -5, width: 18, height: 18, borderRadius: '50%', background: '#1E1A16', border: '1.5px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}>
-                            <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2 2l6 6M8 2l-6 6" stroke="white" strokeWidth="1.6" strokeLinecap="round"/></svg>
+                            <CloseIcon size={9} color="white" />
                           </button>
                         </div>
                       ))}
@@ -5898,9 +5901,7 @@ export default function DiscernApp({
                               display: 'flex', alignItems: 'center', justifyContent: 'center',
                               cursor: 'pointer', padding: 0,
                             }}>
-                            <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-                              <path d="M2 2l6 6M8 2l-6 6" stroke="white" strokeWidth="1.6" strokeLinecap="round"/>
-                            </svg>
+                            <CloseIcon size={9} color="white" />
                           </button>
                         </div>
                       ))}
@@ -5931,7 +5932,7 @@ export default function DiscernApp({
                     <div style={{ position: 'relative' }}>
                     <button ref={attachBtnFabricsRef} type="button" className="fr-icon-btn" disabled={wardrobeImages.length >= 8}
                       onClick={() => { wardrobeFileRef.current?.click() }} title="Add photos">
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.0" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="4" y="2.5" width="16" height="18.5" rx="1.5"/><line x1="12" y1="2.5" x2="12" y2="21"/><line x1="9.6" y1="9" x2="9.6" y2="12.5"/><line x1="14.4" y1="9" x2="14.4" y2="12.5"/><line x1="6.5" y1="21" x2="6.5" y2="23"/><line x1="17.5" y1="21" x2="17.5" y2="23"/>
                       </svg>
                     </button>
@@ -5946,7 +5947,7 @@ export default function DiscernApp({
                         <button type="button" className="fr-send-btn" aria-label={loading ? 'Fabrics is working' : 'Send'} onClick={() => canSend && doSearch()}>
                           {loading
                             ? <div style={{ width: 11, height: 11, borderRadius: 3, background: INK }} />
-                            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
+                            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.14" strokeLinecap="round" strokeLinejoin="round">
                                 <line x1="12" y1="19" x2="12" y2="5"/>
                                 <polyline points="5 12 12 5 19 12"/>
                               </svg>
@@ -5969,10 +5970,10 @@ export default function DiscernApp({
           {stylistCtxMenu && (
             <>
               <div onClick={() => setStylistCtxMenu(null)}
-                style={{ position: 'fixed', inset: 0, zIndex: 9000 }} />
+                style={{ position: 'fixed', inset: 0, zIndex: Z.scrim }} />
               <div style={{
                 position: 'fixed', left: stylistCtxMenu.x, top: stylistCtxMenu.y,
-                zIndex: 9001, width: 160, borderRadius: 12, overflow: 'hidden',
+                zIndex: Z.menu, width: 160, borderRadius: 12, overflow: 'hidden',
                 background: 'linear-gradient(160deg, rgba(255,255,255,0.96) 0%, rgba(245,245,248,0.94) 100%)',
                 boxShadow: '0 0 0 0.5px rgba(255,255,255,0.9), 0 12px 36px rgba(0,0,0,0.18), 0 3px 10px rgba(0,0,0,0.10), inset 0 1px 0 rgba(255,255,255,1)',
                 border: '0.5px solid rgba(180,180,190,0.35)',
@@ -5990,10 +5991,7 @@ export default function DiscernApp({
                   onPointerUp={e => (e.currentTarget.style.background = '')}
                   onPointerLeave={e => (e.currentTarget.style.background = '')}>
                   <span>Rename</span>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(60,60,67,0.6)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                  </svg>
+                  <EditIcon size={14} color="rgba(60,60,67,0.6)" />
                 </div>
                 <div style={{ height: '0.5px', background: 'rgba(60,60,67,0.15)', position: 'relative', zIndex: 1 }} />
                 <div onClick={() => { deleteStylistEntry(stylistCtxMenu.id); setStylistCtxMenu(null) }}
@@ -6005,12 +6003,7 @@ export default function DiscernApp({
                   onPointerUp={e => (e.currentTarget.style.background = '')}
                   onPointerLeave={e => (e.currentTarget.style.background = '')}>
                   <span>Delete</span>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF3B30" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                    <path d="M10 11v6M14 11v6"/>
-                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                  </svg>
+                  <TrashIcon size={14} color="#FF3B30" />
                 </div>
               </div>
             </>
@@ -6019,7 +6012,7 @@ export default function DiscernApp({
           {/* ── Brands roster — all working brands with logo + name ── */}
           {brandsOpen && (
             <div onClick={() => setBrandsOpen(false)}
-              style={{ position: 'fixed', inset: 0, zIndex: 9992, background: 'rgba(0,0,0,0.42)', display: 'flex', alignItems: 'flex-end', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' } as React.CSSProperties}>
+              style={{ position: 'fixed', inset: 0, zIndex: Z.modal, background: 'rgba(0,0,0,0.42)', display: 'flex', alignItems: 'flex-end', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' } as React.CSSProperties}>
               <div onClick={e => e.stopPropagation()}
                 style={{ width: '100%', maxWidth: 680, margin: '0 auto', background: '#fff', borderRadius: '18px 18px 0 0', display: 'flex', flexDirection: 'column', maxHeight: '92vh', animation: 'sheetUp .34s cubic-bezier(.32,.72,0,1)' }}>
 
@@ -6030,7 +6023,7 @@ export default function DiscernApp({
                     <span style={{ fontFamily: SANS, fontSize: 11, color: INK3, marginLeft: 8 }}>{allBrands.length}</span>
                   </div>
                   <button onClick={() => setBrandsOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, color: INK3, lineHeight: 0 }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.88" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
                 </div>
 
@@ -6049,7 +6042,7 @@ export default function DiscernApp({
                       style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 8px', cursor: 'pointer' }}>
                       <BrandLogo domain={b.domain} name={b.name} size={40} />
                       <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 500, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto', flexShrink: 0, opacity: .5 }}><polyline points="9 18 15 12 9 6"/></svg>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="2.0" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto', flexShrink: 0, opacity: .5 }}><polyline points="9 18 15 12 9 6"/></svg>
                     </div>
                   ))}
                 </div>
@@ -6060,7 +6053,7 @@ export default function DiscernApp({
           {/* ── Size Guide modal — interactive ── */}
           {sizeGuideOpen && (
             <div onClick={() => setSizeGuideOpen(false)}
-              style={{ position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.42)', display: 'flex', alignItems: 'flex-end', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' } as React.CSSProperties}>
+              style={{ position: 'fixed', inset: 0, zIndex: Z.modal, background: 'rgba(0,0,0,0.42)', display: 'flex', alignItems: 'flex-end', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' } as React.CSSProperties}>
               <div onClick={e => e.stopPropagation()}
                 style={{ width: '100%', maxWidth: 680, margin: '0 auto', background: '#fff', borderRadius: '18px 18px 0 0', display: 'flex', flexDirection: 'column', maxHeight: '86vh' }}>
 
@@ -6090,7 +6083,7 @@ export default function DiscernApp({
                       </div>
                     )}
                     <button onClick={() => setSizeGuideOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, color: INK3, lineHeight: 0 }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.88" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                   </div>
                 </div>
@@ -6261,30 +6254,28 @@ export default function DiscernApp({
 
           {/* ── Explore coming-soon toast ── */}
           {exploreToast && (
-            <div style={{ position: 'fixed', bottom: 96, left: '50%', zIndex: 9999,
+            <div style={{ position: 'fixed', bottom: 96, left: '50%', zIndex: Z.toast,
               background: INK, color: '#fff', borderRadius: 24,
               padding: '11px 22px', display: 'flex', alignItems: 'center', gap: 10,
               fontFamily: SANS, fontSize: 13, fontWeight: 400, letterSpacing: '.01em',
               boxShadow: '0 8px 32px rgba(0,0,0,0.32), 0 2px 8px rgba(0,0,0,0.18)', whiteSpace: 'nowrap',
               animation: `${exploreToastOut ? 'toastOut 0.42s cubic-bezier(0.4,0,1,1)' : 'toastIn 0.52s cubic-bezier(0.34,1.36,0.64,1)'} forwards`,
             }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: .7 }}>
-                <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"/>
-              </svg>
+              <SparkleIcon size={15} style={{ opacity: .7 }} />
               Coming soon
             </div>
           )}
 
           {/* ── Popup-blocked toast ── */}
           {popupBlockedUrl && (
-            <div style={{ position: 'fixed', bottom: 96, left: '50%', transform: 'translateX(-50%)', zIndex: 9999,
+            <div style={{ position: 'fixed', bottom: 96, left: '50%', transform: 'translateX(-50%)', zIndex: Z.toast,
               background: INK, color: '#fff', borderRadius: 16,
               padding: '13px 20px', display: 'flex', alignItems: 'center', gap: 12,
               fontFamily: SANS, fontSize: 13, fontWeight: 400, letterSpacing: '.01em',
               boxShadow: '0 8px 32px rgba(0,0,0,0.28)', maxWidth: 'calc(100vw - 40px)',
               animation: 'toastIn 0.42s cubic-bezier(0.34,1.36,0.64,1) forwards',
             }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: .7, flexShrink: 0 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.88" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: .7, flexShrink: 0 }}>
                 <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/>
               </svg>
               <span>Popup blocked — allow popups for this site in your browser, then try again.</span>
@@ -6301,10 +6292,10 @@ export default function DiscernApp({
             <>
               <div
                 onClick={() => setShowUpgradeSheet(false)}
-                style={{ position: 'fixed', inset: 0, zIndex: 9100, background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(2px)' }}
+                style={{ position: 'fixed', inset: 0, zIndex: Z.scrim, background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(2px)' }}
               />
               <div style={{
-                position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 9101,
+                position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: Z.sheet,
                 background: BG, borderRadius: '20px 20px 0 0',
                 padding: '32px 24px 40px',
                 boxShadow: '0 -8px 48px rgba(0,0,0,0.18)',
@@ -6318,7 +6309,7 @@ export default function DiscernApp({
                   </div>
                   <button onClick={() => setShowUpgradeSheet(false)}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: INK3 }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.67" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
                   </button>
@@ -6339,7 +6330,7 @@ export default function DiscernApp({
                   ].map(([title, desc]) => (
                     <div key={title} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                       <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#e8f0e8', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3d7a3a" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3d7a3a" strokeWidth="3.0" strokeLinecap="round" strokeLinejoin="round">
                           <polyline points="20 6 9 17 4 12"/>
                         </svg>
                       </div>
@@ -6388,11 +6379,11 @@ export default function DiscernApp({
             <>
               <div
                 onClick={() => finishOnboarding(true)}
-                style={{ position: 'fixed', inset: 0, zIndex: 9100, background: 'rgba(0,0,0,0.38)', backdropFilter: 'blur(3px)' }}
+                style={{ position: 'fixed', inset: 0, zIndex: Z.scrim, background: 'rgba(0,0,0,0.38)', backdropFilter: 'blur(3px)' }}
               />
               {/* Tablet/desktop: centred popup. Phone: bottom sheet. */}
               <div style={{
-                position: 'fixed', zIndex: 9101, pointerEvents: 'none',
+                position: 'fixed', zIndex: Z.sheet, pointerEvents: 'none',
                 ...(isMedium
                   ? { inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }
                   : { left: 0, right: 0, bottom: 0 }),
@@ -6423,7 +6414,7 @@ export default function DiscernApp({
                   </div>
                   <button onClick={() => finishOnboarding(true)}
                     style={{ background: 'rgba(0,0,0,.06)', border: 'none', cursor: 'pointer', padding: 8, borderRadius: '50%', color: INK3, flexShrink: 0, marginLeft: 12 }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.14" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
                   </button>
@@ -6445,8 +6436,8 @@ export default function DiscernApp({
                   <div style={{ marginBottom: 24 }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       {([
-                        { g: 'Men', sub: 'menswear by default', icon: <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="6" r="3.5"/><path d="M6 21v-2a6 6 0 0 1 12 0v2"/><line x1="9" y1="15" x2="15" y2="15"/></svg> },
-                        { g: 'Women', sub: 'womenswear by default', icon: <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="6" r="3.5"/><path d="M8 21l4-10 4 10"/><path d="M7 17h10"/></svg> },
+                        { g: 'Men', sub: 'menswear by default', icon: <FigureMasculineIcon size={30} /> },
+                        { g: 'Women', sub: 'womenswear by default', icon: <FigureFeminineIcon size={30} /> },
                       ] as const).map(({ g, sub, icon }) => {
                         const active = onboardGender === g
                         return (
@@ -6528,9 +6519,9 @@ export default function DiscernApp({
           {/* ── Bag item long-press menu — Ask stylist + Remove ── */}
           {bagCtxMenu && (
             <>
-              <div onClick={() => { if (Date.now() - ctxMenuOpenAt.current < 500) return; setBagCtxMenu(null); wasLongPress.current = false }} style={{ position: 'fixed', inset: 0, zIndex: 9000 }} />
+              <div onClick={() => { if (Date.now() - ctxMenuOpenAt.current < 500) return; setBagCtxMenu(null); wasLongPress.current = false }} style={{ position: 'fixed', inset: 0, zIndex: Z.scrim }} />
               <div style={{
-                position: 'fixed', left: bagCtxMenu.x, top: bagCtxMenu.y, zIndex: 9001,
+                position: 'fixed', left: bagCtxMenu.x, top: bagCtxMenu.y, zIndex: Z.menu,
                 width: 190, borderRadius: 12, overflow: 'hidden',
                 background: 'linear-gradient(160deg, rgba(255,255,255,0.96) 0%, rgba(245,245,248,0.94) 100%)',
                 boxShadow: '0 0 0 0.5px rgba(255,255,255,0.9), 0 12px 36px rgba(0,0,0,0.18), 0 3px 10px rgba(0,0,0,0.10), inset 0 1px 0 rgba(255,255,255,1)',
@@ -6555,7 +6546,7 @@ export default function DiscernApp({
                   onPointerUp={e => (e.currentTarget.style.background = '')}
                   onPointerLeave={e => (e.currentTarget.style.background = '')}>
                   <span>Ask Fabrics</span>
-                  <FabricsIcon size={14} stroke="rgba(60,60,67,0.6)" strokeWidth={1.05}/>
+                  <FabricsIcon size={14} stroke="rgba(60,60,67,0.6)" />
                 </div>
                 <div style={{ height: '0.5px', background: 'rgba(60,60,67,0.15)', position: 'relative', zIndex: 1 }} />
                 {/* Remove from bag */}
@@ -6568,9 +6559,7 @@ export default function DiscernApp({
                   onPointerUp={e => (e.currentTarget.style.background = '')}
                   onPointerLeave={e => (e.currentTarget.style.background = '')}>
                   <span>Remove from bag</span>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,59,48,0.8)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                  </svg>
+                  <TrashIcon size={14} color="rgba(255,59,48,0.8)" />
                 </div>
               </div>
             </>
@@ -6580,11 +6569,11 @@ export default function DiscernApp({
           {productCtxMenu && (
             <>
               <div onClick={() => { if (Date.now() - ctxMenuOpenAt.current < 500) return; setProductCtxMenu(null); productWasLong.current = false }}
-                style={{ position: 'fixed', inset: 0, zIndex: 9000 }} />
+                style={{ position: 'fixed', inset: 0, zIndex: Z.scrim }} />
               <div style={{
                 position: 'fixed',
                 left: productCtxMenu.x, top: productCtxMenu.y,
-                zIndex: 9001,
+                zIndex: Z.menu,
                 width: 190,
                 borderRadius: 12,
                 overflow: 'hidden',
@@ -6619,7 +6608,7 @@ export default function DiscernApp({
                   onPointerUp={e => (e.currentTarget.style.background = '')}
                   onPointerLeave={e => (e.currentTarget.style.background = '')}>
                   <span>Ask Fabrics</span>
-                  <FabricsIcon size={14} stroke="rgba(60,60,67,0.6)" strokeWidth={1.05}/>
+                  <FabricsIcon size={14} stroke="rgba(60,60,67,0.6)" />
                 </div>
 
               </div>
@@ -6674,7 +6663,7 @@ export default function DiscernApp({
                           </div>
                         )) : (
                           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.4" opacity=".4"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                            <ImageIcon size={32} color={INK3} style={{ opacity: .4 }} />
                           </div>
                         )}
                       </div>
@@ -6702,9 +6691,7 @@ export default function DiscernApp({
                             transition: 'background .15s' }}
                           onPointerEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,.14)')}
                           onPointerLeave={e => (e.currentTarget.style.background = 'rgba(0,0,0,.07)')}>
-                          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                            <path d="M1 1l10 10M11 1L1 11" stroke={INK} strokeWidth="1.6" strokeLinecap="round"/>
-                          </svg>
+                          <CloseIcon size={11} color={INK} />
                         </button>
                       </div>
 
@@ -6716,11 +6703,7 @@ export default function DiscernApp({
                           </h2>
                           <button onClick={() => toggleSaved(selectedProduct)} aria-label={savedIds.has(selectedProduct.id) ? 'In your bag' : 'Bag it'}
                             style={{ background: 'transparent', border: 'none', padding: '2px 4px', cursor: 'pointer', flexShrink: 0, marginTop: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-                            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" fill={savedIds.has(selectedProduct.id) ? INK : 'none'} />
-                              <line x1="3" y1="6" x2="21" y2="6" stroke={savedIds.has(selectedProduct.id) ? '#fff' : INK} />
-                              <path d="M16 10a4 4 0 0 1-8 0" stroke={savedIds.has(selectedProduct.id) ? '#fff' : INK} />
-                            </svg>
+                            <BagIcon size={19} color={INK} />
                             <span style={{ fontFamily: SANS, fontSize: 8.5, letterSpacing: '.09em', textTransform: 'uppercase', color: INK, lineHeight: 1 }}>
                               {savedIds.has(selectedProduct.id) ? 'Bagged' : 'Bag it'}
                             </span>
@@ -6909,7 +6892,7 @@ export default function DiscernApp({
                             </div>
                           )) : (
                             <div style={{ width: "100%", aspectRatio: "4/5", background: "#ebebeb", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={INK3} strokeWidth="1.4" opacity=".4"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                              <ImageIcon size={32} color={INK3} style={{ opacity: .4 }} />
                             </div>
                           )}
                         </div>
@@ -6947,11 +6930,7 @@ export default function DiscernApp({
                         </h2>
                         <button onClick={() => toggleSaved(selectedProduct)} aria-label={savedIds.has(selectedProduct.id) ? 'In your bag' : 'Bag it'}
                           style={{ background: "transparent", border: "none", padding: "2px 4px", cursor: "pointer", flexShrink: 0, marginTop: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke={INK} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" fill={savedIds.has(selectedProduct.id) ? INK : "none"} />
-                            <line x1="3" y1="6" x2="21" y2="6" stroke={savedIds.has(selectedProduct.id) ? '#fff' : INK} />
-                            <path d="M16 10a4 4 0 0 1-8 0" stroke={savedIds.has(selectedProduct.id) ? '#fff' : INK} />
-                          </svg>
+                          <BagIcon size={21} color={INK} />
                           <span style={{ fontFamily: SANS, fontSize: 8.5, letterSpacing: ".09em", textTransform: "uppercase", color: INK, lineHeight: 1 }}>
                             {savedIds.has(selectedProduct.id) ? 'Bagged' : 'Bag it'}
                           </span>
