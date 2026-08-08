@@ -721,18 +721,16 @@ export default function DiscernV2({
         {/* The trigger stays put and morphs into the close control while the
             menu is open, exactly as the reference does — you shut the menu
             from the button you opened it with. */}
-        <button className={`v2-ic v2-menu-btn ${menuOpen ? 'x' : ''}`}
-          aria-label={menuOpen ? 'Close menu' : 'Menu'} aria-expanded={menuOpen}
-          onClick={() => setMenuOpen(v => !v)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.67"
-            strokeLinecap="round" fill="none" aria-hidden>
-            {/* Three separately-classed bars, NOT the shared MenuIcon: the
-                hamburger morphs into an X, and .v2-menu-btn.x animates these
-                three paths individually. A single-path icon silently kills that
-                transition. Weight still follows the app's optical constant. */}
-            <path className="v2-bun-t" d="M3.6 7h16.8" /><path className="v2-bun-m" d="M3.6 12h16.8" /><path className="v2-bun-b" d="M3.6 17h16.8" />
-          </svg>
-          <em>{menuOpen ? 'Close' : 'Menu'}</em>
+        {/* The chat UI's own pair, drawn the same way: two unequal bars in a
+            white disc, and a pencil opposite. Two bars, not three, and the
+            shorter one second — that asymmetry is the mark. No morph to an X
+            any more, because the drawer covers this button and carries its own
+            close. */}
+        <button className="v2-ic v2-round v2-menu-btn" aria-label="Menu" aria-expanded={menuOpen}
+          onClick={() => setMenuOpen(true)}>
+          <span className="v2-bun" aria-hidden>
+            <i /><i />
+          </span>
         </button>
         {/* Recents, saved and the bag all used to sit up here as three more
             icons. They belong in the drawer with everything else you can go to,
@@ -747,9 +745,13 @@ export default function DiscernV2({
         </div>
         {/* Opposite the menu, as the chat UI had it: the way back to a blank
             page. Hidden on the home screen, which is already that page. */}
-        <button className={`v2-ic v2-newbtn ${view === 'home' ? 'gone' : ''}`}
+        <button className={`v2-ic v2-round v2-newbtn ${view === 'home' ? 'gone' : ''}`}
           aria-label="New search" onClick={newSearch}>
-          <PlusIcon size={17} />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="1.88" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+          </svg>
         </button>
       </header>
 
@@ -1381,6 +1383,19 @@ export default function DiscernV2({
           transition:color .45s ${V2.ease},background .45s ${V2.ease},transform .42s ${V2.ease},opacity .3s ${V2.ease};}
         .v2-head.up{transform:translateY(-102%);opacity:0;pointer-events:none;}
         .v2-head.solid{color:${V2.ink};background:linear-gradient(to bottom,${V2.bone} 60%,rgba(242,239,234,0));}
+        /* A white disc with the chat UI's shadow, on both surfaces: over the
+           film it is what makes the controls readable at all, and on paper it is
+           the same button it always was. */
+        .v2-ic.v2-round{width:36px;height:36px;border-radius:50%;background:#fff;color:${V2.ink};
+          box-shadow:0 2px 8px rgba(0,0,0,.10),inset 0 1px 0 rgba(255,255,255,.95);
+          transition:box-shadow .15s,transform .1s,opacity .25s ${V2.ease};}
+        .v2-ic.v2-round:hover{box-shadow:0 4px 14px rgba(0,0,0,.14),inset 0 1px 0 #fff;transform:translateY(-.5px);}
+        .v2-ic.v2-round:active{transform:scale(.93);}
+        /* Two bars, 16 and 12, 1.5 tall, left-aligned — the chat UI's geometry. */
+        .v2-bun{display:flex;flex-direction:column;align-items:flex-start;gap:4.5px;}
+        .v2-bun i{display:block;height:1.5px;border-radius:1px;background:currentColor;}
+        .v2-bun i:first-child{width:16px;}
+        .v2-bun i:last-child{width:12px;}
         .v2-ic{width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:none;
           border:none;color:inherit;cursor:pointer;position:relative;-webkit-tap-highlight-color:transparent;}
         /* The circle stays 34px because that is the drawing; the touch target
@@ -1762,10 +1777,6 @@ export default function DiscernV2({
           color:#fff;font-size:11px;letter-spacing:.16em;transition:background .24s ${V2.ease};}
         .v2-menu-cta:hover{background:rgba(255,255,255,.1);}
         /* Hamburger → ✕ on the trigger itself. */
-        .v2-menu-btn svg path{transition:transform .34s ${V2.ease},opacity .2s ${V2.ease};transform-origin:center;}
-        .v2-menu-btn.x .v2-bun-t{transform:translateY(5px) rotate(45deg);}
-        .v2-menu-btn.x .v2-bun-b{transform:translateY(-5px) rotate(-45deg);}
-        .v2-menu-btn.x .v2-bun-m{opacity:0;}
 
         /* Bag sheet */
         .v2-bag-ov{position:absolute;inset:0;z-index:79;background:rgba(20,18,16,.34);
@@ -1928,7 +1939,6 @@ export default function DiscernV2({
         @keyframes v2-rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
         @keyframes v2-fade{from{opacity:0}to{opacity:1}}
 
-        .v2-menu-btn em{display:none;}
 
         /* Missing art reads as unphotographed paper, never as a broken tile:
            it keeps the element's exact geometry so layout never shifts when the
@@ -1974,14 +1984,10 @@ export default function DiscernV2({
           :root{--bar:112px;}
 
           .v2-head{padding:20px 26px;gap:6px;}
-          .v2-menu-btn{width:auto;gap:9px;padding:0 6px;}
-          .v2-menu-btn em{display:inline;font-style:normal;font-size:11px;letter-spacing:.16em;
-            text-transform:uppercase;}
           .v2-brand span{font-size:13px;}
 
           /* Hero: one-line headline, tighter card cluster */
           .v2-hero-copy h1{font-size:clamp(44px,4.4vw,64px);line-height:1.04;}
-          .v2-hero-copy h1 span{display:inline;}
           .v2-hero-copy p{font-size:15px;}
 
           /* Results keep the phone's even grid on a wide screen — they used to
