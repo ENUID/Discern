@@ -23,7 +23,7 @@
  *    shipping, subtotal, then PROCEED TO PAYMENT with the redirect notice.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, ExternalLinkIcon, HeartIcon, HistoryIcon, PlusIcon, SparkleIcon, TagIcon, UserIcon } from '@/components/icons'
+import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, EditIcon, ExternalLinkIcon, HeartIcon, HistoryIcon, PlusIcon, SparkleIcon, TagIcon, TrashIcon, UserIcon } from '@/components/icons'
 import { useSession, signOut } from 'next-auth/react'
 import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING, V2_HERO_COPY } from './theme'
 import V2Auth, { type V2AuthReason } from './V2Auth'
@@ -205,6 +205,19 @@ export default function DiscernV2({
   const [savedOpen, setSavedOpen] = useState(false)
   const [histOpen, setHistOpen] = useState(false)
   const [asked, setAsked] = useState<string[]>([])
+  /** Which recent is being renamed, by its current text. */
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const renameAsked = useCallback((from: string, to: string) => {
+    const next = to.trim()
+    setRenaming(null)
+    if (!next || next === from) return
+    setAsked(a => {
+      const out = a.map(x => (x === from ? next : x))
+      // A rename onto an existing entry would leave two identical rows, and the
+      // list is keyed by its text.
+      return out.filter((x, i) => out.indexOf(x) === i)
+    })
+  }, [])
   const [photos, setPhotos] = useState<string[]>([])
   const { status: authStatus, data: session } = useSession()
   const [authReason, setAuthReason] = useState<V2AuthReason>(null)
@@ -623,6 +636,13 @@ export default function DiscernV2({
   /** The letter on the avatar, as the sidebar had it. */
   const initial = (session?.user?.name || session?.user?.email || '').trim().charAt(0).toUpperCase()
 
+  /** Back to a blank page, as the chat UI's New chat did. */
+  const newSearch = useCallback(() => {
+    setTurns([]); setLook(null); setLookOpen(false); setProduct(null)
+    setInput(''); setPhotos([]); setView('home')
+    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
+  }, [])
+
   const submit = () => run(input)
 
   const openProduct = (p: V2Product) => {
@@ -718,12 +738,19 @@ export default function DiscernV2({
             icons. They belong in the drawer with everything else you can go to,
             which leaves the header holding what a header should: one way in,
             and the name of the thing. */}
+        <div className="v2-head-gap" />
         <div className="v2-brand">
           <svg width="22" height="22" viewBox="0 0 40 40" fill="none" strokeLinecap="round" strokeLinejoin="round" stroke="currentColor" strokeWidth="2.08" aria-hidden>
             <path d="M20 5l9 7v16l-9 7-9-7V12z" /><path d="M20 12l4 3v10l-4 3-4-3V15z" /></svg>
           <span>DISCERN</span>
           <i>BETA</i>
         </div>
+        {/* Opposite the menu, as the chat UI had it: the way back to a blank
+            page. Hidden on the home screen, which is already that page. */}
+        <button className={`v2-ic v2-newbtn ${view === 'home' ? 'gone' : ''}`}
+          aria-label="New search" onClick={newSearch}>
+          <PlusIcon size={17} />
+        </button>
       </header>
 
       {/* Mini-bag chips — the pieces you've added, stacked top-right */}
@@ -1094,7 +1121,7 @@ export default function DiscernV2({
         </div>
 
         <button className="v2-newchat" tabIndex={menuOpen ? 0 : -1}
-          onClick={() => { setMenuOpen(false); setTurns([]); setLook(null); setInput(''); setView('home') }}>
+          onClick={() => { setMenuOpen(false); newSearch() }}>
           <PlusIcon size={13} />
           New search
         </button>
@@ -1118,9 +1145,31 @@ export default function DiscernV2({
             <p className="v2-menu-empty">Nothing asked yet.</p>
           ) : (
             <ul>{asked.slice(0, 12).map(q => (
-              <li key={q}>
-                <button tabIndex={menuOpen ? 0 : -1}
-                  onClick={() => { setMenuOpen(false); run(q) }}>{q}</button>
+              <li key={q} className="v2-recent-row">
+                {renaming === q ? (
+                  <input
+                    className="v2-recent-input"
+                    defaultValue={q}
+                    autoFocus
+                    aria-label="Rename"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') renameAsked(q, (e.target as HTMLInputElement).value)
+                      if (e.key === 'Escape') setRenaming(null)
+                    }}
+                    onBlur={e => renameAsked(q, e.target.value)}
+                  />
+                ) : (
+                  <>
+                    <button className="v2-recent-go" tabIndex={menuOpen ? 0 : -1}
+                      onClick={() => { setMenuOpen(false); run(q) }}>{q}</button>
+                    <span className="v2-recent-acts">
+                      <button aria-label={`Rename ${q}`} tabIndex={menuOpen ? 0 : -1}
+                        onClick={() => setRenaming(q)}><EditIcon size={13} /></button>
+                      <button aria-label={`Delete ${q}`} tabIndex={menuOpen ? 0 : -1}
+                        onClick={() => setAsked(a => a.filter(x => x !== q))}><TrashIcon size={13} /></button>
+                    </span>
+                  </>
+                )}
               </li>
             ))}</ul>
           )}
@@ -1299,8 +1348,18 @@ export default function DiscernV2({
                     onChange={e => addPhotos(e.target.files)} />
                 </label>
                 <div className="v2-bar-right">
-                  <button className={`v2-send ${canSend ? 'on' : ''}`} aria-label="Send" onClick={submit} disabled={loading}>
-                    {loading ? <Progress light />
+                  {/* Busy is its own state, not the send state with a spinner
+                      dropped into it. It used to keep the filled treatment while
+                      a search ran and draw a white progress bar on white — a
+                      blank disc. It is now an outline with a stop mark, drawn in
+                      whatever colour the bar is currently using, so it stays
+                      legible on the film and on paper alike. */}
+                  <button className={`v2-send ${loading ? 'busy' : canSend ? 'on' : ''}`}
+                    aria-label={loading ? 'Searching' : 'Send'} onClick={submit} disabled={loading}>
+                    {loading
+                      ? <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                          <rect width="10" height="10" rx="2" fill="currentColor" />
+                        </svg>
                       : <ArrowUpIcon size={15} />}
                   </button>
                 </div>
@@ -1350,6 +1409,9 @@ export default function DiscernV2({
         .v2-brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
           display:flex;align-items:center;gap:7px;pointer-events:none;}
         .v2-brand svg{display:block;}
+        .v2-head-gap{flex:1;}
+        .v2-newbtn{transition:opacity .25s ${V2.ease},transform .25s ${V2.ease};}
+        .v2-newbtn.gone{opacity:0;pointer-events:none;transform:scale(.85);}
         .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.34em;text-indent:.34em;
           white-space:nowrap;line-height:1;}
         .v2-brand i{font-style:normal;font-size:8px;letter-spacing:.18em;text-indent:.18em;opacity:.55;
@@ -1622,13 +1684,13 @@ export default function DiscernV2({
           color:#fff;background:rgba(28,27,26,.86);
           backdrop-filter:blur(30px) saturate(140%);-webkit-backdrop-filter:blur(30px) saturate(140%);
           border-right:1px solid rgba(255,255,255,.12);box-shadow:8px 0 48px rgba(0,0,0,.34);
-          padding:calc(env(safe-area-inset-top,0px) + 26px) 22px calc(env(safe-area-inset-bottom,0px) + 22px);
-          display:flex;flex-direction:column;gap:20px;overflow-y:auto;overscroll-behavior:contain;
+          padding:calc(env(safe-area-inset-top,0px) + 24px) 16px calc(env(safe-area-inset-bottom,0px) + 20px);
+          display:flex;flex-direction:column;gap:18px;overflow-y:auto;overscroll-behavior:contain;
           transform:translateX(-100%);pointer-events:none;
           transition:transform .34s cubic-bezier(.32,.72,0,1);}
         .v2-menu.on{transform:translateX(0);pointer-events:auto;}
-                .v2-eyebrow-s{font-size:12px;font-weight:500;opacity:.5;}
-        .v2-menu-top{display:flex;align-items:center;justify-content:space-between;}
+                .v2-eyebrow-s{font-size:11px;font-weight:500;opacity:.42;letter-spacing:.04em;padding-left:6px;}
+        .v2-menu-top{display:flex;align-items:center;justify-content:space-between;padding:0 6px;}
         .v2-avatar{width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;color:#fff;
           background:rgba(255,255,255,.12);font-family:${V2.sans};font-size:14px;font-weight:500;}
@@ -1649,6 +1711,25 @@ export default function DiscernV2({
         ul.v2-menu-nav li button em{margin-left:auto;font-style:normal;font-size:11px;font-weight:500;
           background:rgba(255,255,255,.14);border-radius:20px;padding:2px 8px;}
         .v2-menu-empty{margin:0;font-size:13px;opacity:.45;}
+        /* Recents: the row is the query, its controls sit at the end and only
+           come up on hover or focus, so the list reads as a list of questions
+           rather than a list of questions and four icons. */
+        .v2-recent-row{display:flex;align-items:center;gap:4px;border-radius:8px;
+          transition:background .12s;}
+        .v2-recent-row:hover{background:rgba(255,255,255,.07);}
+        .v2-recent-go{flex:1;min-width:0;padding:9px 10px;font-family:${V2.sans};font-size:13.5px;
+          font-weight:400;letter-spacing:0;opacity:.86;background:none;border:none;color:inherit;
+          text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .v2-recent-acts{display:flex;gap:2px;padding-right:6px;opacity:0;transition:opacity .14s;}
+        .v2-recent-row:hover .v2-recent-acts,.v2-recent-acts:focus-within{opacity:.7;}
+        .v2-recent-acts button{width:26px;height:26px;display:flex;align-items:center;justify-content:center;
+          background:none;border:none;color:inherit;cursor:pointer;border-radius:6px;}
+        .v2-recent-acts button:hover{background:rgba(255,255,255,.12);}
+        .v2-recent-input{flex:1;min-width:0;margin:2px 6px;padding:7px 9px;border-radius:8px;
+          background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);color:#fff;
+          font-family:${V2.sans};font-size:13.5px;outline:none;}
+        /* Touch has no hover, so the controls are simply always there. */
+        @media(hover:none){.v2-recent-acts{opacity:.55;}}
         .v2-menu-x{width:34px;height:34px;margin:-8px -8px -8px 0;display:flex;align-items:center;
           justify-content:center;background:none;border:none;color:inherit;cursor:pointer;
           position:relative;opacity:.7;}
@@ -1666,9 +1747,9 @@ export default function DiscernV2({
         .v2-menu li button:not(.v2-menu-nav *),.v2-menu-meta button{position:relative;}
         .v2-menu li button:not(.v2-menu-nav *)::before,.v2-menu-meta button::before{content:'';position:absolute;
           left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
-        .v2-menu-recent{padding-top:16px;border-top:1px solid rgba(255,255,255,.16);flex:1;min-height:0;
-          display:flex;flex-direction:column;gap:11px;}
-        .v2-menu-recent ul{gap:9px;}
+        .v2-menu-recent{padding-top:16px;border-top:1px solid rgba(255,255,255,.14);flex:1;min-height:0;
+          display:flex;flex-direction:column;gap:8px;overflow-y:auto;overscroll-behavior:contain;}
+        .v2-menu-recent ul{gap:1px;}
         .v2-menu-recent li button{font-family:${V2.sans};font-size:14px;font-weight:400;letter-spacing:0;
           opacity:.82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block;}
         .v2-menu-meta{margin-top:auto;display:flex;justify-content:space-between;gap:18px;padding-top:16px;
@@ -1754,6 +1835,7 @@ export default function DiscernV2({
         .v2-bar.on-light .v2-plus,.v2-bar.on-light .v2-send{
           background:rgba(26,26,28,.08);color:${V2.ink};}
         .v2-bar.on-light .v2-send.on{background:${V2.ink};color:#fff;}
+        .v2-bar.on-light .v2-send.busy{background:none;color:${V2.ink};}
         .v2-bar.on-light textarea{color:${V2.ink};caret-color:${V2.ink};}
         .v2-bar.on-light .v2-ph,.v2-bar.on-light .v2-marquee span{color:rgba(26,26,28,.5);}
         .v2-bar.on-light.focus{background:rgba(252,251,250,.96);}
@@ -1783,6 +1865,9 @@ export default function DiscernV2({
         .v2-bar-press{transform-origin:center bottom;transition:transform .2s ${V2.ease};}
         .v2-bar-press:active{transform:scale(.985);}
         .v2-send.on{background:#fff;color:${V2.ink};}
+        .v2-send.busy{background:none;color:inherit;box-shadow:inset 0 0 0 1.25px currentColor;opacity:.75;}
+        .v2-send.busy svg{animation:v2-pulse 1.1s ${V2.easeInOut} infinite;}
+        @keyframes v2-pulse{0%,100%{opacity:1}50%{opacity:.35}}
         .v2-field{position:relative;flex:1;min-width:0;overflow:hidden;}
         .v2-field textarea{width:100%;border:none;background:none;outline:none;resize:none;font-family:${V2.sans};
           font-size:16px;line-height:1.42;color:#fff;max-height:76px;overflow-y:auto;display:block;caret-color:#fff;}
@@ -1899,18 +1984,23 @@ export default function DiscernV2({
           .v2-hero-copy h1 span{display:inline;}
           .v2-hero-copy p{font-size:15px;}
 
-          /* Results: editorial line + horizontal carousel of full-height cards */
+          /* Results keep the phone's even grid on a wide screen — they used to
+             become a full-bleed horizontal carousel, which ran edge to edge
+             under the floating composer and read as content colliding with the
+             bar. The column is bounded and centred instead, so the page has
+             margins on a desktop the way it does on a phone. */
+          .v2-results{max-width:1240px;margin:0 auto;padding-left:clamp(20px,3vw,44px);
+            padding-right:clamp(20px,3vw,44px);}
           .v2-sec{padding-top:clamp(80px,7vw,120px);}
           .v2-sec h2{font-size:clamp(34px,3.1vw,46px);}
-          .v2-mosaic{display:flex;grid-template-columns:none;gap:2px;padding:0 0 8px;
-            overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none;align-items:flex-start;}
-          .v2-mosaic::-webkit-scrollbar{display:none;}
-          .v2-tile{flex:0 0 auto;width:clamp(240px,19vw,300px);scroll-snap-align:start;}
-          .v2-tile img,.v2-tile.tall img{aspect-ratio:3/4;}
+          .v2-mosaic{gap:30px 20px;padding:40px 0 0;}
           .v2-tile .v2-heart{bottom:44px;right:11px;}
-          .v2-tile-name{padding:11px 3px 20px;font-size:13px;}
+          .v2-tile-name{padding:11px 3px 0;font-size:13px;}
 
-          .v2-sec-hero{max-width:440px;}
+          /* The section's lead image was as tall as the window with nothing
+             beside it. Bounded so the heading, the picture and the grid read as
+             one column. */
+          .v2-sec-hero{max-width:min(340px,26vw);}
 
           /* Product page: imagery scrolls sideways, one screen tall */
           .v2-pdp{display:flex;height:100svh;overflow-x:auto;overflow-y:hidden;padding:0;

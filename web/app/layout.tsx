@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import AuthProvider from '@/components/AuthProvider'
 import ConvexClientProvider from '@/components/ConvexClientProvider'
+import StyledJsxRegistry from '@/components/StyledJsxRegistry'
 import { Analytics } from '@vercel/analytics/next'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
@@ -60,9 +61,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         />
       </head>
       <body>
-        <ConvexClientProvider>
-          <AuthProvider session={session}>{children}</AuthProvider>
-        </ConvexClientProvider>
+        <StyledJsxRegistry>
+          <ConvexClientProvider>
+            <AuthProvider session={session}>{children}</AuthProvider>
+          </ConvexClientProvider>
+        </StyledJsxRegistry>
         <Analytics />
       </body>
     </html>
