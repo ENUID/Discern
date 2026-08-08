@@ -238,6 +238,10 @@ export default function DiscernV2({
     return false
   }, [authStatus])
   const [menuOpen, setMenuOpen] = useState(false)
+  /** The drawer shows either its navigation or the account, exactly as the chat
+   *  UI's sidebar did — the avatar swaps between them rather than opening a
+   *  separate screen. */
+  const [menuView, setMenuView] = useState<'nav' | 'profile'>('nav')
   const [acc, setAcc] = useState<'materials' | 'style' | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [descOpen, setDescOpen] = useState(true)
@@ -330,7 +334,7 @@ export default function DiscernV2({
       if (bagOpen) setBagOpen(false)
       else if (savedOpen) setSavedOpen(false)
       else if (histOpen) setHistOpen(false)
-      else if (menuOpen) setMenuOpen(false)
+      else if (menuOpen) { setMenuOpen(false); setMenuView('nav') }
       else setLookOpen(false)
     }
     window.addEventListener('keydown', onKey)
@@ -508,18 +512,19 @@ export default function DiscernV2({
     return () => { live = false }
   }, [onFeatured])
 
-  // Takes the product, not an id — see the `saved` declaration. Saving is the
-  // first thing that genuinely needs an account, so it is the first thing that
-  // asks for one; un-saving never does.
+  // Takes the product, not an id — see the `saved` declaration.
+  //
+  // No account asked for. Saving writes to this device and always did, so
+  // demanding a sign-in first was gating a feature that then worked perfectly
+  // well without one. Checkout is the only thing that stops and asks.
   const toggleSave = useCallback((p: V2Product) => {
     const already = saved.has(p.id)
-    if (!already && !requireAccount('save')) return
     setSaved(prev => {
       const n = new Map(prev)
       if (already) n.delete(p.id); else n.set(p.id, p)
       return n
     })
-  }, [saved, requireAccount])
+  }, [saved])
 
   /** Attached photos are compressed to 768px JPEG data URLs, the same pipeline
    *  the chat UI used. They were object URLs before, which render fine in the
@@ -640,7 +645,7 @@ export default function DiscernV2({
     { label: 'Explore', icon: <SparkleIcon size={16} />, count: 0, soon: true, go: () => {} },
     { label: 'Brands',  icon: <TagIcon size={16} />,     count: 0, soon: true, go: () => {} },
     { label: 'Saved', icon: <HeartIcon size={16} />, count: saved.size, soon: false,
-      go: () => { if (requireAccount('save')) setSavedOpen(true) } },
+      go: () => setSavedOpen(true) },
     { label: 'Bag', icon: <BagIcon size={16} />, count: cartCount, soon: false,
       go: () => setBagOpen(true) },
     { label: 'History', icon: <HistoryIcon size={16} />, count: 0, soon: false,
@@ -1127,13 +1132,53 @@ export default function DiscernV2({
               competing with it at a size too small to read as anything; on its
               own, against the drawer's dark glass, it has room to be a mark. */}
           <img className="v2-menu-logo" src="/favicon.png" alt="Discern" width={34} height={34} />
-          <button className="v2-avatar" aria-label={authStatus === 'authenticated' ? 'Account' : 'Sign in'}
-            tabIndex={menuOpen ? 0 : -1}
-            onClick={() => { setMenuOpen(false); if (authStatus !== 'authenticated') requireAccount('save') }}>
+          <button className={`v2-avatar ${menuView === 'profile' ? 'on' : ''}`} aria-label="Account"
+            aria-pressed={menuView === 'profile'} tabIndex={menuOpen ? 0 : -1}
+            onClick={() => setMenuView(v => v === 'profile' ? 'nav' : 'profile')}>
             {initial ? <span>{initial}</span> : <UserIcon size={15} />}
           </button>
         </div>
 
+        {menuView === 'profile' ? (
+          /* The account, as the chat UI's sidebar showed it: a large avatar, the
+             name, the email beneath, and the way out. Signed out it says what an
+             account is for and offers one — voluntarily. Nothing here blocks;
+             the only thing that stops and asks is checkout. */
+          <div className="v2-profile">
+            <div className="v2-profile-face">
+              {session?.user?.image
+                ? <img src={session.user.image} alt="" />
+                : initial ? <span>{initial}</span> : <UserIcon size={30} />}
+            </div>
+            <div className="v2-profile-name">
+              {session?.user?.name || (authStatus === 'authenticated' ? 'Your account' : 'Not signed in')}
+            </div>
+            {session?.user?.email && <div className="v2-profile-mail">{session.user.email}</div>}
+
+            {authStatus === 'authenticated' ? (
+              <button className="v2-profile-act" tabIndex={menuOpen ? 0 : -1}
+                onClick={() => { setMenuOpen(false); setMenuView('nav'); signOut() }}>
+                <ExternalLinkIcon size={15} />
+                Sign out
+              </button>
+            ) : (
+              <>
+                {/* Sizes live on the account (Convex); saved pieces live on this
+                    device. Saying both follow you would be the same untrue
+                    promise the checkout sheet used to make. */}
+                <p className="v2-profile-why">
+                  An account remembers your sizes, so you are not asked for them again.
+                  You only need one to check out.
+                </p>
+                <button className="v2-profile-act primary" tabIndex={menuOpen ? 0 : -1}
+                  onClick={() => { setMenuOpen(false); setMenuView('nav'); requireAccount('account') }}>
+                  Sign in
+                </button>
+              </>
+            )}
+          </div>
+        ) : (
+          <>
         <button className="v2-newchat" tabIndex={menuOpen ? 0 : -1}
           onClick={() => { setMenuOpen(false); newSearch() }}>
           <PlusIcon size={13} />
@@ -1190,8 +1235,10 @@ export default function DiscernV2({
             ))}</ul>
           )}
         </div>
+          </>
+        )}
 
-        {authStatus === 'authenticated' && (
+        {menuView === 'nav' && authStatus === 'authenticated' && (
           <div className="v2-menu-meta">
             <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); signOut() }}>
               <ExternalLinkIcon size={15} />
@@ -1749,6 +1796,23 @@ export default function DiscernV2({
         ul.v2-menu-nav li button em.soon{background:none;border:1px solid rgba(255,255,255,.28);
           font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;}
         .v2-menu-empty{margin:0;font-size:13px;opacity:.45;}
+        /* Account view */
+        .v2-avatar.on{background:#fff;color:${V2.ink};}
+        .v2-profile{display:flex;flex-direction:column;align-items:center;text-align:center;
+          padding:14px 6px 0;gap:0;}
+        .v2-profile-face{width:78px;height:78px;border-radius:50%;overflow:hidden;flex-shrink:0;
+          display:flex;align-items:center;justify-content:center;margin-bottom:16px;
+          background:rgba(255,255,255,.12);color:#fff;font-family:${V2.sans};font-size:28px;font-weight:500;}
+        .v2-profile-face img{width:100%;height:100%;object-fit:cover;display:block;}
+        .v2-profile-name{font-family:${V2.sans};font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:4px;}
+        .v2-profile-mail{font-size:13px;opacity:.55;margin-bottom:26px;}
+        .v2-profile-why{font-size:13px;line-height:1.55;opacity:.6;margin:6px 0 20px;max-width:230px;}
+        .v2-profile-act{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;
+          min-height:44px;padding:12px 16px;border-radius:12px;border:1px solid rgba(255,255,255,.2);
+          background:none;color:inherit;font-family:${V2.sans};font-size:14px;cursor:pointer;
+          transition:background .14s;}
+        .v2-profile-act:hover{background:rgba(255,255,255,.08);}
+        .v2-profile-act.primary{background:#fff;color:${V2.ink};border-color:transparent;font-weight:500;}
         /* Recents: the row is the query, its controls sit at the end and only
            come up on hover or focus, so the list reads as a list of questions
            rather than a list of questions and four icons. */

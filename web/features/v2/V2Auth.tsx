@@ -146,7 +146,11 @@ export default function V2Auth({
             {step === 'code'
               ? 'Enter the code we sent to your email.'
               : isMandatory(reason)
-                ? 'Your order is placed on the brand’s own site.\nAn account is how you keep track of it.'
+                // Not "how you keep track of it": there is no order history in
+                // this app, so that sentence promised a screen that does not
+                // exist. This says only what is true — where the order happens,
+                // and that an account is required before the handoff.
+                ? 'Checkout happens on the brand’s own site.\nDiscern needs an account before handing you over.'
                 : 'Stop comparing tabs.\nStart understanding fashion.'}
           </div>
 
