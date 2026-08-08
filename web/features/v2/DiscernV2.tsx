@@ -280,9 +280,9 @@ export default function DiscernV2({
         touched.push(el)
       }
     } else {
-      // With nothing open the menu is still mounted. Its list items already
-      // manage tabIndex, but the mailto link in its footer does not, so it
-      // stayed in the tab order permanently.
+      // With nothing open the drawer is still mounted, just translated out of
+      // frame. Its own controls manage tabIndex, but that is easy to forget on
+      // the next thing added to it, so the whole panel is inerted while closed.
       const menu = root.querySelector('.v2-menu') as HTMLElement | null
       if (menu) { menu.setAttribute('inert', ''); touched.push(menu) }
     }
@@ -2008,8 +2008,14 @@ export default function DiscernV2({
              one column. */
           .v2-sec-hero{max-width:min(340px,26vw);}
 
-          /* Product page: imagery scrolls sideways, one screen tall */
-          .v2-pdp{display:flex;height:100svh;overflow-x:auto;overflow-y:hidden;padding:0;
+          /* Product page: imagery scrolls sideways, one screen tall. The top
+             inset is not decoration — the phone layout already cleared the
+             floating header and this one did not, so the first photograph ran
+             underneath the wordmark here while being clear of it there.
+             border-box keeps the strip one screen tall with the inset inside
+             it, so the pictures still fit without scrolling vertically. */
+          .v2-pdp{display:flex;height:100svh;box-sizing:border-box;overflow-x:auto;overflow-y:hidden;
+            padding:calc(env(safe-area-inset-top,0px) + 78px) 0 0;
             scroll-snap-type:x proximity;scrollbar-width:none;}
           .v2-pdp::-webkit-scrollbar{display:none;}
           .v2-pdp-img{width:auto;height:100%;flex:0 0 auto;object-fit:cover;scroll-snap-align:center;}
