@@ -24,7 +24,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, HeartIcon, HistoryIcon, PlusIcon } from '@/components/icons'
-import { useSession } from 'next-auth/react'
+import { useSession, signOut } from 'next-auth/react'
 import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING } from './theme'
 import V2Auth, { type V2AuthReason } from './V2Auth'
 
@@ -32,7 +32,13 @@ import V2Auth, { type V2AuthReason } from './V2Auth'
 export type V2Color = { name: string; code?: string; image: string; available?: boolean }
 export type V2Product = {
   id: string
+  /** Short display name, written for a caption under a photograph. */
   title: string
+  /** The catalogue's own title, kept alongside the short one. Nothing displays
+   *  it — a name like "KUNAL" or a four-line keyword string is no better on a
+   *  product page than in a grid, and the brand handoff goes by storeUrl, not by
+   *  name. It is here so the raw name is not lost. */
+  fullTitle?: string
   price?: number
   compareAt?: number
   currency?: string
@@ -544,15 +550,20 @@ export default function DiscernV2({
     }
   }, [loading, onQuery, onSearched, photos, turns])
 
-  // Browsing entries genuinely are searches. The rest are destinations, and
-  // used to be searches for their own label.
+  /** The menu carries what the chat UI's sidebar carried: start again, the
+   *  things you have set aside, and what you asked before.
+   *
+   *  Gone: New in / Women / Men, which ran a catalogue search for their own
+   *  label — a department store's spine grafted onto something whose whole
+   *  argument is that you say what you want instead of narrowing down to it.
+   *  Gone with them: Orders, which opened the bag and was never orders, and
+   *  Help, which searched the shop for "how does Discern work". The chat UI's
+   *  Explore and Brand Collections are not here either; both were coming-soon
+   *  toasts, and a menu is a promise that a thing exists. */
   const MENU = [
-    { label: 'New in',  go: () => run('new in') },
-    { label: 'Women',   go: () => run('womenswear') },
-    { label: 'Men',     go: () => run('menswear') },
-    { label: 'Saved',   go: () => { if (requireAccount('save', turns[0]?.sections?.[0]?.hero?.image ?? artwork[0])) setSavedOpen(true) } },
-    { label: 'Orders',  go: () => { if (requireAccount('orders', cart[0]?.product.image ?? artwork[0])) setBagOpen(true) } },
-    { label: 'Help',    go: () => run('how does Discern work') },
+    { label: 'New search', go: () => { setTurns([]); setLook(null); setInput(''); setView('home') } },
+    { label: 'Saved',      go: () => { if (requireAccount('save', turns[0]?.sections?.[0]?.hero?.image ?? artwork[0])) setSavedOpen(true) } },
+    { label: 'Bag',        go: () => setBagOpen(true) },
   ]
 
   const submit = () => run(input)
@@ -650,11 +661,17 @@ export default function DiscernV2({
           onClick={() => setHistOpen(v => !v)} aria-expanded={histOpen}>
           <HistoryIcon size={18} />
         </button>
+        {/* Centred against the window, not against whatever space the icons
+            leave over. It used to be flex:1 between the two icon groups, which
+            only centres while those groups are the same width — on a wide screen
+            the menu button grows a MENU label and the mark drifted right. */}
         <div className="v2-brand">
           <svg width="24" height="24" viewBox="0 0 40 40" fill="none" strokeLinecap="round" strokeLinejoin="round" stroke="currentColor" strokeWidth="2.08" aria-hidden>
             <path d="M20 5l9 7v16l-9 7-9-7V12z" /><path d="M20 12l4 3v10l-4 3-4-3V15z" /></svg>
-          <span>DISCERN</span>
+          <span>DISCERN <i>BETA</i></span>
         </div>
+        {/* Holds the gap the brand used to occupy in flow. */}
+        <div className="v2-head-gap" />
         <button className="v2-ic" aria-label="Saved"
           onClick={() => { if (requireAccount('save', turns[0]?.sections?.[0]?.hero?.image ?? artwork[0])) setSavedOpen(true) }}>
           <HeartIcon size={18} />
@@ -987,8 +1004,10 @@ export default function DiscernV2({
         </div>
       )}
 
-      {/* Scroll hint */}
-      {(view === 'home' || view === 'look') && showScroll && !focused && (
+      {/* Scroll hint. Never while a search is running: the loading screen is the
+          only thing that should be asking for attention, and inviting a scroll
+          into a page that is about to be replaced is a dead offer. */}
+      {(view === 'home' || view === 'look') && showScroll && !focused && !loading && (
         <button className="v2-hint" style={{ bottom: `calc(var(--bar) + ${kb}px)` }}
           onClick={() => scrollRef.current?.scrollBy({ top: window.innerHeight * .82, behavior: 'smooth' })}>
           <ChevronIcon size={13} />
@@ -1017,9 +1036,6 @@ export default function DiscernV2({
       <div className={`v2-ov ${menuOpen ? 'on' : ''}`} onClick={() => setMenuOpen(false)} />
       <nav className={`v2-menu ${menuOpen ? 'on' : ''}`} aria-hidden={!menuOpen}>
         <span className="v2-eyebrow-s">Menu</span>
-        {/* 'Saved', 'Orders' and 'Help' used to run a catalogue search for their
-            own label, so tapping Help searched the shop for the word "help".
-            Browsing entries still search; the rest go where they say. */}
         <ul>{MENU.map(m => (
           <li key={m.label}>
             <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); m.go() }}>
@@ -1027,8 +1043,35 @@ export default function DiscernV2({
             </button>
           </li>
         ))}</ul>
+
+        {/* Recents, as the chat UI's sidebar had them — the session's questions,
+            tappable to run again. Absent rather than empty before the first
+            question, because a heading over nothing is just furniture. */}
+        {asked.length > 0 && (
+          <div className="v2-menu-recent">
+            <span className="v2-eyebrow-s">Recent</span>
+            <ul>{asked.slice(0, 6).map(q => (
+              <li key={q}>
+                <button tabIndex={menuOpen ? 0 : -1}
+                  onClick={() => { setMenuOpen(false); run(q) }}>{q}</button>
+              </li>
+            ))}</ul>
+          </div>
+        )}
+
+        {/* The account row the sidebar ended on. The mailto that used to sit
+            here was the only thing in the footer and led out of the app. */}
         <div className="v2-menu-meta">
-          <a href="mailto:help@discern.com">help@discern.com</a>
+          {authStatus === 'authenticated' ? (
+            <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); signOut() }}>
+              Sign out
+            </button>
+          ) : (
+            <button tabIndex={menuOpen ? 0 : -1}
+              onClick={() => { setMenuOpen(false); requireAccount('save', artwork[0]) }}>
+              Sign in
+            </button>
+          )}
         </div>
       </nav>
 
@@ -1242,8 +1285,16 @@ export default function DiscernV2({
         .v2-inspire-cta::before,.v2-hint::before,.v2-sug::before{content:'';position:absolute;
            left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
         .v2-ic:active{transform:scale(.9);}
-        .v2-brand{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;pointer-events:none;}
-        .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.36em;text-indent:.36em;white-space:nowrap;}
+        .v2-brand{position:absolute;left:50%;transform:translateX(-50%);
+          display:flex;flex-direction:column;align-items:center;gap:1px;pointer-events:none;}
+        .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.36em;text-indent:.36em;white-space:nowrap;
+          display:inline-flex;align-items:center;}
+        /* The stage marker. Small, tracked with the wordmark, and set apart by a
+           rule rather than a bracket so it reads as part of the lockup. */
+        .v2-brand i{font-style:normal;font-size:8px;letter-spacing:.2em;text-indent:.2em;opacity:.62;
+          margin-left:6px;padding-left:6px;border-left:1px solid currentColor;}
+        /* The icon row keeps the space the brand no longer takes. */
+        .v2-head-gap{flex:1;}
         .v2-dot{position:absolute;top:6px;right:5px;width:5px;height:5px;border-radius:50%;background:currentColor;}
 
         /* ── A spread: one exchange, answer then evidence ─────────────────── */
@@ -1339,11 +1390,16 @@ export default function DiscernV2({
           cursor:pointer;color:${V2.ink};font-size:14.5px;padding:6px 2px;}
         .v2-discover span{font-size:17px;line-height:1;}
 
-        .v2-mosaic{display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:32px 3px 0;align-items:start;}
+        /* Gutters, and air at the edges. The tiles were 3px apart and flush to
+           the screen, so the grid read as one sheet of photographs rather than
+           as separate pieces. */
+        .v2-mosaic{display:grid;grid-template-columns:1fr 1fr;gap:22px 12px;padding:32px 12px 0;}
         @media(min-width:760px){.v2-mosaic{grid-template-columns:repeat(3,1fr);}}
         @media(min-width:1180px){.v2-mosaic{grid-template-columns:repeat(4,1fr);}}
-        .v2-tile{position:relative;background:${V2.boneDeep};}
-        .v2-tile-btn{display:block;width:100%;padding:0;border:none;background:none;cursor:pointer;}
+        /* The grey was the tile's own background showing through under the
+           caption. Only the image needs a plate to load against. */
+        .v2-tile{position:relative;display:flex;flex-direction:column;}
+        .v2-tile-btn{display:block;width:100%;padding:0;border:none;cursor:pointer;background:${V2.boneDeep};}
         /* Every tile the same height. The grid alternated 3/4 and 2/3 tiles as a
            masonry, which staggered the rows and left the names on a ragged
            baseline — the reference runs an even two-up where each row reads as
@@ -1351,7 +1407,12 @@ export default function DiscernV2({
         .v2-tile img,.v2-tile.tall img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;transition:transform .7s ${V2.ease};}
         @media(hover:hover){.v2-tile:hover img{transform:scale(1.035);}}
         .v2-tile .v2-heart{position:absolute;right:9px;bottom:38px;}
-        .v2-tile-name{display:block;padding:9px 5px 16px;font-size:12.5px;text-align:left;}
+        /* Two lines, always. A caption that ran to four lines pushed its
+           neighbour's photograph down and the grid lost its rows — which is what
+           made the tiles look like different sizes when every image is identical.
+           Fixed height, clipped, so each row starts on the same line. */
+        .v2-tile-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+          padding:10px 2px 0;font-size:12.5px;line-height:1.35;height:calc(2 * 1.35em + 10px);text-align:left;}
         .v2-tile-name i{font-style:normal;color:${V2.ink45};}
 
         /* Look page */
@@ -1369,7 +1430,10 @@ export default function DiscernV2({
           font-size:10.5px;letter-spacing:.16em;color:${V2.ink70};}
 
         /* PDP */
-        .v2-pdp{padding-bottom:300px;}
+        /* The header floats over the scroller, so the first photograph used to run
+           under it — the model's head behind the wordmark. The page starts below
+           the bar instead, which is also what lets the whole image be seen. */
+        .v2-pdp{padding-top:calc(env(safe-area-inset-top,0px) + 64px);padding-bottom:300px;}
         .v2-pdp-img{width:100%;display:block;background:${V2.boneDeep};}
         .v2-back{position:absolute;z-index:45;top:calc(env(safe-area-inset-top,0px) + 56px);left:14px;display:flex;
           align-items:center;gap:6px;padding:7px 14px 7px 11px;border:none;border-radius:999px;cursor:pointer;
@@ -1499,14 +1563,19 @@ export default function DiscernV2({
            tall, so the primary navigation was the smallest target on the page.
            The expander fills the 11px gap and a little of the neighbour's; the
            later item wins the ~2px of shared edge, which beats a dead band. */
-        .v2-menu li button,.v2-menu-meta a{position:relative;}
-        .v2-menu li button::before,.v2-menu-meta a::before{content:'';position:absolute;
+        .v2-menu li button,.v2-menu-meta button{position:relative;}
+        .v2-menu li button::before,.v2-menu-meta button::before{content:'';position:absolute;
           left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
+        .v2-menu-recent{padding-top:16px;border-top:1px solid rgba(255,255,255,.16);
+          display:flex;flex-direction:column;gap:11px;}
+        .v2-menu-recent ul{gap:9px;}
+        .v2-menu-recent li button{font-family:${V2.sans};font-size:14px;font-weight:400;letter-spacing:0;
+          opacity:.82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block;}
         .v2-menu-meta{display:flex;justify-content:space-between;gap:18px;padding-top:16px;
           border-top:1px solid rgba(255,255,255,.16);font-size:12px;}
         .v2-menu-meta div{display:flex;flex-direction:column;gap:5px;}
         .v2-menu-meta div:first-child{opacity:.55;}
-        .v2-menu-meta a{color:inherit;text-decoration:none;}
+        .v2-menu-meta button{background:none;border:none;padding:0;color:inherit;font:inherit;cursor:pointer;opacity:.72;}
         .v2-menu-cta{display:flex;align-items:center;gap:10px;justify-content:center;cursor:pointer;
           padding:14px;border:1px solid rgba(255,255,255,.28);border-radius:2px;background:none;
           color:#fff;font-size:11px;letter-spacing:.16em;transition:background .24s ${V2.ease};}

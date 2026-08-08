@@ -203,6 +203,34 @@ export default function Boutique({ buyerCurrency, buyerCountry }: {
       look = (data.outfitGroups[0]?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
     }
 
+    // Rename everything in one call before the grid draws. Catalogue titles are
+    // written for a search engine — four lines of keywords under a photograph,
+    // or a bare style code that names no garment at all. Failure is silent and
+    // the raw titles stand, which is where this started.
+    try {
+      const all = [...sections.flatMap(s => [s.hero, ...s.products]), ...(look ?? [])]
+        .filter(Boolean) as V2Product[]
+      if (all.length) {
+        const res = await fetch('/api/product-names', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: all.map(p => ({ title: p.title })) }),
+        })
+        if (res.ok) {
+          const { names } = await res.json()
+          if (names && typeof names === 'object') {
+            for (const p of all) {
+              const better = names[p.title]
+              // Keep the catalogue title for the product page and the bag —
+              // it is the piece's real name, and the shopper is buying it.
+              if (typeof better === 'string' && better) { p.fullTitle = p.title; p.title = better }
+            }
+          }
+        }
+      }
+    } catch { /* raw titles are a worse caption, not a broken one */ }
+
+
     // The reply was previously used only as a 90-character section caption and
     // otherwise discarded, and a conversational turn (no products) rendered as
     // "No match — nothing in the catalogue fits that", blaming the catalogue
