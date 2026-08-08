@@ -51,6 +51,9 @@ export type V2Product = {
   storeUrl?: string
   colorName?: string
   colors?: V2Color[]
+  /** The brand's variants, kept so checkout can resolve the exact one the
+   *  shopper picked and hand the store a cart link rather than a product page. */
+  variants?: Array<{ id?: string; options?: Array<{ label?: string }>; availability?: boolean }>
   sizes?: string[]
   description?: string
   materials?: string
@@ -354,15 +357,61 @@ export default function DiscernV2({
   // after the first is likely to be blocked. Rather than fail silently, blocked
   // stores are surfaced as real links the shopper can click themselves.
   const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return u } }
-  const payHosts = useMemo(
-    () => Array.from(new Set(cart.map(l => l.product.storeUrl).filter((u): u is string => !!u))),
-    [cart],
-  )
+
+  /** The variant the shopper actually chose, matched the way the chat UI matched
+   *  it: both options when both are on offer, else whichever one is, else the
+   *  first. Returning the first is deliberate — a store with a single variant
+   *  lists no options at all, and that variant is still the right one. */
+  const variantFor = (p: V2Product, size?: string, color?: string) => {
+    const vs = p.variants
+    if (!vs?.length) return undefined
+    const has = (label?: string) => (v: { options?: Array<{ label?: string }> }) =>
+      (v.options ?? []).some(o => o.label === label)
+    const wantSize = size && p.sizes?.length
+    const wantColor = color && p.colors?.length
+    if (wantSize && wantColor) {
+      return vs.find(v => has(size)(v) && has(color)(v)) ?? vs.find(has(size)) ?? vs[0]
+    }
+    if (wantSize) return vs.find(has(size)) ?? vs[0]
+    if (wantColor) return vs.find(has(color)) ?? vs[0]
+    return vs[0]
+  }
+
+  /** Checkout hands the store a cart link, not a product page.
+   *
+   *  Shopify reads /cart/<variantId>:<qty> and drops the shopper straight into
+   *  its checkout with that exact variant already in the basket. Opening
+   *  store_url instead — which is what this did — meant arriving on the product
+   *  page and choosing the size over again, having just chosen it here. Lines
+   *  from the same store are combined into one link, so a two-piece order from
+   *  one brand is one checkout rather than two.
+   *
+   *  Falls back to the product page whenever a variant id is missing, because a
+   *  malformed cart link is a store error page, and the product page at least
+   *  works.
+   */
+  const payLinks = useMemo(() => {
+    const byHost = new Map<string, { url: string; parts: string[]; fallback: string }>()
+    for (const line of cart) {
+      const store = line.product.storeUrl
+      if (!store) continue
+      let origin: string
+      try { origin = new URL(store).origin } catch { continue }
+      const entry = byHost.get(origin) ?? { url: origin, parts: [], fallback: store }
+      const v = variantFor(line.product, line.size, line.color)
+      const id = v?.id ? String(v.id).split('/').pop() : undefined
+      if (id) entry.parts.push(`${id}:${Math.max(1, line.qty)}`)
+      byHost.set(origin, entry)
+    }
+    return Array.from(byHost.values()).map(e =>
+      e.parts.length ? `${e.url}/cart/${e.parts.join(',')}` : e.fallback)
+  }, [cart])
+
   const checkout = useCallback(() => {
     if (!cart.length) return
-    if (!payHosts.length) { setBlockedStores([]); return }
+    if (!payLinks.length) { setBlockedStores([]); return }
     const blocked: string[] = []
-    payHosts.forEach((url, i) => {
+    payLinks.forEach((url, i) => {
       // The first open rides the click gesture; later ones usually will not.
       // NOT 'noopener' in the feature string: with it, window.open returns null
       // by specification, so a perfectly successful tab is indistinguishable
@@ -375,7 +424,7 @@ export default function DiscernV2({
       if (i === 0) w.focus?.()
     })
     setBlockedStores(blocked)
-  }, [cart, payHosts])
+  }, [cart, payLinks])
 
   // DETAILS reads as a short list of construction facts, one per line — split
   // whatever the catalog gives us on the separators it actually uses.
@@ -1283,8 +1332,8 @@ export default function DiscernV2({
           <p className="v2-bag-note">
             {blockedStores.length
               ? 'Your browser blocked the new tab. Open the brand directly:'
-              : payHosts.length > 1
-                ? `Your bag spans ${payHosts.length} brands — each opens in its own tab.`
+              : payLinks.length > 1
+                ? `Your bag spans ${payLinks.length} brands — each opens in its own tab.`
                 : 'Checkout happens on the brand’s own store.'}
           </p>
           {blockedStores.length > 0 && (
@@ -1741,7 +1790,7 @@ export default function DiscernV2({
         .v2-recent-acts button:hover{background:rgba(255,255,255,.12);}
         .v2-recent-input{flex:1;min-width:0;margin:2px 6px;padding:7px 9px;border-radius:8px;
           background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);color:#fff;
-          font-family:${V2.sans};font-size:13.5px;outline:none;}
+          font-family:${V2.sans};font-size:16px;outline:none;}
         /* Touch has no hover, so the controls are simply always there. */
         @media(hover:none){.v2-recent-acts{opacity:.55;}}
         .v2-menu-x{width:34px;height:34px;margin:-8px -8px -8px 0;display:flex;align-items:center;

@@ -94,6 +94,15 @@ function toProduct(p: any): V2Product {
     // The catalogue returns this and the bag needs it to hand off to the brand.
     // It was being dropped here, which is why Checkout had nowhere to go.
     storeUrl: p?.store_url || p?.url || undefined,
+    // Carried for checkout: without the variant ids the bag can only send the
+    // shopper to a product page to pick their size a second time.
+    variants: Array.isArray(p?.variants)
+      ? p.variants.map((v: any) => ({
+          id: v?.id ? String(v.id) : undefined,
+          options: Array.isArray(v?.options) ? v.options.map((o: any) => ({ label: String(o?.label ?? '') })) : [],
+          availability: v?.availability !== false,
+        }))
+      : undefined,
     colorName: opt(p, /colou?r/i)[0],
     colors: toColors(p),
     sizes: opt(p, /size/i).slice(0, 10),

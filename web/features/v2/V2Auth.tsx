@@ -239,7 +239,12 @@ export default function V2Auth({
         .v2a-or span{font-size:11px;color:rgba(255,255,255,.45);letter-spacing:.08em;}
 
         .v2a-email{width:100%;box-sizing:border-box;padding:13px 16px;border-radius:12px;margin-bottom:12px;
-          border:1px solid rgba(255,255,255,.16);font-family:${V2.sans};font-size:14px;color:#fff;
+          border:1px solid rgba(255,255,255,.16);font-family:${V2.sans};color:#fff;
+          /* 16px, not 14: iOS zooms the page in whenever a focused field is set
+             below 16, and never zooms back out. Kept as a real size rather than
+             suppressed with a maximum-scale on the viewport, because that would
+             also take away the shopper's own pinch. */
+          font-size:16px;
           background:rgba(255,255,255,.07);outline:none;transition:border-color .2s ${V2.ease},background .2s ${V2.ease};}
         .v2a-email:focus{border-color:rgba(255,255,255,.5);background:rgba(255,255,255,.11);}
         .v2a-email::placeholder{color:rgba(255,255,255,.38);}
