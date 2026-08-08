@@ -11,8 +11,9 @@ import { CloseIcon } from '@/components/icons'
  * idea, a complaint — because making them choose the right channel first is how
  * you stop hearing about the bugs.
  *
- * The three types are a hint to whoever reads it, not a gate: the message is
- * the only required field, and Other is a real answer rather than a leftover.
+ * The three types are a hint to whoever reads it, not a gate — Other is a real
+ * answer rather than a leftover. The message and the sender's address are both
+ * required: a report nobody can reply to usually ends the conversation there.
  */
 
 const KINDS = ['Bug', 'Idea', 'Other'] as const
@@ -38,8 +39,14 @@ export default function V2Feedback({ open, onClose }: { open: boolean; onClose: 
     return () => window.removeEventListener('keydown', esc)
   }, [open, onClose])
 
+  /** Both fields, not just the message: a report nobody can reply to is usually
+   *  the end of the conversation. Checked here as well as on the server, so the
+   *  button is honest about what it will do rather than failing after the tap. */
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())
+  const canSend = message.trim().length > 0 && emailOk
+
   const send = async () => {
-    if (!message.trim() || sending) return
+    if (!canSend || sending) return
     setSending(true); setError(null)
     try {
       const r = await fetch('/api/feedback', {
@@ -74,14 +81,15 @@ export default function V2Feedback({ open, onClose }: { open: boolean; onClose: 
           {sent ? (
             <div className="v2f-done">
               <h2>Thank you.</h2>
-              <p>It came through. If you left an address we may write back.</p>
+              <p>It came through, and it came to me. I’ll write back.</p>
               <button className="v2f-send" onClick={onClose}>Close</button>
             </div>
           ) : (
             <>
-              <h2>Tell us what’s wrong</h2>
+              <h2>Tell me what’s wrong</h2>
               <p className="v2f-sub">
-                A bug, an idea, or something that simply annoyed you. All of it is read.
+                A bug, an idea, or something that simply annoyed you. This goes
+                straight to me, not to a support queue, and I read every one.
               </p>
 
               <div className="v2f-kinds" role="group" aria-label="What is this about">
@@ -96,13 +104,15 @@ export default function V2Feedback({ open, onClose }: { open: boolean; onClose: 
                 onChange={e => setMessage(e.target.value)}
                 placeholder="What happened, or what would make this better?" />
 
-              <label className="v2f-label" htmlFor="v2f-mail">Your email <em>optional</em></label>
-              <input id="v2f-mail" className="v2f-mail" type="email" value={email}
-                onChange={e => setEmail(e.target.value)} placeholder="name@email.com" />
+              <label className="v2f-label" htmlFor="v2f-mail">Your email</label>
+              <input id="v2f-mail" className="v2f-mail" type="email" required value={email}
+                onChange={e => setEmail(e.target.value)} placeholder="name@email.com"
+                autoComplete="email" inputMode="email" />
+              <p className="v2f-note">So I can write back to you.</p>
 
               {error && <div className="v2f-err">{error}</div>}
 
-              <button className="v2f-send" onClick={send} disabled={!message.trim() || sending}>
+              <button className="v2f-send" onClick={send} disabled={!canSend || sending}>
                 {sending ? 'Sending…' : 'Send'}
               </button>
             </>
@@ -144,7 +154,8 @@ export default function V2Feedback({ open, onClose }: { open: boolean; onClose: 
           font-family:${V2.sans};font-size:16px;line-height:1.5;outline:none;
           transition:border-color .18s,background .18s;}
         .v2f-msg{resize:vertical;min-height:112px;margin-bottom:18px;}
-        .v2f-mail{margin-bottom:20px;}
+        .v2f-mail{margin-bottom:8px;}
+        .v2f-note{font-size:12px;opacity:.5;margin:0 0 20px;}
         .v2f-msg:focus,.v2f-mail:focus{border-color:rgba(255,255,255,.5);background:rgba(255,255,255,.11);}
         .v2f-msg::placeholder,.v2f-mail::placeholder{color:rgba(255,255,255,.34);}
         .v2f-err{font-size:13px;color:#ff9c8f;margin-bottom:14px;}
