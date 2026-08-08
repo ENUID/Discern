@@ -1006,7 +1006,6 @@ export default function DiscernV2({
                 <button key={s} className={pickedSize === s ? 'on' : ''} onClick={() => { setPickedSize(s); setSizeMode(false) }}>{s}</button>
               ))}
             </div>
-            <button className="v2-picker-nav" aria-label="Back" onClick={() => setSizeMode(false)}>‹</button>
           </div>
         )}
         {colorMode && (
@@ -1652,7 +1651,7 @@ export default function DiscernV2({
           background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-tray-cta{display:flex;gap:7px;margin-top:8px;align-items:center;}
 
-        .v2-pill{flex:1;min-width:0;padding:10px 6px;border:none;border-radius:999px;cursor:pointer;font-size:11.5px;
+        .v2-pill{flex:1 1 84px;min-width:0;padding:10px 12px;border:none;border-radius:999px;cursor:pointer;font-size:11.5px;
           color:#fff;background:rgba(255,255,255,.16);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
           transition:background .18s ${V2.ease};}
         .v2-pill:active{background:rgba(255,255,255,.26);}
@@ -1903,7 +1902,8 @@ export default function DiscernV2({
           grid-template-columns:auto 1fr auto;gap:11px;align-items:center;padding:12px;border-radius:22px;color:#fff;
           background:${V2.glassDark};backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
           box-shadow:0 14px 44px rgba(0,0,0,.32);animation:v2-rise .42s ${V2.ease};}
-        .v2-cart.tall{grid-template-columns:1fr;}
+        .v2-cart.tall{grid-template-columns:minmax(0,1fr);}
+        .v2-cart>*{min-width:0;}
         .v2-cart-thumb{width:56px;height:72px;object-fit:cover;border-radius:8px;display:block;box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-cart-meta{min-width:0;display:flex;flex-direction:column;gap:3px;}
         .v2-cart-name{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -1911,7 +1911,9 @@ export default function DiscernV2({
         .v2-cart-price em{font-style:normal;text-decoration:line-through;opacity:.55;font-size:11px;}
         .v2-cart-price em::before{content:'|';text-decoration:none;display:inline-block;margin-right:8px;opacity:.7;}
         .v2-cart-color{font-size:11.5px;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-        .v2-cart-cta{grid-column:1/-1;display:flex;gap:8px;align-items:center;margin-top:2px;}
+                /* Add to cart, colours, size and close is four controls; on a narrow
+           phone the third was being cut off at the edge. They wrap now. */
+        .v2-cart-cta{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:2px;}
         .v2-buy{flex-shrink:0;padding:11px 16px;border:none;border-radius:999px;cursor:pointer;background:#fff;
           color:${V2.ink};font-size:12.5px;min-width:92px;display:flex;align-items:center;justify-content:center;
           transition:transform .12s ${V2.ease};}
@@ -1921,20 +1923,22 @@ export default function DiscernV2({
           animation:v2-rot .7s linear infinite;display:block;}
         @keyframes v2-rot{to{transform:rotate(360deg)}}
 
-        .v2-swatches{display:flex;gap:9px;padding:2px;}
-        .v2-swatches button{flex:1;aspect-ratio:3/4;padding:0;border:none;border-radius:9px;overflow:hidden;
+                /* Swatches are chips, not plates. flex:1 with a 3/4 ratio meant a
+           product with a single colourway filled the dock with one enormous
+           picture. */
+        .v2-swatches{display:flex;flex-wrap:wrap;gap:9px;padding:2px;}
+        .v2-swatches button{flex:0 0 auto;width:64px;aspect-ratio:3/4;padding:0;border:none;border-radius:9px;overflow:hidden;
           cursor:pointer;background:rgba(255,255,255,.08);box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-swatches button.on{box-shadow:0 0 0 2px #fff;}
         .v2-swatches img{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-picker{position:relative;padding:4px 2px 2px;text-align:center;}
         .v2-picker-t{display:block;font-size:13px;opacity:.85;margin-bottom:14px;}
-        .v2-sizes{display:flex;gap:10px;overflow-x:auto;scrollbar-width:none;padding:0 4px 4px;justify-content:center;}
+                .v2-sizes{display:flex;gap:10px;overflow-x:auto;scrollbar-width:none;padding:0 4px 4px;
+          justify-content:flex-start;justify-content:safe center;scroll-snap-type:x proximity;}
         .v2-sizes::-webkit-scrollbar{display:none;}
-        .v2-sizes button{flex:0 0 auto;width:44px;height:44px;border-radius:50%;cursor:pointer;font-size:13.5px;
+        .v2-sizes button{flex:0 0 auto;scroll-snap-align:center;width:44px;height:44px;border-radius:50%;cursor:pointer;font-size:13.5px;
           color:#fff;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);}
         .v2-sizes button.on{background:transparent;color:#fff;border-color:#fff;box-shadow:0 0 0 1px #fff;}
-        .v2-picker-nav{position:absolute;left:2px;bottom:2px;width:30px;height:30px;border-radius:50%;border:none;
-          cursor:pointer;color:#fff;background:rgba(255,255,255,.14);font-size:15px;line-height:1;}
 
         @keyframes v2-rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
         @keyframes v2-fade{from{opacity:0}to{opacity:1}}
