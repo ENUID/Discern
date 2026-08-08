@@ -1714,6 +1714,27 @@ export default function DiscernApp({
   // use Discern directly without an account.
   const REQUIRE_LOGIN = true
 
+  // The gate is documented as a hard block — no close button, no dismiss on tap.
+  // It was only a visual one: four tabs from the Google button walked straight
+  // past it into the sidebar, the composer and the send button, all live behind
+  // the scrim. A scrim is not a focus boundary, so everything except the gate
+  // gets marked `inert` while it is up. Set imperatively — React 18 does not
+  // accept `inert` as a prop.
+  const rootRef = useRef<HTMLDivElement>(null)
+  const gateUp = REQUIRE_LOGIN && authStatus === 'unauthenticated'
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root || !gateUp) return
+    const touched: HTMLElement[] = []
+    for (const el of Array.from(root.children) as HTMLElement[]) {
+      if (el.classList.contains('fr-gate-outer')) continue
+      if (el.hasAttribute('inert')) continue
+      el.setAttribute('inert', '')
+      touched.push(el)
+    }
+    return () => touched.forEach(n => n.removeAttribute('inert'))
+  }, [gateUp])
+
   // ── Stylist memory (Fabrics persistent context) ─────────────────────────────
   const stylistMemoryData = useQuery(
     api.stylistMemory.getStylistMemory,
@@ -2077,8 +2098,14 @@ export default function DiscernApp({
     sendStylist(b.name)
     setSidebar(false)
   }
-  const [isWide, setIsWide]             = useState(() => typeof window !== 'undefined' ? window.innerWidth >= 768 : false)
-  const [isMedium, setIsMedium]         = useState(() => typeof window !== 'undefined' ? window.innerWidth >= 768 : false)
+  // Both start false rather than measuring the window, because the server has
+  // no window and always renders the narrow branch: reading innerWidth here made
+  // the client's hydration pass disagree with the server HTML on any screen
+  // wider than 768px, which React reports as an unpatchable attribute mismatch.
+  // `windowWidth` below already uses the 0-then-measure shape; these now match
+  // it, and the resize effect fills in the real value right after mount.
+  const [isWide, setIsWide]             = useState(false)
+  const [isMedium, setIsMedium]         = useState(false)
   // Attach button — opens the device's native picker (Photo Library / Take
   // Photo / Choose Files / Drive) directly onto the wardrobe strip.
   const attachBtnFabricsRef = useRef<HTMLButtonElement>(null)
@@ -3931,7 +3958,7 @@ export default function DiscernApp({
   const sgColStart = sgGroupIdx * 3
 
   return (
-    <div style={{ fontFamily: SANS, background: "#ffffff", height: "100dvh", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+    <div ref={rootRef} style={{ fontFamily: SANS, background: "#ffffff", height: "100dvh", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
 
       {/* ── SVG filter for glass edge refraction ── */}
       <svg width="0" height="0" style={{ position: 'absolute' }}>
@@ -4149,6 +4176,12 @@ export default function DiscernApp({
           transform:translateY(-0.5px);
         }
         .fr-icon-btn:active{transform:scale(0.93);}
+        /* The circles are 34 and 36px because that is the drawing. The finger
+           needs 44. A centred pseudo-element pads the hit area out without
+           moving anything on screen — same device the v2 header uses. */
+        .fr-icon-btn,.fr-send-btn{position:relative;}
+        .fr-icon-btn::before,.fr-send-btn::before{content:'';position:absolute;left:50%;top:50%;
+          width:44px;height:44px;transform:translate(-50%,-50%);}
 
         /* Send button — while a request is in flight this becomes a plain
            light "busy" pill (bordered, black stop-square icon) instead of
