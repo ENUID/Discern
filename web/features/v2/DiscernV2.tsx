@@ -1158,6 +1158,10 @@ export default function DiscernV2({
             fixed destinations, then everything you have asked, then sign-out at
             the base. */}
         <div className="v2-menu-top">
+          {/* The mark lives here and nowhere else. Beside the wordmark it was
+              competing with it at a size too small to read as anything; on its
+              own, against the drawer's dark glass, it has room to be a mark. */}
+          <img className="v2-menu-logo" src="/favicon.png" alt="Discern" width={34} height={34} />
           <button className="v2-avatar" aria-label={authStatus === 'authenticated' ? 'Account' : 'Sign in'}
             tabIndex={menuOpen ? 0 : -1}
             onClick={() => { setMenuOpen(false); if (authStatus !== 'authenticated') requireAccount('save', artwork[0]) }}>
@@ -1469,8 +1473,8 @@ export default function DiscernV2({
         .v2-head-gap{flex:1;}
         .v2-newbtn{transition:opacity .25s ${V2.ease},transform .25s ${V2.ease};}
         .v2-newbtn.gone{opacity:0;pointer-events:none;transform:scale(.85);}
-        .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.34em;text-indent:.34em;
-          white-space:nowrap;line-height:1;}
+        .v2-brand span{font-family:${V2.display};font-size:13.5px;font-weight:500;letter-spacing:.34em;
+          text-indent:.34em;white-space:nowrap;line-height:1;}
         /* The rule needs air on both sides. The wordmark's trailing letter-space
            is not enough on its own — without a margin the divider sits against
            the N and reads as another letter. */
@@ -1750,7 +1754,9 @@ export default function DiscernV2({
           transition:transform .34s cubic-bezier(.32,.72,0,1);}
         .v2-menu.on{transform:translateX(0);pointer-events:auto;}
                 .v2-eyebrow-s{font-size:11px;font-weight:500;opacity:.42;letter-spacing:.04em;padding-left:6px;}
-        .v2-menu-top{display:flex;align-items:center;justify-content:flex-end;padding:0 6px;}
+                .v2-menu-top{display:flex;align-items:center;justify-content:space-between;padding:0 6px;}
+        .v2-menu-logo{width:34px;height:34px;border-radius:9px;display:block;object-fit:cover;
+          box-shadow:0 2px 10px rgba(0,0,0,.28);}
         .v2-avatar{width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;color:#fff;
           background:rgba(255,255,255,.12);font-family:${V2.sans};font-size:14px;font-weight:500;}
@@ -2034,7 +2040,7 @@ export default function DiscernV2({
           :root{--bar:112px;}
 
           .v2-head{padding:20px 26px;gap:6px;}
-          .v2-brand span{font-size:13px;}
+          .v2-brand span{font-size:15px;}
 
           /* Hero: one-line headline, tighter card cluster */
           .v2-hero-copy h1{font-size:clamp(44px,4.4vw,64px);line-height:1.04;}
