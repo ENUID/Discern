@@ -1125,24 +1125,18 @@ export default function DiscernV2({
       {view !== 'product' && (
         <div className={`v2-bar-wrap ${view === 'home' ? 'home' : ''}`} ref={barVar.ref} style={{ bottom: kb }}>
           <div className="v2-bar-press">
-            {/* The field is one line of 13px text — about 23px tall — inside a
-                52px bar, so most of the bar looked tappable and wasn't. Tapping
-                the padding now focuses the field; the guard keeps taps on the
-                real controls inside from being hijacked. */}
+            {/* Two rows, the field on its own line above the controls — the
+                shape the chat composer had. Anywhere in the bar that isn't a
+                control focuses the field: at this size most of its area is
+                margin, and margin that looks like a text field should behave
+                like one. */}
             <div className={`v2-bar ${focused ? 'focus' : ''}`}
               onMouseDown={e => {
-                if (e.target !== e.currentTarget) return
+                if (e.target !== e.currentTarget &&
+                    !(e.target as HTMLElement).classList?.contains('v2-bar-top')) return
                 e.preventDefault()
                 taRef.current?.focus()
               }}>
-              {/* Was a button with no handler at all — it offered to take a photo
-                  and did nothing. A label over a hidden input keeps the same
-                  glyph and hit area while actually opening the picker. */}
-              <label className="v2-plus" aria-label="Add a photo">
-                <PlusIcon size={15} />
-                <input type="file" accept="image/*" multiple hidden
-                  onChange={e => addPhotos(e.target.files)} />
-              </label>
               {photos.length > 0 && (
                 <div className="v2-shots" aria-label="Attached photos">
                   {photos.map(u => (
@@ -1155,26 +1149,40 @@ export default function DiscernV2({
                   ))}
                 </div>
               )}
-              <div className="v2-field">
-                <textarea ref={taRef} rows={1} value={input} onChange={e => setInput(e.target.value)}
-                  onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
-                  aria-label="Ask the boutique" />
-                {input.length === 0 && (
-                  idle
-                    ? <div className="v2-marquee" aria-hidden><div>{[...V2_PROMPTS, ...V2_PROMPTS].map((p, i) => <span key={i}>{p}</span>)}</div></div>
-                    : <span className="v2-ph">Ask anything…</span>
-                )}
+              <div className="v2-bar-top">
+                <div className="v2-field">
+                  <textarea ref={taRef} rows={1} value={input} onChange={e => setInput(e.target.value)}
+                    onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
+                    aria-label="Ask the boutique" />
+                  {input.length === 0 && (
+                    idle
+                      ? <div className="v2-marquee" aria-hidden><div>{[...V2_PROMPTS, ...V2_PROMPTS].map((p, i) => <span key={i}>{p}</span>)}</div></div>
+                      : <span className="v2-ph">Ask anything…</span>
+                  )}
+                </div>
               </div>
-              {input.length > 0 && (
-                <button className="v2-clear" aria-label="Clear" onClick={() => { setInput(''); taRef.current?.focus() }}>
-                  <CloseIcon size={12} />
-                </button>
-              )}
-              <button className={`v2-send ${canSend ? 'on' : ''}`} aria-label="Send" onClick={submit} disabled={loading}>
-                {loading ? <Progress light />
-                  : <ArrowUpIcon size={15} />}
-              </button>
+              <div className="v2-bar-btm">
+                {/* Was a button with no handler at all — it offered to take a photo
+                    and did nothing. A label over a hidden input keeps the same
+                    glyph and hit area while actually opening the picker. */}
+                <label className="v2-plus" aria-label="Add a photo">
+                  <PlusIcon size={15} />
+                  <input type="file" accept="image/*" multiple hidden
+                    onChange={e => addPhotos(e.target.files)} />
+                </label>
+                <div className="v2-bar-right">
+                  {input.length > 0 && (
+                    <button className="v2-clear" aria-label="Clear" onClick={() => { setInput(''); taRef.current?.focus() }}>
+                      <CloseIcon size={12} />
+                    </button>
+                  )}
+                  <button className={`v2-send ${canSend ? 'on' : ''}`} aria-label="Send" onClick={submit} disabled={loading}>
+                    {loading ? <Progress light />
+                      : <ArrowUpIcon size={15} />}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1554,13 +1562,14 @@ export default function DiscernV2({
         .v2-bar-wrap{position:absolute;z-index:50;left:0;right:0;
           padding:14px clamp(12px,3.6vw,18px) calc(env(safe-area-inset-bottom,0px) + 16px);pointer-events:none;}
         .v2-bar-wrap>*{pointer-events:auto;}
-        /* flex-wrap matters: the attached-photo strip is width:100% with
-           order:-1, which only becomes a row of its own in a wrapping
-           container. Without it the strip stayed on the single line and
-           squeezed the field to nothing — attaching a photo broke the
-           composer. */
-        .v2-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;padding:7px 7px 7px 9px;width:100%;
-          max-width:min(680px,96vw);margin:0 auto;border-radius:30px;color:#fff;background:${V2.glassDark};
+        /* Geometry taken from the chat composer: 820px, a 24px radius rather
+           than a pill, and the field stacked above its controls. Horizontal
+           padding stays symmetric because the bar is centred with margin auto,
+           so unequal sides would shift every child off-centre; top and bottom
+           are unequal on purpose, since the control row carries its own optical
+           inset. Only the dimensions came across — the glass is v2's. */
+        .v2-bar{display:flex;flex-direction:column;gap:10px;padding:18px 16px 10px;width:100%;
+          max-width:min(820px,96vw);margin:0 auto;border-radius:24px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%);
           box-shadow:0 10px 40px rgba(0,0,0,.26),inset 0 1px 0 ${V2.glassEdge};transition:background .3s ${V2.ease};}
         .v2-bar.focus{background:rgba(26,24,21,.9);}
@@ -1570,27 +1579,34 @@ export default function DiscernV2({
           display:flex;align-items:center;justify-content:center;border-radius:50%;
           cursor:pointer;flex-shrink:0;color:inherit;}
         .v2-plus:active{transform:scale(.9);}
-        /* Attached photos sit above the field, inside the same glass bar. */
-        .v2-shots{display:flex;gap:7px;flex-wrap:wrap;width:100%;order:-1;margin:0 0 9px;}
+        /* Attached photos sit above the field, inside the same glass bar. The
+           column gap spaces them now, so the old order/margin overrides that
+           faked a row break in a single-line flex bar are gone. */
+        .v2-shots{display:flex;gap:7px;flex-wrap:wrap;}
+        .v2-bar-top{display:flex;align-items:flex-end;gap:8px;}
+        .v2-bar-btm{display:flex;align-items:center;gap:6px;}
+        .v2-bar-right{display:flex;align-items:center;gap:8px;margin-left:auto;}
         .v2-shot-chip{position:relative;width:44px;height:44px;border-radius:8px;overflow:hidden;}
         .v2-shot-chip img{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-shot-chip button{position:absolute;top:2px;right:2px;width:15px;height:15px;
           display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
           background:rgba(0,0,0,.62);cursor:pointer;padding:0;}
         .v2-plus:active{transform:scale(.9);}
-        .v2-clear{width:26px;height:26px;margin-bottom:6px;background:rgba(255,255,255,.16);}
+        /* No bottom margin any more: it nudged the button up to sit on the old
+           flex-end baseline, and the control row centres its children. */
+        .v2-clear{width:26px;height:26px;background:rgba(255,255,255,.16);}
         .v2-send{width:33px;height:33px;background:rgba(255,255,255,.13);
           transition:transform .16s ${V2.ease},background .2s ${V2.ease};}
         .v2-send:active{transform:scale(.86);}
         .v2-bar-press{transform-origin:center bottom;transition:transform .2s ${V2.ease};}
         .v2-bar-press:active{transform:scale(.985);}
         .v2-send.on{background:#fff;color:${V2.ink};}
-        .v2-field{position:relative;flex:1;min-width:0;padding:9px 0 8px;overflow:hidden;}
+        .v2-field{position:relative;flex:1;min-width:0;overflow:hidden;}
         .v2-field textarea{width:100%;border:none;background:none;outline:none;resize:none;font-family:${V2.sans};
           font-size:16px;line-height:1.42;color:#fff;max-height:76px;overflow-y:auto;display:block;caret-color:#fff;}
-        .v2-ph{position:absolute;left:0;top:9px;pointer-events:none;font-size:16px;line-height:1.42;color:rgba(255,255,255,.6);}
+        .v2-ph{position:absolute;left:0;top:0;pointer-events:none;font-size:16px;line-height:1.42;color:rgba(255,255,255,.6);}
         /* Idle prompt drifts continuously, matching the reference ticker. */
-        .v2-marquee{position:absolute;left:0;right:0;top:9px;pointer-events:none;overflow:hidden;
+        .v2-marquee{position:absolute;left:0;right:0;top:0;pointer-events:none;overflow:hidden;
           mask-image:linear-gradient(to right,transparent,#000 9%,#000 91%,transparent);
           -webkit-mask-image:linear-gradient(to right,transparent,#000 9%,#000 91%,transparent);}
         .v2-marquee>div{display:flex;gap:44px;width:max-content;animation:v2-drift 44s linear infinite;}
@@ -1744,7 +1760,9 @@ export default function DiscernV2({
           .v2-buy{padding:14px 30px;font-size:15px;}
 
           .v2-tray{left:50%;translate:-50% 0;width:min(620px,54vw);}
-          .v2-bar{max-width:min(560px,44vw);}
+          /* The bar used to narrow to 44vw here. It keeps the chat composer's
+             820px at every width instead — the tray sits above it rather than
+             beside it, so there was nothing to make room for. */
           .v2-lookpage{padding-top:150px;}
           .v2-rail-item{width:clamp(260px,21vw,320px);}
           .v2-eyebrow{left:26px;top:150px;}
