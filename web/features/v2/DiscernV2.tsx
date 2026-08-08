@@ -23,7 +23,7 @@
  *    shipping, subtotal, then PROCEED TO PAYMENT with the redirect notice.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, HeartIcon, HistoryIcon, PlusIcon } from '@/components/icons'
+import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, ExternalLinkIcon, HeartIcon, HistoryIcon, PlusIcon, SparkleIcon, TagIcon, UserIcon } from '@/components/icons'
 import { useSession, signOut } from 'next-auth/react'
 import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING, V2_HERO_COPY } from './theme'
 import V2Auth, { type V2AuthReason } from './V2Auth'
@@ -206,7 +206,7 @@ export default function DiscernV2({
   const [histOpen, setHistOpen] = useState(false)
   const [asked, setAsked] = useState<string[]>([])
   const [photos, setPhotos] = useState<string[]>([])
-  const { status: authStatus } = useSession()
+  const { status: authStatus, data: session } = useSession()
   const [authReason, setAuthReason] = useState<V2AuthReason>(null)
   /** The piece that triggered the ask. The sheet leads with its picture, and
    *  its two lines of copy refer to it — that is what stops the moment being a
@@ -543,6 +543,8 @@ export default function DiscernV2({
     // turn, not this one — and so the strip can clear on completion regardless.
     const sentPhotos = photos
     onSearched?.(question)
+    /** Whether this turn produced something worth showing a page for. */
+    let show = false
     try {
       const res = onQuery
         ? await onQuery(question, history, sentPhotos)
@@ -565,11 +567,13 @@ export default function DiscernV2({
         question, answer: res.answer, didSearch: res.didSearch === true, sections,
       }, ...prev].slice(0, 12))
       if (res.look?.length) { setLook(res.look); setLookOpen(true) }
+      show = true
     } catch (e) {
       // A failed lookup still lands on the results view — the empty state says
       // so plainly, which is calmer than an error dialog over the boutique.
       console.error('[v2] query failed:', e)
       setTurns(prev => [{ id: `err-${prev.length}`, question, didSearch: true, sections: [] }, ...prev])
+      show = true
     } finally {
       // Cleared here, not at send: the reference keeps what you asked visible in
       // the bar for the whole wait, so the query and the loading state read as
@@ -581,8 +585,14 @@ export default function DiscernV2({
       // The attached photos belonged to this question; leaving them in the bar
       // silently re-sent them with every follow-up.
       if (sentPhotos.length) setPhotos(p => p.filter(u => !sentPhotos.includes(u)))
-      setView('results')
-      scrollRef.current?.scrollTo({ top: 0 })
+      // Only leave the page when there is a page to leave for. `finally` runs
+      // on the early return above too, so a turn that produced nothing to show
+      // still navigated to the results view — which then had no turn to render.
+      // That is the blank screen after the searching animation.
+      if (show) {
+        setView('results')
+        scrollRef.current?.scrollTo({ top: 0 })
+      }
       setLoading(false)
     }
   }, [loading, onQuery, onSearched, photos, turns])
@@ -598,10 +608,20 @@ export default function DiscernV2({
    *  Explore and Brand Collections are not here either; both were coming-soon
    *  toasts, and a menu is a promise that a thing exists. */
   const MENU = [
-    { label: 'New search', go: () => { setTurns([]); setLook(null); setInput(''); setView('home') } },
-    { label: 'Saved',      go: () => { if (requireAccount('save', turns[0]?.sections?.[0]?.hero?.image ?? artwork[0])) setSavedOpen(true) } },
-    { label: 'Bag',        go: () => setBagOpen(true) },
+    { label: 'Explore', icon: <SparkleIcon size={16} />, count: 0,
+      go: () => run('what should I be looking at right now') },
+    { label: 'Brand Collections', icon: <TagIcon size={16} />, count: 0,
+      go: () => run('show me the brands you carry') },
+    { label: 'Saved', icon: <HeartIcon size={16} />, count: saved.size,
+      go: () => { if (requireAccount('save', turns[0]?.sections?.[0]?.hero?.image ?? artwork[0])) setSavedOpen(true) } },
+    { label: 'Bag', icon: <BagIcon size={16} />, count: cartCount,
+      go: () => setBagOpen(true) },
+    { label: 'History', icon: <HistoryIcon size={16} />, count: 0,
+      go: () => setHistOpen(true) },
   ]
+
+  /** The letter on the avatar, as the sidebar had it. */
+  const initial = (session?.user?.name || session?.user?.email || '').trim().charAt(0).toUpperCase()
 
   const submit = () => run(input)
 
@@ -694,30 +714,16 @@ export default function DiscernV2({
           </svg>
           <em>{menuOpen ? 'Close' : 'Menu'}</em>
         </button>
-        <button className="v2-ic" aria-label="History"
-          onClick={() => setHistOpen(v => !v)} aria-expanded={histOpen}>
-          <HistoryIcon size={18} />
-        </button>
-        {/* Centred against the window, not against whatever space the icons
-            leave over. It used to be flex:1 between the two icon groups, which
-            only centres while those groups are the same width — on a wide screen
-            the menu button grows a MENU label and the mark drifted right. */}
+        {/* Recents, saved and the bag all used to sit up here as three more
+            icons. They belong in the drawer with everything else you can go to,
+            which leaves the header holding what a header should: one way in,
+            and the name of the thing. */}
         <div className="v2-brand">
-          <svg width="24" height="24" viewBox="0 0 40 40" fill="none" strokeLinecap="round" strokeLinejoin="round" stroke="currentColor" strokeWidth="2.08" aria-hidden>
+          <svg width="22" height="22" viewBox="0 0 40 40" fill="none" strokeLinecap="round" strokeLinejoin="round" stroke="currentColor" strokeWidth="2.08" aria-hidden>
             <path d="M20 5l9 7v16l-9 7-9-7V12z" /><path d="M20 12l4 3v10l-4 3-4-3V15z" /></svg>
-          <span>DISCERN <i>BETA</i></span>
+          <span>DISCERN</span>
+          <i>BETA</i>
         </div>
-        {/* Holds the gap the brand used to occupy in flow. */}
-        <div className="v2-head-gap" />
-        <button className="v2-ic" aria-label="Saved"
-          onClick={() => { if (requireAccount('save', turns[0]?.sections?.[0]?.hero?.image ?? artwork[0])) setSavedOpen(true) }}>
-          <HeartIcon size={18} />
-          {saved.size > 0 && <i className="v2-dot" />}
-        </button>
-        <button className="v2-ic" aria-label="Bag" onClick={() => setBagOpen(true)}>
-          <BagIcon size={18} />
-          {cartCount > 0 && <i className="v2-dot" />}
-        </button>
       </header>
 
       {/* Mini-bag chips — the pieces you've added, stacked top-right */}
@@ -1072,50 +1078,62 @@ export default function DiscernV2({
       {/* Menu */}
       <div className={`v2-ov ${menuOpen ? 'on' : ''}`} onClick={() => setMenuOpen(false)} />
       <nav className={`v2-menu ${menuOpen ? 'on' : ''}`} aria-hidden={!menuOpen}>
+        {/* The chat UI's sidebar, item for item, on this app's surface: the
+            brand and an avatar that opens the account, a primary action, the
+            fixed destinations, then everything you have asked, then sign-out at
+            the base. */}
         <div className="v2-menu-top">
-          <span className="v2-eyebrow-s">Menu</span>
-          <button className="v2-menu-x" aria-label="Close menu" tabIndex={menuOpen ? 0 : -1}
-            onClick={() => setMenuOpen(false)}>
-            <CloseIcon size={15} />
+          <svg width="20" height="20" viewBox="0 0 40 40" fill="none" strokeLinecap="round"
+            strokeLinejoin="round" stroke="currentColor" strokeWidth="2.08" aria-hidden>
+            <path d="M20 5l9 7v16l-9 7-9-7V12z" /><path d="M20 12l4 3v10l-4 3-4-3V15z" /></svg>
+          <button className="v2-avatar" aria-label={authStatus === 'authenticated' ? 'Account' : 'Sign in'}
+            tabIndex={menuOpen ? 0 : -1}
+            onClick={() => { setMenuOpen(false); if (authStatus !== 'authenticated') requireAccount('save', artwork[0]) }}>
+            {initial ? <span>{initial}</span> : <UserIcon size={15} />}
           </button>
         </div>
-        <ul>{MENU.map(m => (
-          <li key={m.label}>
-            <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); m.go() }}>
-              {m.label}
-            </button>
-          </li>
-        ))}</ul>
 
-        {/* Recents, as the chat UI's sidebar had them — the session's questions,
-            tappable to run again. Absent rather than empty before the first
-            question, because a heading over nothing is just furniture. */}
-        {asked.length > 0 && (
-          <div className="v2-menu-recent">
-            <span className="v2-eyebrow-s">Recent</span>
-            <ul>{asked.slice(0, 6).map(q => (
+        <button className="v2-newchat" tabIndex={menuOpen ? 0 : -1}
+          onClick={() => { setMenuOpen(false); setTurns([]); setLook(null); setInput(''); setView('home') }}>
+          <PlusIcon size={13} />
+          New search
+        </button>
+
+        <ul className="v2-menu-nav">
+          {MENU.map(m => (
+            <li key={m.label}>
+              <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); m.go() }}>
+                {m.icon}
+                {m.label}
+                {m.count ? <em>{m.count}</em> : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+
+        {/* Everything asked this session, as the sidebar's recents were. */}
+        <div className="v2-menu-recent">
+          <span className="v2-eyebrow-s">Recent</span>
+          {asked.length === 0 ? (
+            <p className="v2-menu-empty">Nothing asked yet.</p>
+          ) : (
+            <ul>{asked.slice(0, 12).map(q => (
               <li key={q}>
                 <button tabIndex={menuOpen ? 0 : -1}
                   onClick={() => { setMenuOpen(false); run(q) }}>{q}</button>
               </li>
             ))}</ul>
-          </div>
-        )}
-
-        {/* The account row the sidebar ended on. The mailto that used to sit
-            here was the only thing in the footer and led out of the app. */}
-        <div className="v2-menu-meta">
-          {authStatus === 'authenticated' ? (
-            <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); signOut() }}>
-              Sign out
-            </button>
-          ) : (
-            <button tabIndex={menuOpen ? 0 : -1}
-              onClick={() => { setMenuOpen(false); requireAccount('save', artwork[0]) }}>
-              Sign in
-            </button>
           )}
         </div>
+
+        {authStatus === 'authenticated' && (
+          <div className="v2-menu-meta">
+            <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); signOut() }}>
+              <ExternalLinkIcon size={15} />
+              Sign out
+            </button>
+          </div>
+        )}
       </nav>
 
       {/* Saved — the hearts finally have somewhere to lead. Same sheet family as
@@ -1281,11 +1299,6 @@ export default function DiscernV2({
                     onChange={e => addPhotos(e.target.files)} />
                 </label>
                 <div className="v2-bar-right">
-                  {input.length > 0 && (
-                    <button className="v2-clear" aria-label="Clear" onClick={() => { setInput(''); taRef.current?.focus() }}>
-                      <CloseIcon size={12} />
-                    </button>
-                  )}
                   <button className={`v2-send ${canSend ? 'on' : ''}`} aria-label="Send" onClick={submit} disabled={loading}>
                     {loading ? <Progress light />
                       : <ArrowUpIcon size={15} />}
@@ -1303,7 +1316,7 @@ export default function DiscernV2({
 
         /* Above the menu scrim (70): the trigger doubles as the close control,
            so it has to stay reachable while the menu is open. */
-        .v2-head{position:absolute;top:0;left:0;right:0;z-index:72;display:flex;align-items:center;gap:2px;
+        .v2-head{position:absolute;top:0;left:0;right:0;z-index:72;display:flex;align-items:center;gap:2px;min-height:58px;
           padding:calc(env(safe-area-inset-top,0px) + 12px) 12px 12px;color:#fff;
           background:linear-gradient(to bottom,rgba(0,0,0,.36),rgba(0,0,0,0));
           transition:color .45s ${V2.ease},background .45s ${V2.ease},transform .42s ${V2.ease},opacity .3s ${V2.ease};}
@@ -1328,16 +1341,19 @@ export default function DiscernV2({
         .v2-inspire-cta::before,.v2-hint::before,.v2-sug::before{content:'';position:absolute;
            left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
         .v2-ic:active{transform:scale(.9);}
-        .v2-brand{position:absolute;left:50%;transform:translateX(-50%);
-          display:flex;flex-direction:column;align-items:center;gap:1px;pointer-events:none;}
-        .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.36em;text-indent:.36em;white-space:nowrap;
-          display:inline-flex;align-items:center;}
-        /* The stage marker. Small, tracked with the wordmark, and set apart by a
-           rule rather than a bracket so it reads as part of the lockup. */
-        .v2-brand i{font-style:normal;font-size:8px;letter-spacing:.2em;text-indent:.2em;opacity:.62;
-          margin-left:6px;padding-left:6px;border-left:1px solid currentColor;}
-        /* The icon row keeps the space the brand no longer takes. */
-        .v2-head-gap{flex:1;}
+        /* One row, one baseline: mark, wordmark, stage. Stacking the mark above
+           the words made the lockup taller than the menu button beside it, so
+           the mark floated over the icons' centre line and the whole thing read
+           as misaligned. Centred on the window rather than on the space the
+           icons leave, which is the only way it holds when the menu button
+           grows a label on a wide screen. */
+        .v2-brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+          display:flex;align-items:center;gap:7px;pointer-events:none;}
+        .v2-brand svg{display:block;}
+        .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.34em;text-indent:.34em;
+          white-space:nowrap;line-height:1;}
+        .v2-brand i{font-style:normal;font-size:8px;letter-spacing:.18em;text-indent:.18em;opacity:.55;
+          line-height:1;padding-left:7px;border-left:1px solid currentColor;align-self:center;}
         .v2-dot{position:absolute;top:6px;right:5px;width:5px;height:5px;border-radius:50%;background:currentColor;}
 
         /* ── A spread: one exchange, answer then evidence ─────────────────── */
@@ -1392,12 +1408,19 @@ export default function DiscernV2({
         .v2-scroll::-webkit-scrollbar{display:none;}
 
         /* Hero */
-        .v2-hero{position:relative;min-height:100svh;display:flex;flex-direction:column;justify-content:center;
-          padding-bottom:calc(var(--bar) + 54px);padding-top:calc(env(safe-area-inset-top,0px) + 74px);}
+        /* The copy sits low, not centred. Centred, it landed across the middle of
+           the frame — over the face, where a portrait carries most of its
+           detail, and where the veil is at its lightest (10% at the 30% mark).
+           Low, it has the darkest part of the gradient behind it and the film
+           has its subject back. It is also where the reference sets its own
+           opening line. */
+        .v2-hero{position:relative;min-height:100svh;display:flex;flex-direction:column;justify-content:flex-end;
+          padding-bottom:calc(var(--bar) + 96px);padding-top:calc(env(safe-area-inset-top,0px) + 74px);}
         .v2-hero-media{position:absolute;inset:0;overflow:hidden;}
         .v2-hero-media img,.v2-hero-media video{width:100%;height:100%;object-fit:cover;display:block;}
-        .v2-veil{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(20,17,14,.44) 0%,rgba(20,17,14,.1) 30%,rgba(20,17,14,.56) 76%,rgba(20,17,14,.74) 100%);}
-        .v2-hero-copy{position:relative;z-index:2;text-align:center;color:#fff;padding:0 22px;}
+        /* Weighted to the foot of the frame, under the copy. */
+        .v2-veil{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(20,17,14,.40) 0%,rgba(20,17,14,.06) 26%,rgba(20,17,14,.30) 55%,rgba(20,17,14,.68) 82%,rgba(20,17,14,.80) 100%);}
+        .v2-hero-copy{position:relative;z-index:2;text-align:center;color:#fff;padding:0 22px;max-width:640px;margin:0 auto;}
         .v2-hero-copy h1{font-family:${V2.display};font-weight:600;font-size:clamp(34px,9.4vw,50px);line-height:1.05;letter-spacing:-.035em;
           margin:0 0 12px;text-shadow:0 2px 26px rgba(0,0,0,.42);}
         .v2-hero-copy h1{text-wrap:balance;}
@@ -1405,7 +1428,7 @@ export default function DiscernV2({
         /* Below the bar, hard against the bottom of the window. */
         .v2-hero2,.v2-hero3{justify-content:flex-end;}
         .v2-hero3{padding-bottom:calc(var(--bar) + 20px);}
-        .v2-hero2 .v2-hero-copy{margin-bottom:auto;margin-top:auto;}
+        
         .v2-hero2{padding-bottom:calc(var(--bar) + 54px);}
         .v2-one span{display:block;}
         .v2-inspire-cta{margin-top:20px;padding:11px 22px;border:none;border-radius:999px;cursor:pointer;
@@ -1606,6 +1629,26 @@ export default function DiscernV2({
         .v2-menu.on{transform:translateX(0);pointer-events:auto;}
                 .v2-eyebrow-s{font-size:12px;font-weight:500;opacity:.5;}
         .v2-menu-top{display:flex;align-items:center;justify-content:space-between;}
+        .v2-avatar{width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
+          display:flex;align-items:center;justify-content:center;color:#fff;
+          background:rgba(255,255,255,.12);font-family:${V2.sans};font-size:14px;font-weight:500;}
+        .v2-avatar:hover{background:rgba(255,255,255,.2);}
+        .v2-newchat{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;
+          padding:11px 16px;border-radius:12px;border:none;cursor:pointer;
+          background:#fff;color:${V2.ink};font-family:${V2.sans};font-size:13px;font-weight:500;
+          transition:opacity .15s;}
+        .v2-newchat:hover{opacity:.86;}
+        /* The fixed destinations. A row, not a headline — the chat UI's shape:
+           icon, label, and a count when there is one. */
+        .v2-menu-nav{display:flex;flex-direction:column;gap:2px;}
+        ul.v2-menu-nav li button{display:flex;align-items:center;gap:13px;width:100%;min-height:44px;
+          padding:11px 12px;border-radius:10px;border:none;cursor:pointer;background:none;color:inherit;
+          font-family:${V2.sans};font-size:14px;font-weight:400;letter-spacing:0;text-align:left;
+          transition:background .12s;}
+        ul.v2-menu-nav li button:hover{background:rgba(255,255,255,.08);opacity:1;}
+        ul.v2-menu-nav li button em{margin-left:auto;font-style:normal;font-size:11px;font-weight:500;
+          background:rgba(255,255,255,.14);border-radius:20px;padding:2px 8px;}
+        .v2-menu-empty{margin:0;font-size:13px;opacity:.45;}
         .v2-menu-x{width:34px;height:34px;margin:-8px -8px -8px 0;display:flex;align-items:center;
           justify-content:center;background:none;border:none;color:inherit;cursor:pointer;
           position:relative;opacity:.7;}
@@ -1620,8 +1663,8 @@ export default function DiscernV2({
            tall, so the primary navigation was the smallest target on the page.
            The expander fills the 11px gap and a little of the neighbour's; the
            later item wins the ~2px of shared edge, which beats a dead band. */
-        .v2-menu li button,.v2-menu-meta button{position:relative;}
-        .v2-menu li button::before,.v2-menu-meta button::before{content:'';position:absolute;
+        .v2-menu li button:not(.v2-menu-nav *),.v2-menu-meta button{position:relative;}
+        .v2-menu li button:not(.v2-menu-nav *)::before,.v2-menu-meta button::before{content:'';position:absolute;
           left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
         .v2-menu-recent{padding-top:16px;border-top:1px solid rgba(255,255,255,.16);flex:1;min-height:0;
           display:flex;flex-direction:column;gap:11px;}
@@ -1708,14 +1751,14 @@ export default function DiscernV2({
            — an eased fade at this size looks like a bug. */
         .v2-bar.on-light{background:rgba(248,247,245,.86);color:${V2.ink};
           box-shadow:0 10px 40px rgba(0,0,0,.14),inset 0 0 0 1px rgba(0,0,0,.06);}
-        .v2-bar.on-light .v2-plus,.v2-bar.on-light .v2-send,.v2-bar.on-light .v2-clear{
+        .v2-bar.on-light .v2-plus,.v2-bar.on-light .v2-send{
           background:rgba(26,26,28,.08);color:${V2.ink};}
         .v2-bar.on-light .v2-send.on{background:${V2.ink};color:#fff;}
         .v2-bar.on-light textarea{color:${V2.ink};caret-color:${V2.ink};}
         .v2-bar.on-light .v2-ph,.v2-bar.on-light .v2-marquee span{color:rgba(26,26,28,.5);}
         .v2-bar.on-light.focus{background:rgba(252,251,250,.96);}
         .v2-bar.on-light .v2-shot-chip button{background:rgba(0,0,0,.5);}
-        .v2-plus,.v2-send,.v2-clear{flex-shrink:0;border:none;cursor:pointer;display:flex;align-items:center;
+        .v2-plus,.v2-send{flex-shrink:0;border:none;cursor:pointer;display:flex;align-items:center;
           justify-content:center;border-radius:50%;color:#fff;transition:background .2s ${V2.ease},transform .12s ${V2.ease};}
         .v2-plus{width:38px;height:38px;background:rgba(255,255,255,.13);
           display:flex;align-items:center;justify-content:center;border-radius:50%;
@@ -1734,9 +1777,6 @@ export default function DiscernV2({
           display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
           background:rgba(0,0,0,.62);cursor:pointer;padding:0;}
         .v2-plus:active{transform:scale(.9);}
-        /* No bottom margin any more: it nudged the button up to sit on the old
-           flex-end baseline, and the control row centres its children. */
-        .v2-clear{width:26px;height:26px;background:rgba(255,255,255,.16);}
         .v2-send{width:33px;height:33px;background:rgba(255,255,255,.13);
           transition:transform .16s ${V2.ease},background .2s ${V2.ease};}
         .v2-send:active{transform:scale(.86);}
