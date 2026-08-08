@@ -258,6 +258,26 @@ export default function DiscernV2({
     return () => touched.forEach(n => n.removeAttribute('inert'))
   }, [bagOpen, menuOpen])
 
+  // Escape closes the topmost open layer. Every one of these inerts the rest of
+  // the page while it is up, so without this the only way out is finding the
+  // right scrim or close button — the sign-in card already handled its own key,
+  // these did not. Order matches the z-index stack, so with two layers open
+  // Escape peels the front one rather than the one underneath.
+  useEffect(() => {
+    if (!(bagOpen || savedOpen || histOpen || menuOpen || lookOpen)) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      if (bagOpen) setBagOpen(false)
+      else if (savedOpen) setSavedOpen(false)
+      else if (histOpen) setHistOpen(false)
+      else if (menuOpen) setMenuOpen(false)
+      else setLookOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [bagOpen, savedOpen, histOpen, menuOpen, lookOpen])
+
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const lookRailRef = useRef<HTMLDivElement>(null)
@@ -1046,7 +1066,16 @@ export default function DiscernV2({
       {view !== 'product' && (
         <div className={`v2-bar-wrap ${view === 'home' ? 'home' : ''}`} ref={barVar.ref} style={{ bottom: kb }}>
           <div className="v2-bar-press">
-            <div className={`v2-bar ${focused ? 'focus' : ''}`}>
+            {/* The field is one line of 13px text — about 23px tall — inside a
+                52px bar, so most of the bar looked tappable and wasn't. Tapping
+                the padding now focuses the field; the guard keeps taps on the
+                real controls inside from being hijacked. */}
+            <div className={`v2-bar ${focused ? 'focus' : ''}`}
+              onMouseDown={e => {
+                if (e.target !== e.currentTarget) return
+                e.preventDefault()
+                taRef.current?.focus()
+              }}>
               {/* Was a button with no handler at all — it offered to take a photo
                   and did nothing. A label over a hidden input keeps the same
                   glyph and hit area while actually opening the picker. */}
@@ -1121,6 +1150,17 @@ export default function DiscernV2({
            minimum without moving a pixel of what is on screen. */
         .v2-ic::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
           transform:translate(-50%,-50%);}
+        /* Same trick, everywhere else it was owed. Each of these draws smaller
+           than 44px on purpose; only the hit area grows, so nothing on screen
+           moves. Square targets get a centred 44x44 box, wide-but-short ones
+           only need the height stretched. .v2-cards-nav and .v2-hint are already
+           absolutely positioned, so they establish the containing block
+           themselves and must not be reset to relative. */
+        .v2-send,.v2-inspire-cta,.v2-sug{position:relative;}
+        .v2-send::before,.v2-cards-nav::before{content:'';position:absolute;left:50%;top:50%;
+          width:44px;height:44px;transform:translate(-50%,-50%);}
+        .v2-inspire-cta::before,.v2-hint::before,.v2-sug::before{content:'';position:absolute;
+           left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
         .v2-ic:active{transform:scale(.9);}
         .v2-brand{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;pointer-events:none;}
         .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.36em;text-indent:.36em;white-space:nowrap;}
@@ -1402,6 +1442,13 @@ export default function DiscernV2({
           background:none;border:none;padding:0;color:inherit;text-align:left;line-height:1.18;
           transition:opacity .2s ${V2.ease};}
         .v2-menu li button:hover{opacity:.62;}
+        /* The list reads big — 26px type — but a line of text is only ~31px
+           tall, so the primary navigation was the smallest target on the page.
+           The expander fills the 11px gap and a little of the neighbour's; the
+           later item wins the ~2px of shared edge, which beats a dead band. */
+        .v2-menu li button,.v2-menu-meta a{position:relative;}
+        .v2-menu li button::before,.v2-menu-meta a::before{content:'';position:absolute;
+          left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
         .v2-menu-meta{display:flex;justify-content:space-between;gap:18px;padding-top:16px;
           border-top:1px solid rgba(255,255,255,.16);font-size:12px;}
         .v2-menu-meta div{display:flex;flex-direction:column;gap:5px;}
