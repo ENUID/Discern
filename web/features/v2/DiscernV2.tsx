@@ -25,7 +25,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, HeartIcon, HistoryIcon, PlusIcon } from '@/components/icons'
 import { useSession, signOut } from 'next-auth/react'
-import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING } from './theme'
+import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING, V2_HERO_COPY } from './theme'
 import V2Auth, { type V2AuthReason } from './V2Auth'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: Re
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function DiscernV2({
-  heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onFeatured, onSearched, onSavedChange,
+  heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onFeatured, onSearched, onSavedChange, heroCopy = 0,
 }: {
   heroMedia?: string; heroPoster?: string
   onQuery?: (q: string, history: V2Msg[], images: string[]) => Promise<{
@@ -177,6 +177,8 @@ export default function DiscernV2({
   /** The saved list, mirrored up for the same reason: what someone keeps is
    *  the strongest free signal of what they like. */
   onSavedChange?: (saved: V2Product[]) => void
+  /** Index into V2_HERO_COPY, resolved on the server from the clock. */
+  heroCopy?: number
 }) {
   const [view, setView] = useState<View>('home')
   const [input, setInput] = useState('')
@@ -242,9 +244,10 @@ export default function DiscernV2({
   // a focus boundary, so the background is marked `inert` while an overlay is
   // up. Set imperatively — React 18 does not accept `inert` as a prop.
   //
-  // The header is only inerted for the bag, never for the menu: the menu's
-  // toggle lives in the header and doubles as its close, so inerting it there
-  // would trap the user with no way out.
+  // The header is inerted for the drawer too, now that the drawer covers it —
+  // it used to stay live because the trigger doubled as the close, but a
+  // control underneath an opaque panel is not a way out. The drawer carries its
+  // own close, and Escape and the scrim both still work.
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const root = rootRef.current
@@ -254,7 +257,7 @@ export default function DiscernV2({
     // composer are direct children of the root, not of .v2-scroll), so focus
     // still escaped. Anything not named here gets inerted.
     const live = bagOpen ? ['v2-bag', 'v2-bag-ov']
-      : menuOpen ? ['v2-head', 'v2-menu', 'v2-ov']
+      : menuOpen ? ['v2-menu', 'v2-ov']
       : null
     const touched: HTMLElement[] = []
     if (live) {
@@ -411,7 +414,41 @@ export default function DiscernV2({
       setHeadHidden(y > 90 && dy > 0)
       lastY.current = y
     }
+    trackBarSurface()
   }, [])
+
+  /** Which way round the composer is painted.
+   *
+   *  The bar floats over whatever happens to be under it — the film on the
+   *  opening screen, bone paper on a results page, a photograph on a product
+   *  page. One fixed treatment cannot stay legible across all three: dark glass
+   *  disappears into the film. So the surfaces declare themselves with
+   *  data-surface, the bar samples what is actually behind it, and flips.
+   *
+   *  Sampled rather than derived from `view` because a single screen is not one
+   *  surface: the home scroller runs the dark film into the light prompt panel,
+   *  and the bar has to change halfway down it.
+   */
+  const [onDark, setOnDark] = useState(true)
+  const trackBarSurface = useCallback(() => {
+    const bar = document.querySelector('.v2-bar')
+    if (!bar) return
+    const r = bar.getBoundingClientRect()
+    // Just above the bar's own top edge, at its centre: the last content the
+    // bar is actually sitting on.
+    const el = document.elementFromPoint(
+      Math.round(r.left + r.width / 2),
+      Math.max(1, Math.round(r.top) - 6),
+    )
+    const marked = el?.closest('[data-surface]') as HTMLElement | null
+    setOnDark(marked?.dataset.surface !== 'light')
+  }, [])
+
+  useEffect(() => {
+    trackBarSurface()
+    const id = setTimeout(trackBarSurface, 60) // after the view's own transition
+    return () => clearTimeout(id)
+  }, [view, loading, trackBarSurface])
 
   // Sections arrive rather than appear: each one fades and lifts into place the
   // first time it comes into view, then stays put.
@@ -693,12 +730,12 @@ export default function DiscernV2({
       )}
 
       {/* ── Scroller ───────────────────────────────────────────────────────── */}
-      <div className="v2-scroll" ref={scrollRef} onScroll={onScroll}>
+      <div className="v2-scroll" ref={scrollRef} onScroll={onScroll} data-surface="light">
 
         {/* 1 · HERO */}
         {view === 'home' && (
           <>
-            <section className="v2-hero">
+            <section className="v2-hero" data-surface="dark">
               <div className="v2-hero-media">
                 {heroIsVideo ? <video src={heroMedia} poster={heroPoster} autoPlay muted loop playsInline /> : <Img src={heroMedia} />}
                 <div className="v2-veil" />
@@ -708,15 +745,15 @@ export default function DiscernV2({
                   returned nothing — three blank plates covered the film and the
                   headline. The film is the opening image. */}
               <div className="v2-hero-copy">
-                <h1><span>Know what</span> <span>to buy.</span></h1>
-                <p>Stop comparing tabs. Start understanding fashion.</p>
+                <h1>{V2_HERO_COPY[heroCopy % V2_HERO_COPY.length].head}</h1>
+                <p>{V2_HERO_COPY[heroCopy % V2_HERO_COPY.length].sub}</p>
               </div>
             </section>
 
             {/* 1b · COLLECTION — the editorial screen between the hero and the
                 prompt panel: title, season line, and one pill into the
                 suggestions. */}
-            <section className="v2-hero v2-hero2">
+            <section className="v2-hero v2-hero2" data-surface="dark">
               <div className="v2-hero-media"><Img src="/v2/hero-2.jpg" /><div className="v2-veil" /></div>
               <div className="v2-hero-copy">
                 <h1 className="v2-one"><span>Pages from Landscapes</span></h1>
@@ -729,7 +766,7 @@ export default function DiscernV2({
             </section>
 
             {/* 1c · INSPIRE — the prompt panel proper */}
-            <section className="v2-hero v2-hero3">
+            <section className="v2-hero v2-hero3" data-surface="dark">
               <div className="v2-hero-media"><Img src="/v2/hero-3.jpg" /><div className="v2-veil" /></div>
               <div className="v2-hero-copy">
                 <h1><span>Start</span> <span>anywhere.</span></h1>
@@ -746,7 +783,7 @@ export default function DiscernV2({
 
         {/* 2 · RESULTS */}
         {view === 'results' && (
-          <section className="v2-results">
+          <section className="v2-results" data-surface="light">
             {turns.slice(0, 1).map(turn => (
             <div className="v2-spread" key={turn.id}>
               {/* Nothing goes above the products. Not the answer, not a
@@ -813,7 +850,7 @@ export default function DiscernV2({
 
         {/* 2b · LOOK — "Discover the look" rail */}
         {view === 'look' && look && (
-          <section className="v2-lookpage">
+          <section className="v2-lookpage" data-surface="light">
             <div className="v2-rail" ref={lookRailRef}>
               {look.map(p => (
                 <div key={p.id} className="v2-rail-item">
@@ -832,7 +869,7 @@ export default function DiscernV2({
 
         {/* 3 · PRODUCT */}
         {view === 'product' && product && (
-          <section className="v2-pdp">
+          <section className="v2-pdp" data-surface="light">
             {pdpImages.map((src, i) => <Img key={i} className="v2-pdp-img" src={src} />)}
 
             {/* After the photographs the page itself carries a dashed-outline
@@ -1035,7 +1072,13 @@ export default function DiscernV2({
       {/* Menu */}
       <div className={`v2-ov ${menuOpen ? 'on' : ''}`} onClick={() => setMenuOpen(false)} />
       <nav className={`v2-menu ${menuOpen ? 'on' : ''}`} aria-hidden={!menuOpen}>
-        <span className="v2-eyebrow-s">Menu</span>
+        <div className="v2-menu-top">
+          <span className="v2-eyebrow-s">Menu</span>
+          <button className="v2-menu-x" aria-label="Close menu" tabIndex={menuOpen ? 0 : -1}
+            onClick={() => setMenuOpen(false)}>
+            <CloseIcon size={15} />
+          </button>
+        </div>
         <ul>{MENU.map(m => (
           <li key={m.label}>
             <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); m.go() }}>
@@ -1196,7 +1239,7 @@ export default function DiscernV2({
                 control focuses the field: at this size most of its area is
                 margin, and margin that looks like a text field should behave
                 like one. */}
-            <div className={`v2-bar ${focused ? 'focus' : ''}`}
+            <div className={`v2-bar ${focused ? 'focus' : ''} ${onDark ? 'on-dark' : 'on-light'}`}
               onMouseDown={e => {
                 if (e.target !== e.currentTarget &&
                     !(e.target as HTMLElement).classList?.contains('v2-bar-top')) return
@@ -1357,7 +1400,7 @@ export default function DiscernV2({
         .v2-hero-copy{position:relative;z-index:2;text-align:center;color:#fff;padding:0 22px;}
         .v2-hero-copy h1{font-family:${V2.display};font-weight:600;font-size:clamp(34px,9.4vw,50px);line-height:1.05;letter-spacing:-.035em;
           margin:0 0 12px;text-shadow:0 2px 26px rgba(0,0,0,.42);}
-        .v2-hero-copy h1 span{display:block;}
+        .v2-hero-copy h1{text-wrap:balance;}
         .v2-hero-copy p{font-size:14px;font-weight:400;margin:0;opacity:.93;}
         /* Below the bar, hard against the bottom of the window. */
         .v2-hero2,.v2-hero3{justify-content:flex-end;}
@@ -1540,20 +1583,34 @@ export default function DiscernV2({
         .v2-prog.light i{background:#fff;}
         @keyframes v2-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
 
-        /* Menu + overlay */
-        .v2-ov{position:absolute;inset:0;z-index:70;background:rgba(16,14,12,0);pointer-events:none;transition:background .42s ${V2.ease};}
-        .v2-ov.on{background:rgba(16,14,12,.46);pointer-events:auto;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);}
-        /* The menu grows out of the trigger it was opened from rather than
-           sliding in as a slab — origin top-left, scale + fade, one easing. */
-        .v2-menu{position:absolute;z-index:71;left:12px;top:calc(env(safe-area-inset-top,0px) + 52px);
-          width:min(320px,calc(100% - 24px));border-radius:16px;color:#fff;background:${V2.glassDark};
-          backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);
-          border:1px solid ${V2.glassEdge};box-shadow:0 26px 70px rgba(0,0,0,.34);
-          padding:22px 22px 20px;display:flex;flex-direction:column;gap:20px;
-          transform-origin:top left;transform:scale(.9);opacity:0;pointer-events:none;
-          transition:transform .42s ${V2.ease},opacity .3s ${V2.ease};}
-        .v2-menu.on{transform:none;opacity:1;pointer-events:auto;}
-        .v2-eyebrow-s{font-size:12px;font-weight:500;opacity:.5;}
+        /* ── Drawer + scrim ────────────────────────────────────────────────
+           A full-height panel that slides in from the left edge, which is what
+           the chat UI had. It used to be a rounded card that grew out of the
+           trigger — a window floating in the corner, which read as a popup
+           rather than as the app's spine. The mechanics are the chat UI's
+           exactly: 290px wide capped at 86% of the screen, the same
+           translateX(-100%) to 0, the same .34s on the same curve, and a scrim
+           that fades over the same duration. Only the surface is this app's —
+           dark glass rather than white. */
+        .v2-ov{position:absolute;inset:0;z-index:73;background:rgba(16,14,12,0);pointer-events:none;
+          transition:background .34s;}
+        .v2-ov.on{background:rgba(16,14,12,.4);pointer-events:auto;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);}
+        .v2-menu{position:absolute;z-index:74;top:0;left:0;bottom:0;width:min(290px,86%);
+          color:#fff;background:rgba(28,27,26,.86);
+          backdrop-filter:blur(30px) saturate(140%);-webkit-backdrop-filter:blur(30px) saturate(140%);
+          border-right:1px solid rgba(255,255,255,.12);box-shadow:8px 0 48px rgba(0,0,0,.34);
+          padding:calc(env(safe-area-inset-top,0px) + 26px) 22px calc(env(safe-area-inset-bottom,0px) + 22px);
+          display:flex;flex-direction:column;gap:20px;overflow-y:auto;overscroll-behavior:contain;
+          transform:translateX(-100%);pointer-events:none;
+          transition:transform .34s cubic-bezier(.32,.72,0,1);}
+        .v2-menu.on{transform:translateX(0);pointer-events:auto;}
+                .v2-eyebrow-s{font-size:12px;font-weight:500;opacity:.5;}
+        .v2-menu-top{display:flex;align-items:center;justify-content:space-between;}
+        .v2-menu-x{width:34px;height:34px;margin:-8px -8px -8px 0;display:flex;align-items:center;
+          justify-content:center;background:none;border:none;color:inherit;cursor:pointer;
+          position:relative;opacity:.7;}
+        .v2-menu-x::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
+          transform:translate(-50%,-50%);}
         .v2-menu ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:11px;}
         .v2-menu li button{font-family:${V2.display};font-size:26px;font-weight:500;letter-spacing:-.025em;cursor:pointer;
           background:none;border:none;padding:0;color:inherit;text-align:left;line-height:1.18;
@@ -1566,12 +1623,12 @@ export default function DiscernV2({
         .v2-menu li button,.v2-menu-meta button{position:relative;}
         .v2-menu li button::before,.v2-menu-meta button::before{content:'';position:absolute;
           left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
-        .v2-menu-recent{padding-top:16px;border-top:1px solid rgba(255,255,255,.16);
+        .v2-menu-recent{padding-top:16px;border-top:1px solid rgba(255,255,255,.16);flex:1;min-height:0;
           display:flex;flex-direction:column;gap:11px;}
         .v2-menu-recent ul{gap:9px;}
         .v2-menu-recent li button{font-family:${V2.sans};font-size:14px;font-weight:400;letter-spacing:0;
           opacity:.82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block;}
-        .v2-menu-meta{display:flex;justify-content:space-between;gap:18px;padding-top:16px;
+        .v2-menu-meta{margin-top:auto;display:flex;justify-content:space-between;gap:18px;padding-top:16px;
           border-top:1px solid rgba(255,255,255,.16);font-size:12px;}
         .v2-menu-meta div{display:flex;flex-direction:column;gap:5px;}
         .v2-menu-meta div:first-child{opacity:.55;}
@@ -1640,9 +1697,24 @@ export default function DiscernV2({
            inset. Only the dimensions came across — the glass is v2's. */
         .v2-bar{display:flex;flex-direction:column;gap:10px;padding:18px 16px 10px;width:100%;
           max-width:min(820px,96vw);margin:0 auto;border-radius:24px;color:#fff;background:${V2.glassDark};
+          transition:background .18s linear,color .18s linear;
           backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%);
           box-shadow:0 10px 40px rgba(0,0,0,.26),inset 0 1px 0 ${V2.glassEdge};transition:background .3s ${V2.ease};}
         .v2-bar.focus{background:rgba(26,24,21,.9);}
+        /* ── The bar reads against whatever is behind it ────────────────────
+           On the film it goes light; on bone paper it goes dark. Both are the
+           same shape and the same glass, only inverted, so the change reads as
+           the bar adapting rather than as a different control. Fast and linear
+           — an eased fade at this size looks like a bug. */
+        .v2-bar.on-light{background:rgba(248,247,245,.86);color:${V2.ink};
+          box-shadow:0 10px 40px rgba(0,0,0,.14),inset 0 0 0 1px rgba(0,0,0,.06);}
+        .v2-bar.on-light .v2-plus,.v2-bar.on-light .v2-send,.v2-bar.on-light .v2-clear{
+          background:rgba(26,26,28,.08);color:${V2.ink};}
+        .v2-bar.on-light .v2-send.on{background:${V2.ink};color:#fff;}
+        .v2-bar.on-light textarea{color:${V2.ink};caret-color:${V2.ink};}
+        .v2-bar.on-light .v2-ph,.v2-bar.on-light .v2-marquee span{color:rgba(26,26,28,.5);}
+        .v2-bar.on-light.focus{background:rgba(252,251,250,.96);}
+        .v2-bar.on-light .v2-shot-chip button{background:rgba(0,0,0,.5);}
         .v2-plus,.v2-send,.v2-clear{flex-shrink:0;border:none;cursor:pointer;display:flex;align-items:center;
           justify-content:center;border-radius:50%;color:#fff;transition:background .2s ${V2.ease},transform .12s ${V2.ease};}
         .v2-plus{width:38px;height:38px;background:rgba(255,255,255,.13);

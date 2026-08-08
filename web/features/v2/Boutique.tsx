@@ -104,9 +104,12 @@ function toProduct(p: any): V2Product {
   }
 }
 
-export default function Boutique({ buyerCurrency, buyerCountry }: {
+export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
   buyerCurrency?: string
   buyerCountry?: string
+  /** Which of the eight opening lines is showing. Computed on the server from
+   *  the clock, so the server and client render the same one. */
+  heroCopy?: number
 }) {
   // Recent searches are free-tier personalisation: they carry taste even for a
   // shopper who has never signed in. Kept here rather than inside DiscernV2
@@ -252,6 +255,7 @@ export default function Boutique({ buyerCurrency, buyerCountry }: {
       onFeatured={onFeatured}
       onSearched={remember}
       onSavedChange={onSavedChange}
+      heroCopy={heroCopy}
     />
   )
 }

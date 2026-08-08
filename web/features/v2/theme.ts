@@ -38,6 +38,32 @@ export const V2 = {
   easeInOut: 'cubic-bezier(.65,.05,.36,1)',
 } as const
 
+// The opening statement. Eight of them, rotating on an eight-hour cycle.
+//
+// The cycle is derived from absolute time — the epoch divided into eight-hour
+// blocks — so it is the same line for everyone at any given moment, and no two
+// people comparing screens see different copy. Nothing is stored and nothing is
+// random; the index is a function of the clock alone.
+export const V2_HERO_COPY = [
+  { head: 'Know what’s worth wearing.',                  sub: 'Understand fashion before you buy it.' },
+  { head: 'See fashion differently.',                    sub: 'Know what you’re actually choosing.' },
+  { head: 'Fashion, with a better eye.',                 sub: 'Understand the difference before you decide.' },
+  { head: 'Not everything worth buying looks different.', sub: 'Discern the difference.' },
+  { head: 'Know the difference.',                        sub: 'Before it becomes your wardrobe.' },
+  { head: 'Buy less. Choose better.',                    sub: 'Understand what makes something worth it.' },
+  { head: 'There’s more to fashion than what you see.',  sub: 'Discern what makes the difference.' },
+  { head: 'Look beyond the label.',                      sub: 'Understand what you’re actually buying.' },
+] as const
+
+export const V2_HERO_ROTATION_MS = 8 * 60 * 60 * 1000
+
+/** Which line is showing at a given instant. Exported so the server can compute
+ *  it and hand it to the client, rather than both guessing and disagreeing
+ *  across a boundary. */
+export function heroCopyIndex(nowMs: number): number {
+  return Math.floor(nowMs / V2_HERO_ROTATION_MS) % V2_HERO_COPY.length
+}
+
 // Rotating prompt suggestions shown in the bar when it's idle. These teach what
 // the thing can do, so they're specific requests rather than categories.
 export const V2_PROMPTS = [

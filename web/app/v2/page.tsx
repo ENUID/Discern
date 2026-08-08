@@ -1,5 +1,6 @@
 import { cookies, headers } from 'next/headers'
 import Boutique from '@/features/v2/Boutique'
+import { heroCopyIndex } from '@/features/v2/theme'
 import {
   SHOPPER_COUNTRY_COOKIE,
   SHOPPER_CURRENCY_COOKIE,
@@ -26,6 +27,7 @@ export default async function Page() {
     <Boutique
       buyerCurrency={shopperContext.currency}
       buyerCountry={shopperContext.country}
+      heroCopy={heroCopyIndex(Date.now())}
     />
   )
 }
