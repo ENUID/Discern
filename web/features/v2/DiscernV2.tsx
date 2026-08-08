@@ -156,7 +156,7 @@ function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: Re
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function DiscernV2({
-  heroMedia = '/v2/hero.jpg', heroPoster, onQuery, onFeatured,
+  heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onFeatured,
 }: {
   heroMedia?: string; heroPoster?: string
   onQuery?: (q: string, history: V2Msg[]) => Promise<{
@@ -215,6 +215,8 @@ export default function DiscernV2({
   const [bagOpen, setBagOpen] = useState(false)
   const [blockedStores, setBlockedStores] = useState<string[]>([])
   const [cardSeed, setCardSeed] = useState(0)
+  /** Which scroll-step the hero trio last advanced on. */
+  const scrollStep = useRef(0)
   const [artwork, setArtwork] = useState<string[]>([])
   const [headHidden, setHeadHidden] = useState(false)
 
@@ -350,6 +352,17 @@ export default function DiscernV2({
     if (Math.abs(dy) > 6) {
       setHeadHidden(y > 90 && dy > 0)
       lastY.current = y
+    }
+    // The three hero cards walk through the catalogue as you scroll, so the
+    // opening screen keeps showing new pieces instead of the same three. One
+    // step per 55% of a viewport: slow enough that a flick does not strobe
+    // through the whole feed, quick enough that the first pull already turns
+    // the set over. The arrows still work and simply add to the same seed.
+    const step = Math.floor(y / (window.innerHeight * 0.55))
+    if (step !== scrollStep.current) {
+      const delta = step - scrollStep.current
+      scrollStep.current = step
+      setCardSeed(n => n + delta)
     }
   }, [])
 
