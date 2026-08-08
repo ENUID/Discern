@@ -23,10 +23,11 @@
  *    shipping, subtotal, then PROCEED TO PAYMENT with the redirect notice.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, EditIcon, ExternalLinkIcon, HeartIcon, HistoryIcon, PlusIcon, SparkleIcon, TagIcon, TrashIcon, UserIcon } from '@/components/icons'
+import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, DocumentIcon, EditIcon, ExternalLinkIcon, HeartIcon, HistoryIcon, PlusIcon, SparkleIcon, TagIcon, TrashIcon, UserIcon } from '@/components/icons'
 import { useSession, signOut } from 'next-auth/react'
 import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING, V2_HERO_COPY } from './theme'
 import V2Auth, { type V2AuthReason } from './V2Auth'
+import V2Feedback from './V2Feedback'
 import { buildCartLinks } from './cartLink'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -242,6 +243,7 @@ export default function DiscernV2({
    *  UI's sidebar did — the avatar swaps between them rather than opening a
    *  separate screen. */
   const [menuView, setMenuView] = useState<'nav' | 'profile'>('nav')
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [acc, setAcc] = useState<'materials' | 'style' | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [descOpen, setDescOpen] = useState(true)
@@ -650,6 +652,11 @@ export default function DiscernV2({
       go: () => setBagOpen(true) },
     { label: 'History', icon: <HistoryIcon size={16} />, count: 0, soon: false,
       go: () => setHistOpen(true) },
+    // Named Feedback because that is the word people look for when something
+    // has gone wrong and they want to tell someone. "Report a problem" would be
+    // narrower than what this takes, and "Tell us something" says nothing.
+    { label: 'Feedback', icon: <DocumentIcon size={16} />, count: 0, soon: false,
+      go: () => setFeedbackOpen(true) },
   ]
 
   /** The letter on the avatar, as the sidebar had it. */
@@ -1297,6 +1304,8 @@ export default function DiscernV2({
         </nav>
         </>
       )}
+
+      <V2Feedback open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
 
       <V2Auth
         open={authReason !== null}
