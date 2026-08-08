@@ -184,6 +184,11 @@ export default function DiscernV2({
   // though the hearts worked — the products themselves were thrown away. Keep
   // the piece, not just its id.
   const [saved, setSaved] = useState<Map<string, V2Product>>(new Map())
+  // …and it still forgot them on reload, which makes a saved list a lie. Kept
+  // in localStorage rather than on the account: saving is allowed before
+  // sign-in, so the store has to work without one. Hydrated in an effect, not
+  // in the initial state, so the server and first client render agree.
+  const savedFirstWrite = useRef(true)
   const [savedOpen, setSavedOpen] = useState(false)
   const [histOpen, setHistOpen] = useState(false)
   const [asked, setAsked] = useState<string[]>([])
@@ -257,6 +262,27 @@ export default function DiscernV2({
     }
     return () => touched.forEach(n => n.removeAttribute('inert'))
   }, [bagOpen, menuOpen])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('discern.v2.saved')
+      if (raw) {
+        const list = JSON.parse(raw) as V2Product[]
+        if (Array.isArray(list)) setSaved(new Map(list.filter(p => p && p.id).map(p => [p.id, p])))
+      }
+    } catch { /* private mode, quota, or a shape from an older build */ }
+  }, [])
+
+  useEffect(() => {
+    // Skip the mount pass. Both effects flush in the same commit, so this one
+    // would otherwise run with the empty initial Map — after the read above had
+    // already happened but before its setSaved landed — and write the store
+    // back as empty. Hydration re-renders, and that second pass persists.
+    if (savedFirstWrite.current) { savedFirstWrite.current = false; return }
+    try {
+      localStorage.setItem('discern.v2.saved', JSON.stringify(Array.from(saved.values())))
+    } catch { /* nothing worth breaking a save over */ }
+  }, [saved])
 
   // Escape closes the topmost open layer. Every one of these inerts the rest of
   // the page while it is up, so without this the only way out is finding the
