@@ -787,8 +787,6 @@ export default function DiscernV2({
             and the name of the thing. */}
         <div className="v2-head-gap" />
         <div className="v2-brand">
-          <svg width="22" height="22" viewBox="0 0 40 40" fill="none" strokeLinecap="round" strokeLinejoin="round" stroke="currentColor" strokeWidth="2.08" aria-hidden>
-            <path d="M20 5l9 7v16l-9 7-9-7V12z" /><path d="M20 12l4 3v10l-4 3-4-3V15z" /></svg>
           <span>DISCERN</span>
           <i>BETA</i>
         </div>
@@ -1160,9 +1158,6 @@ export default function DiscernV2({
             fixed destinations, then everything you have asked, then sign-out at
             the base. */}
         <div className="v2-menu-top">
-          <svg width="20" height="20" viewBox="0 0 40 40" fill="none" strokeLinecap="round"
-            strokeLinejoin="round" stroke="currentColor" strokeWidth="2.08" aria-hidden>
-            <path d="M20 5l9 7v16l-9 7-9-7V12z" /><path d="M20 12l4 3v10l-4 3-4-3V15z" /></svg>
           <button className="v2-avatar" aria-label={authStatus === 'authenticated' ? 'Account' : 'Sign in'}
             tabIndex={menuOpen ? 0 : -1}
             onClick={() => { setMenuOpen(false); if (authStatus !== 'authenticated') requireAccount('save', artwork[0]) }}>
@@ -1470,15 +1465,17 @@ export default function DiscernV2({
            icons leave, which is the only way it holds when the menu button
            grows a label on a wide screen. */
         .v2-brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-          display:flex;align-items:center;gap:7px;pointer-events:none;}
-        .v2-brand svg{display:block;}
+          display:flex;align-items:center;pointer-events:none;}
         .v2-head-gap{flex:1;}
         .v2-newbtn{transition:opacity .25s ${V2.ease},transform .25s ${V2.ease};}
         .v2-newbtn.gone{opacity:0;pointer-events:none;transform:scale(.85);}
         .v2-brand span{font-family:${V2.display};font-size:12px;letter-spacing:.34em;text-indent:.34em;
           white-space:nowrap;line-height:1;}
+        /* The rule needs air on both sides. The wordmark's trailing letter-space
+           is not enough on its own — without a margin the divider sits against
+           the N and reads as another letter. */
         .v2-brand i{font-style:normal;font-size:8px;letter-spacing:.18em;text-indent:.18em;opacity:.55;
-          line-height:1;padding-left:7px;border-left:1px solid currentColor;align-self:center;}
+          line-height:1;margin-left:11px;padding-left:11px;border-left:1px solid currentColor;align-self:center;}
         .v2-dot{position:absolute;top:6px;right:5px;width:5px;height:5px;border-radius:50%;background:currentColor;}
 
         /* ── A spread: one exchange, answer then evidence ─────────────────── */
@@ -1753,7 +1750,7 @@ export default function DiscernV2({
           transition:transform .34s cubic-bezier(.32,.72,0,1);}
         .v2-menu.on{transform:translateX(0);pointer-events:auto;}
                 .v2-eyebrow-s{font-size:11px;font-weight:500;opacity:.42;letter-spacing:.04em;padding-left:6px;}
-        .v2-menu-top{display:flex;align-items:center;justify-content:space-between;padding:0 6px;}
+        .v2-menu-top{display:flex;align-items:center;justify-content:flex-end;padding:0 6px;}
         .v2-avatar{width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;color:#fff;
           background:rgba(255,255,255,.12);font-family:${V2.sans};font-size:14px;font-weight:500;}
