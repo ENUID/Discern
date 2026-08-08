@@ -156,16 +156,21 @@ function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: Re
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function DiscernV2({
-  heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onFeatured,
+  heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onFeatured, onSearched, onSavedChange,
 }: {
   heroMedia?: string; heroPoster?: string
-  onQuery?: (q: string, history: V2Msg[]) => Promise<{
+  onQuery?: (q: string, history: V2Msg[], images: string[]) => Promise<{
     sections: V2Section[]; look?: V2Product[]
     answer?: string; didSearch?: boolean; light?: boolean
   }>
   /** Real catalogue imagery for the three hero cards. Supplying this is what
    *  keeps the opening screen from depending on hand-placed jpgs. */
   onFeatured?: () => Promise<string[]>
+  /** Every question asked, so the layer above can feed them back as taste. */
+  onSearched?: (q: string) => void
+  /** The saved list, mirrored up for the same reason: what someone keeps is
+   *  the strongest free signal of what they like. */
+  onSavedChange?: (saved: V2Product[]) => void
 }) {
   const [view, setView] = useState<View>('home')
   const [input, setInput] = useState('')
@@ -283,6 +288,8 @@ export default function DiscernV2({
       localStorage.setItem('discern.v2.saved', JSON.stringify(Array.from(saved.values())))
     } catch { /* nothing worth breaking a save over */ }
   }, [saved])
+
+  useEffect(() => { onSavedChange?.(Array.from(saved.values())) }, [saved, onSavedChange])
 
   // Escape closes the topmost open layer. Every one of these inerts the rest of
   // the page while it is up, so without this the only way out is finding the
@@ -457,16 +464,35 @@ export default function DiscernV2({
     })
   }, [saved, requireAccount])
 
-  /** Attached photos become object URLs for the strip; they are revoked when
-   *  cleared so a long session does not leak them. */
+  /** Attached photos are compressed to 768px JPEG data URLs, the same pipeline
+   *  the chat UI used. They were object URLs before, which render fine in the
+   *  strip and mean nothing to a server — a `blob:` handle is private to this
+   *  document, so the photos were only ever decorative. The vision model needs
+   *  the bytes, so it gets them inline. */
   const addPhotos = useCallback((files: FileList | null) => {
     if (!files?.length) return
-    const urls = Array.from(files).slice(0, 4).map(f => URL.createObjectURL(f))
-    setPhotos(p => [...p, ...urls].slice(0, 4))
+    Array.from(files).slice(0, 4).forEach(file => {
+      const reader = new FileReader()
+      reader.onload = ev => {
+        const src = ev.target?.result
+        if (typeof src !== 'string') return
+        const im = new window.Image()
+        im.onload = () => {
+          const MAX = 768
+          const ratio = Math.min(MAX / im.width, MAX / im.height, 1)
+          const canvas = document.createElement('canvas')
+          canvas.width = Math.round(im.width * ratio)
+          canvas.height = Math.round(im.height * ratio)
+          canvas.getContext('2d')?.drawImage(im, 0, 0, canvas.width, canvas.height)
+          setPhotos(p => p.length < 4 ? [...p, canvas.toDataURL('image/jpeg', 0.82)] : p)
+        }
+        im.src = src
+      }
+      reader.readAsDataURL(file)
+    })
   }, [])
   const dropPhoto = useCallback((url: string) => {
     setPhotos(p => p.filter(u => u !== url))
-    URL.revokeObjectURL(url)
   }, [])
 
   const run = useCallback(async (q: string) => {
@@ -482,9 +508,13 @@ export default function DiscernV2({
       { role: 'user' as const, content: t.question },
       ...(t.answer ? [{ role: 'assistant' as const, content: t.answer }] : []),
     ]))
+    // Captured before the await so a photo added mid-flight belongs to the next
+    // turn, not this one — and so the strip can clear on completion regardless.
+    const sentPhotos = photos
+    onSearched?.(question)
     try {
       const res = onQuery
-        ? await onQuery(question, history)
+        ? await onQuery(question, history, sentPhotos)
         : { sections: [], look: undefined, answer: undefined, didSearch: false, light: false }
       const sections = res.sections ?? []
 
@@ -517,11 +547,14 @@ export default function DiscernV2({
       // committed to it. (It previously never cleared at all, which is what let
       // a second question concatenate onto the first.)
       setInput('')
+      // The attached photos belonged to this question; leaving them in the bar
+      // silently re-sent them with every follow-up.
+      if (sentPhotos.length) setPhotos(p => p.filter(u => !sentPhotos.includes(u)))
       setView('results')
       scrollRef.current?.scrollTo({ top: 0 })
       setLoading(false)
     }
-  }, [loading, onQuery, turns])
+  }, [loading, onQuery, onSearched, photos, turns])
 
   // Browsing entries genuinely are searches. The rest are destinations, and
   // used to be searches for their own label.
@@ -1147,16 +1180,6 @@ export default function DiscernV2({
         </div>
       )}
 
-      {/* Legal line — the reference parks it at the very bottom of the window,
-          under the bar: centred and stacked on a phone, split to the two
-          corners on a wide screen. */}
-      {view === 'home' && (
-        <div className={`v2-foot ${focused ? 'off' : ''}`}>
-          <span>© 2026 Discern</span>
-          <span>Early access</span>
-        </div>
-      )}
-
       <style jsx global>{`
         :root{--bar:96px;}
         .v2-root{position:fixed;inset:0;background:${V2.bone};color:${V2.ink};font-family:${V2.sans};overflow:hidden;}
@@ -1274,11 +1297,6 @@ export default function DiscernV2({
         .v2-hero-copy h1 span{display:block;}
         .v2-hero-copy p{font-size:14px;font-weight:400;margin:0;opacity:.93;}
         /* Below the bar, hard against the bottom of the window. */
-        .v2-foot{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 5px);z-index:51;
-          display:flex;flex-direction:column;gap:2px;align-items:center;color:rgba(255,255,255,.5);
-          font-size:10.5px;text-align:center;padding:0 16px;pointer-events:none;
-          transition:opacity .3s ${V2.ease};}
-        .v2-foot.off{opacity:0;}
         .v2-hero2,.v2-hero3{justify-content:flex-end;}
         .v2-hero3{padding-bottom:calc(var(--bar) + 20px);}
         .v2-hero2 .v2-hero-copy{margin-bottom:auto;margin-top:auto;}
@@ -1536,7 +1554,12 @@ export default function DiscernV2({
         .v2-bar-wrap{position:absolute;z-index:50;left:0;right:0;
           padding:14px clamp(12px,3.6vw,18px) calc(env(safe-area-inset-bottom,0px) + 16px);pointer-events:none;}
         .v2-bar-wrap>*{pointer-events:auto;}
-        .v2-bar{display:flex;align-items:flex-end;gap:8px;padding:7px 7px 7px 9px;width:100%;
+        /* flex-wrap matters: the attached-photo strip is width:100% with
+           order:-1, which only becomes a row of its own in a wrapping
+           container. Without it the strip stayed on the single line and
+           squeezed the field to nothing — attaching a photo broke the
+           composer. */
+        .v2-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;padding:7px 7px 7px 9px;width:100%;
           max-width:min(680px,96vw);margin:0 auto;border-radius:30px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%);
           box-shadow:0 10px 40px rgba(0,0,0,.26),inset 0 1px 0 ${V2.glassEdge};transition:background .3s ${V2.ease};}
@@ -1681,8 +1704,6 @@ export default function DiscernV2({
           .v2-cards{gap:16px;margin-top:126px;}
           .v2-card{width:172px;}
           .v2-card.c1{width:206px;}
-          /* Legal lines sit in opposite corners, not stacked centre */
-          .v2-foot{flex-direction:row;justify-content:space-between;padding:0 26px;bottom:14px;font-size:9.5px;}
           .v2-cards-nav{display:block;}
 
           /* Results: editorial line + horizontal carousel of full-height cards */

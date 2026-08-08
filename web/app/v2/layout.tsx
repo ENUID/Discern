@@ -1,19 +1,17 @@
 import type { Metadata } from 'next'
 
 /**
- * /v2 is an unfinished preview of the next interface. It shares a deployment
- * with the live app, so anyone holding the URL can open it — that's fine and
- * intended for review, but it must never be indexed or previewed as if it were
- * the product. The page itself is a client component and cannot export
- * metadata, hence this layout.
+ * /v2 is now an alias of /, kept so links handed out while this was the preview
+ * route still land somewhere. It stays noindex for the opposite reason it used
+ * to: not because it is unfinished, but because it serves the same page as the
+ * canonical route and should not compete with it as duplicate content.
  */
 export const metadata: Metadata = {
-  title: 'Discern — preview',
+  alternates: { canonical: '/' },
   robots: {
     index: false,
-    follow: false,
-    nocache: true,
-    googleBot: { index: false, follow: false, noimageindex: true },
+    follow: true,
+    googleBot: { index: false, follow: true },
   },
 }
 
