@@ -25,7 +25,13 @@ import { useEffect, useRef, useState } from 'react'
 import { signIn } from 'next-auth/react'
 import { V2 } from './theme'
 
-export type V2AuthReason = 'save' | 'bag' | 'orders' | 'account' | null
+export type V2AuthReason = 'save' | 'bag' | 'orders' | 'account' | 'checkout' | null
+
+/** Checkout is the one ask that cannot be waved away. Everywhere else an account
+ *  is a convenience and the sheet is a suggestion; here the order cannot be
+ *  placed or traced without one, so a dismissed sheet would just be a dead
+ *  button. Escape and the scrim are both inert for it. */
+export const isMandatory = (r?: V2AuthReason) => r === 'checkout'
 
 const LEN = 6
 
@@ -76,11 +82,10 @@ function OtpBoxes({ value, onChange, autoFocus }: { value: string; onChange: (v:
 }
 
 export default function V2Auth({
-  open, onClose, onSignedIn,
+  open, reason, onClose, onSignedIn,
 }: {
   open: boolean
   reason?: V2AuthReason
-  image?: string
   onClose: () => void
   onSignedIn?: () => void
 }) {
@@ -105,10 +110,10 @@ export default function V2Auth({
 
   useEffect(() => {
     if (!open) return
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !isMandatory(reason)) onClose() }
     window.addEventListener('keydown', esc)
     return () => window.removeEventListener('keydown', esc)
-  }, [open, onClose])
+  }, [open, onClose, reason])
 
   const send = async () => {
     if (!email.trim() || sending) return
@@ -128,9 +133,11 @@ export default function V2Auth({
 
   return (
     <>
-      <div className="v2a-outer" onClick={onClose}>
+      <div className="v2a-outer" onClick={() => { if (!isMandatory(reason)) onClose() }}>
         <div className="v2a-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Sign in">
-          <div className="v2a-handle" />
+          {/* The handle is a drag-to-dismiss affordance. Mandatory sheets do not
+              dismiss, so showing one would promise a gesture that does nothing. */}
+          {!isMandatory(reason) && <div className="v2a-handle" />}
 
           <div className="v2a-logo">DISCERN</div>
 
@@ -138,7 +145,9 @@ export default function V2Auth({
           <div className="v2a-sub">
             {step === 'code'
               ? 'Enter the code we sent to your email.'
-              : 'Stop comparing tabs.\nStart understanding fashion.'}
+              : isMandatory(reason)
+                ? 'Your order is placed on the brand’s own site.\nAn account is how you keep track of it.'
+                : 'Stop comparing tabs.\nStart understanding fashion.'}
           </div>
 
           {step === 'email' && (

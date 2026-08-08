@@ -27,6 +27,7 @@ import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, EditIcon, ExternalLinkIco
 import { useSession, signOut } from 'next-auth/react'
 import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING, V2_HERO_COPY } from './theme'
 import V2Auth, { type V2AuthReason } from './V2Auth'
+import { buildCartLinks } from './cartLink'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export type V2Color = { name: string; code?: string; image: string; available?: boolean }
@@ -224,15 +225,16 @@ export default function DiscernV2({
   const [photos, setPhotos] = useState<string[]>([])
   const { status: authStatus, data: session } = useSession()
   const [authReason, setAuthReason] = useState<V2AuthReason>(null)
-  /** The piece that triggered the ask. The sheet leads with its picture, and
-   *  its two lines of copy refer to it — that is what stops the moment being a
-   *  generic form. */
-  const [authShot, setAuthShot] = useState<string | undefined>()
   /** Ask for an account only at the moment one is genuinely needed. Returns
-   *  false when the caller should stop. */
-  const requireAccount = useCallback((why: Exclude<V2AuthReason, null>, shot?: string) => {
+   *  false when the caller should stop.
+   *
+   *  It used to carry the picture of the piece that triggered the ask, for a
+   *  sheet that led with it. That sheet was replaced by the chat UI's card,
+   *  which has no picture — so the argument, and the state behind it, had been
+   *  dead ever since. */
+  const requireAccount = useCallback((why: Exclude<V2AuthReason, null>) => {
     if (authStatus === 'authenticated') return true
-    setAuthShot(shot); setAuthReason(why)
+    setAuthReason(why)
     return false
   }, [authStatus])
   const [menuOpen, setMenuOpen] = useState(false)
@@ -358,57 +360,19 @@ export default function DiscernV2({
   // stores are surfaced as real links the shopper can click themselves.
   const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return u } }
 
-  /** The variant the shopper actually chose, matched the way the chat UI matched
-   *  it: both options when both are on offer, else whichever one is, else the
-   *  first. Returning the first is deliberate — a store with a single variant
-   *  lists no options at all, and that variant is still the right one. */
-  const variantFor = (p: V2Product, size?: string, color?: string) => {
-    const vs = p.variants
-    if (!vs?.length) return undefined
-    const has = (label?: string) => (v: { options?: Array<{ label?: string }> }) =>
-      (v.options ?? []).some(o => o.label === label)
-    const wantSize = size && p.sizes?.length
-    const wantColor = color && p.colors?.length
-    if (wantSize && wantColor) {
-      return vs.find(v => has(size)(v) && has(color)(v)) ?? vs.find(has(size)) ?? vs[0]
-    }
-    if (wantSize) return vs.find(has(size)) ?? vs[0]
-    if (wantColor) return vs.find(has(color)) ?? vs[0]
-    return vs[0]
-  }
-
-  /** Checkout hands the store a cart link, not a product page.
-   *
-   *  Shopify reads /cart/<variantId>:<qty> and drops the shopper straight into
-   *  its checkout with that exact variant already in the basket. Opening
-   *  store_url instead — which is what this did — meant arriving on the product
-   *  page and choosing the size over again, having just chosen it here. Lines
-   *  from the same store are combined into one link, so a two-piece order from
-   *  one brand is one checkout rather than two.
-   *
-   *  Falls back to the product page whenever a variant id is missing, because a
-   *  malformed cart link is a store error page, and the product page at least
-   *  works.
-   */
-  const payLinks = useMemo(() => {
-    const byHost = new Map<string, { url: string; parts: string[]; fallback: string }>()
-    for (const line of cart) {
-      const store = line.product.storeUrl
-      if (!store) continue
-      let origin: string
-      try { origin = new URL(store).origin } catch { continue }
-      const entry = byHost.get(origin) ?? { url: origin, parts: [], fallback: store }
-      const v = variantFor(line.product, line.size, line.color)
-      const id = v?.id ? String(v.id).split('/').pop() : undefined
-      if (id) entry.parts.push(`${id}:${Math.max(1, line.qty)}`)
-      byHost.set(origin, entry)
-    }
-    return Array.from(byHost.values()).map(e =>
-      e.parts.length ? `${e.url}/cart/${e.parts.join(',')}` : e.fallback)
-  }, [cart])
+  /** One cart link per store, built from what the shopper picked. The matching
+   *  and grouping rules live in ./cartLink, tested directly — they decide where
+   *  someone's money goes and should not need a browser to verify. */
+  const payLinks = useMemo(() => buildCartLinks(cart), [cart])
 
   const checkout = useCallback(() => {
     if (!cart.length) return
+    // An account before the handoff: past this point the order lives on the
+    // brand's site, and without one there is no way to tell the shopper what
+    // they bought or where it went. The sheet this raises cannot be dismissed —
+    // see isMandatory in V2Auth — because a checkout you can wave away is just
+    // a button that does nothing.
+    if (!requireAccount('checkout')) return
     if (!payLinks.length) { setBlockedStores([]); return }
     const blocked: string[] = []
     payLinks.forEach((url, i) => {
@@ -424,7 +388,7 @@ export default function DiscernV2({
       if (i === 0) w.focus?.()
     })
     setBlockedStores(blocked)
-  }, [cart, payLinks])
+  }, [cart, payLinks, requireAccount])
 
   // DETAILS reads as a short list of construction facts, one per line — split
   // whatever the catalog gives us on the separators it actually uses.
@@ -549,7 +513,7 @@ export default function DiscernV2({
   // asks for one; un-saving never does.
   const toggleSave = useCallback((p: V2Product) => {
     const already = saved.has(p.id)
-    if (!already && !requireAccount('save', p.image)) return
+    if (!already && !requireAccount('save')) return
     setSaved(prev => {
       const n = new Map(prev)
       if (already) n.delete(p.id); else n.set(p.id, p)
@@ -670,15 +634,16 @@ export default function DiscernV2({
    *  Explore and Brand Collections are not here either; both were coming-soon
    *  toasts, and a menu is a promise that a thing exists. */
   const MENU = [
-    { label: 'Explore', icon: <SparkleIcon size={16} />, count: 0,
-      go: () => run('what should I be looking at right now') },
-    { label: 'Brand Collections', icon: <TagIcon size={16} />, count: 0,
-      go: () => run('show me the brands you carry') },
-    { label: 'Saved', icon: <HeartIcon size={16} />, count: saved.size,
-      go: () => { if (requireAccount('save', turns[0]?.sections?.[0]?.hero?.image ?? artwork[0])) setSavedOpen(true) } },
-    { label: 'Bag', icon: <BagIcon size={16} />, count: cartCount,
+    // Neither of these is built. They are listed because they are coming, and
+    // marked so nobody taps twice waiting for something to happen — the chat UI
+    // popped a toast instead, which said the same thing and then vanished.
+    { label: 'Explore', icon: <SparkleIcon size={16} />, count: 0, soon: true, go: () => {} },
+    { label: 'Brands',  icon: <TagIcon size={16} />,     count: 0, soon: true, go: () => {} },
+    { label: 'Saved', icon: <HeartIcon size={16} />, count: saved.size, soon: false,
+      go: () => { if (requireAccount('save')) setSavedOpen(true) } },
+    { label: 'Bag', icon: <BagIcon size={16} />, count: cartCount, soon: false,
       go: () => setBagOpen(true) },
-    { label: 'History', icon: <HistoryIcon size={16} />, count: 0,
+    { label: 'History', icon: <HistoryIcon size={16} />, count: 0, soon: false,
       go: () => setHistOpen(true) },
   ]
 
@@ -1164,7 +1129,7 @@ export default function DiscernV2({
           <img className="v2-menu-logo" src="/favicon.png" alt="Discern" width={34} height={34} />
           <button className="v2-avatar" aria-label={authStatus === 'authenticated' ? 'Account' : 'Sign in'}
             tabIndex={menuOpen ? 0 : -1}
-            onClick={() => { setMenuOpen(false); if (authStatus !== 'authenticated') requireAccount('save', artwork[0]) }}>
+            onClick={() => { setMenuOpen(false); if (authStatus !== 'authenticated') requireAccount('save') }}>
             {initial ? <span>{initial}</span> : <UserIcon size={15} />}
           </button>
         </div>
@@ -1178,10 +1143,12 @@ export default function DiscernV2({
         <ul className="v2-menu-nav">
           {MENU.map(m => (
             <li key={m.label}>
-              <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); m.go() }}>
+              <button className={m.soon ? 'soon' : ''} tabIndex={menuOpen ? 0 : -1}
+                aria-disabled={m.soon || undefined}
+                onClick={() => { if (m.soon) return; setMenuOpen(false); m.go() }}>
                 {m.icon}
                 {m.label}
-                {m.count ? <em>{m.count}</em> : null}
+                {m.soon ? <em className="soon">Soon</em> : m.count ? <em>{m.count}</em> : null}
               </button>
             </li>
           ))}
@@ -1287,7 +1254,6 @@ export default function DiscernV2({
       <V2Auth
         open={authReason !== null}
         reason={authReason}
-        image={authShot}
         onClose={() => setAuthReason(null)}
       />
 
@@ -1776,6 +1742,12 @@ export default function DiscernV2({
         ul.v2-menu-nav li button:hover{background:rgba(255,255,255,.08);opacity:1;}
         ul.v2-menu-nav li button em{margin-left:auto;font-style:normal;font-size:11px;font-weight:500;
           background:rgba(255,255,255,.14);border-radius:20px;padding:2px 8px;}
+        /* Listed, not live. Dimmed so the row reads as an announcement rather
+           than a control, and the tag says when. */
+        ul.v2-menu-nav li button.soon{opacity:.45;cursor:default;}
+        ul.v2-menu-nav li button.soon:hover{background:none;}
+        ul.v2-menu-nav li button em.soon{background:none;border:1px solid rgba(255,255,255,.28);
+          font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;}
         .v2-menu-empty{margin:0;font-size:13px;opacity:.45;}
         /* Recents: the row is the query, its controls sit at the end and only
            come up on hover or focus, so the list reads as a list of questions
