@@ -224,9 +224,8 @@ export default function DiscernV2({
   const [cart, setCart] = useState<V2CartLine[]>([])
   const [bagOpen, setBagOpen] = useState(false)
   const [blockedStores, setBlockedStores] = useState<string[]>([])
-  const [cardSeed, setCardSeed] = useState(0)
-  /** Which scroll-step the hero trio last advanced on. */
-  const scrollStep = useRef(0)
+  /** Catalogue imagery. It fed the hero trio; with that gone it survives as the
+   *  picture the sign-in sheet leads with when the ask isn't tied to a piece. */
   const [artwork, setArtwork] = useState<string[]>([])
   const [headHidden, setHeadHidden] = useState(false)
 
@@ -405,17 +404,6 @@ export default function DiscernV2({
     if (Math.abs(dy) > 6) {
       setHeadHidden(y > 90 && dy > 0)
       lastY.current = y
-    }
-    // The three hero cards walk through the catalogue as you scroll, so the
-    // opening screen keeps showing new pieces instead of the same three. One
-    // step per 55% of a viewport: slow enough that a flick does not strobe
-    // through the whole feed, quick enough that the first pull already turns
-    // the set over. The arrows still work and simply add to the same seed.
-    const step = Math.floor(y / (window.innerHeight * 0.55))
-    if (step !== scrollStep.current) {
-      const delta = step - scrollStep.current
-      scrollStep.current = step
-      setCardSeed(n => n + delta)
     }
   }, [])
 
@@ -698,22 +686,13 @@ export default function DiscernV2({
                 {heroIsVideo ? <video src={heroMedia} poster={heroPoster} autoPlay muted loop playsInline /> : <Img src={heroMedia} />}
                 <div className="v2-veil" />
               </div>
-              {/* Three cards, unequal, the middle one tallest — and on a wide
-                  screen a pair of arrows sits either side of the trio. */}
-              <div className="v2-cards">
-                <button className="v2-cards-nav prev" aria-label="Previous" onClick={() => setCardSeed(n => n - 1)}>‹</button>
-                {[0, 1, 2].map(i => (
-                  <figure key={i} className={`v2-card c${i}`}>
-                    <Img src={artwork.length
-                      ? artwork[(((cardSeed + i) % artwork.length) + artwork.length) % artwork.length]
-                      : `/v2/card-${((cardSeed + i) % 3 + 3) % 3 + 1}.jpg`} />
-                  </figure>
-                ))}
-                <button className="v2-cards-nav next" aria-label="Next" onClick={() => setCardSeed(n => n + 1)}>›</button>
-              </div>
+              {/* The card trio that used to sit here is gone. Its art came from
+                  the featured feed, so before that resolved — and whenever it
+                  returned nothing — three blank plates covered the film and the
+                  headline. The film is the opening image. */}
               <div className="v2-hero-copy">
                 <h1><span>Know what</span> <span>to buy.</span></h1>
-                <p>Describe what you want. Get an answer, not a list.</p>
+                <p>Stop comparing tabs. Start understanding fashion.</p>
               </div>
             </section>
 
@@ -1254,11 +1233,11 @@ export default function DiscernV2({
         /* Same trick, everywhere else it was owed. Each of these draws smaller
            than 44px on purpose; only the hit area grows, so nothing on screen
            moves. Square targets get a centred 44x44 box, wide-but-short ones
-           only need the height stretched. .v2-cards-nav and .v2-hint are already
-           absolutely positioned, so they establish the containing block
-           themselves and must not be reset to relative. */
+           only need the height stretched. .v2-hint is already absolutely
+           positioned, so it establishes the containing block itself and must
+           not be reset to relative. */
         .v2-send,.v2-inspire-cta,.v2-sug{position:relative;}
-        .v2-send::before,.v2-cards-nav::before{content:'';position:absolute;left:50%;top:50%;
+        .v2-send::before{content:'';position:absolute;left:50%;top:50%;
           width:44px;height:44px;transform:translate(-50%,-50%);}
         .v2-inspire-cta::before,.v2-hint::before,.v2-sug::before{content:'';position:absolute;
            left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
@@ -1324,28 +1303,6 @@ export default function DiscernV2({
         .v2-hero-media{position:absolute;inset:0;overflow:hidden;}
         .v2-hero-media img,.v2-hero-media video{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-veil{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(20,17,14,.44) 0%,rgba(20,17,14,.1) 30%,rgba(20,17,14,.56) 76%,rgba(20,17,14,.74) 100%);}
-        .v2-cards{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;gap:9px;
-          padding:0 14px;margin:0 0 30px;}
-        /* 9/16, not 3/4. The reference's cards are near twice as tall as they
-           are wide — a fashion plate, the full figure standing in it. At 3/4
-           they cropped to head-and-shoulders and read as squat thumbnails. */
-        .v2-card{margin:0;width:29%;aspect-ratio:9/16;overflow:hidden;flex-shrink:0;
-          box-shadow:0 18px 44px rgba(0,0,0,.36);animation:v2-float 7s ease-in-out infinite;}
-        .v2-card img{width:100%;height:100%;object-fit:cover;display:block;animation:v2-swap 12s ease-in-out infinite;}
-        /* The outer two mirror each other exactly. They were -1.5deg/+1.7deg at
-           14px/18px, so the right card leaned 0.2deg further and sat 4px lower
-           than the left — a lopsided fan reads as a mistake rather than as a
-           casual stack, because the eye checks a symmetric arrangement against
-           its own centre line. The float animation below still offsets their
-           phase, which is what keeps the deck from looking mechanical. */
-        .v2-card.c0{transform:translateY(16px) rotate(-1.6deg);animation-delay:-1.2s;}
-        .v2-card.c0 img{animation-delay:-8s;}
-        .v2-card.c1{width:37%;z-index:2;transform:translateY(-12px);}
-        .v2-card.c1 img{animation-delay:-4s;}
-        .v2-card.c2{transform:translateY(16px) rotate(1.6deg);animation-delay:-3.6s;}
-        @keyframes v2-float{0%,100%{translate:0 0}50%{translate:0 -7px}}
-        @keyframes v2-swap{0%,88%{opacity:1}94%{opacity:.35}100%{opacity:1}}
-        @media(prefers-reduced-motion:reduce){.v2-card,.v2-card img{animation:none}}
         .v2-hero-copy{position:relative;z-index:2;text-align:center;color:#fff;padding:0 22px;}
         .v2-hero-copy h1{font-family:${V2.display};font-weight:600;font-size:clamp(34px,9.4vw,50px);line-height:1.05;letter-spacing:-.035em;
           margin:0 0 12px;text-shadow:0 2px 26px rgba(0,0,0,.42);}
@@ -1362,14 +1319,6 @@ export default function DiscernV2({
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};transition:background .22s ${V2.ease};}
         .v2-inspire-cta:hover{background:rgba(255,255,255,.18);}
-        /* Arrows either side of the hero trio — wide screens only. */
-        .v2-cards-nav{display:none;position:absolute;top:50%;translate:0 -50%;z-index:3;
-          width:34px;height:34px;border:none;border-radius:50%;cursor:pointer;color:#fff;font-size:17px;
-          background:rgba(255,255,255,.12);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-          transition:background .2s ${V2.ease};}
-        .v2-cards-nav:hover{background:rgba(255,255,255,.24);}
-        .v2-cards-nav.prev{left:calc(50% - 340px);}
-        .v2-cards-nav.next{right:calc(50% - 340px);}
         .v2-sugs{position:relative;z-index:2;display:flex;flex-direction:column;gap:9px;padding:22px 14px 0;}
         .v2-sug{text-align:left;padding:13px 18px;border:none;border-radius:999px;cursor:pointer;color:#fff;
           font-size:13.5px;font-weight:400;background:${V2.glassDark};
@@ -1727,7 +1676,7 @@ export default function DiscernV2({
           background:
             repeating-linear-gradient(135deg,rgba(255,255,255,.03) 0 2px,transparent 2px 10px),
             linear-gradient(165deg,#3B3833 0%,#2A2724 48%,#1E1C1A 100%);}
-        .v2-card .v2-img-ph,.v2-shot .v2-img-ph,.v2-tile-btn .v2-img-ph{aspect-ratio:3/4;}
+        .v2-shot .v2-img-ph,.v2-tile-btn .v2-img-ph{aspect-ratio:3/4;}
         .v2-pdp-img.v2-img-ph{aspect-ratio:3/4;}
         .v2-cart-thumb.v2-img-ph{width:56px;height:72px;border-radius:8px;}
 
@@ -1768,10 +1717,6 @@ export default function DiscernV2({
           .v2-hero-copy h1{font-size:clamp(44px,4.4vw,64px);line-height:1.04;}
           .v2-hero-copy h1 span{display:inline;}
           .v2-hero-copy p{font-size:15px;}
-          .v2-cards{gap:16px;margin-top:126px;}
-          .v2-card{width:172px;}
-          .v2-card.c1{width:206px;}
-          .v2-cards-nav{display:block;}
 
           /* Results: editorial line + horizontal carousel of full-height cards */
           .v2-sec{padding-top:clamp(80px,7vw,120px);}
