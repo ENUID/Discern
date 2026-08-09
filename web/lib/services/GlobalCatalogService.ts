@@ -21,6 +21,7 @@ import { rerankByRelevance } from './relevanceRerank'
 import { matchStyles, styleRecallSignals } from '../styleVocabulary'
 import { recordBrandOutcome, deprioritizeDead } from './brandHealth'
 import { readPersistentCache, writePersistentCache } from './persistentSearchCache'
+import { retrievalQueries } from '../fashion/outfitKnowledge'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -967,9 +968,22 @@ export class GlobalCatalogService {
         budgetMax, budgetCurrency: bcur, excludeIds, sort, limit, rates,
         concepts: mandatoryConcepts, perVendorCap,
       })
-      if (current.length < 5) {
+      // An occasion query is thin at a much higher count than a garment query,
+      // because everything it did retrieve came from three words that name no
+      // garment. Five was the right floor for "navy linen shirt" and far too
+      // low for "what do I wear to an interview", where a pool of twelve
+      // near-misses looks healthy and answers nothing.
+      const occasionLed = retrievalQueries((rerankQuery && rerankQuery.trim()) || rawQuery).length > 0
+      if (current.length < (occasionLed ? 14 : 5)) {
         entry.broadened = true
         const recallQueries: string[] = []
+
+        // (0) The occasion's own nouns. This runs first because it is the only
+        // source here that can add a garment the shopper never named — the
+        // others rewrite what was already asked for.
+        for (const q of retrievalQueries((rerankQuery && rerankQuery.trim()) || rawQuery)) {
+          if (!recallQueries.includes(q)) recallQueries.push(q)
+        }
 
         // (a) Garment broadening — drop modifiers, keep the bare item type.
         if (storeQuery.includes(' ')) {

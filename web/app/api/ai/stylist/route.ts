@@ -7,6 +7,7 @@ import { matchStyles, vocabPromptBlock } from '@/lib/styleVocabulary'
 import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/stores'
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
+import { outfitPlan } from '@/lib/fashion/outfitKnowledge'
 import { cerebrasChat, cerebrasVisionChat, CEREBRAS_VISION_CONFIGURED } from '@/lib/cerebras'
 import { nvidiaChat, nvidiaVisionChat, NVIDIA_CONFIGURED } from '@/lib/nvidia'
 import { ConvexHttpClient } from 'convex/browser'
@@ -221,6 +222,8 @@ async function multiCategorySearch(
   // nudge the bottoms strip. Resolved per subQuery from its own garment slot.
   sizeForQuery: (q: string) => string | null,
   onProgress?: CatalogProgress,
+  /** The shopper's stated gender, so an occasion resolves to the right slots. */
+  shopperGender?: string | null,
 ): Promise<{ label: string; products: any[]; query: string }[] | null> {
   const decomp = decomposeQuery(fullQuery)
   // One strip PER DISTINCT GARMENT the shopper named — "shirts, trousers and
@@ -228,14 +231,32 @@ async function multiCategorySearch(
   // broad slot. Compounds still collapse ("dress shirt" is one shirt), so the
   // strip count genuinely tracks the request. Fewer than two garments → single
   // search (the caller handles it).
-  const keys = separatedGarmentKeys(fullQuery)
+  const named = separatedGarmentKeys(fullQuery)
+  // Naming a situation is naming an outfit. "What do I wear to an interview"
+  // names no garment at all, so this used to fall through to one flat list of
+  // whatever "interview" retrieves — which is the shape of the complaint that
+  // every question comes back looking like a generic search. An occasion has a
+  // known set of slots; retrieving them separately is the difference between
+  // answering a quarter of the question and answering it.
+  const plan = named.length >= 2 ? null : outfitPlan(fullQuery, shopperGender)
+  const keys = named.length >= 2 ? named : (plan?.slots ?? [])
   if (keys.length < 2) return null
 
   // Each garment's subquery is the SHARED modifiers (gender, colour, material,
   // fit) + that garment's own term, built from parts rather than by stripping
   // the sentence — stripping "shirt" out of "t-shirt" is exactly the substring
   // collision that would corrupt a per-garment split.
-  const sharedBits = [decomp.gender, ...decomp.colors, ...decomp.materials, ...decomp.fits].filter(Boolean) as string[]
+  //
+  // For an occasion the shared modifier is the season's fibre rather than
+  // anything the shopper typed. "Autumn wedding" contains no retrievable noun;
+  // "wool blazer" does, and that is what actually reaches the stores.
+  const profileGender = (shopperGender || '').toLowerCase().startsWith('w') ? 'women'
+    : (shopperGender || '').toLowerCase().startsWith('m') ? 'men'
+    : undefined
+  const sharedBits = (plan
+    ? [decomp.gender ?? profileGender, plan.fabrics[0]]
+    : [decomp.gender, ...decomp.colors, ...decomp.materials, ...decomp.fits]
+  ).filter(Boolean) as string[]
   const shared = sharedBits.join(' ')
 
   const groups = await Promise.all(
@@ -1543,7 +1564,7 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
           const multiGroups = await multiCategorySearch(
             genderedQuestion, compiled.args.budgetMax, countryCode,
             compiled.args.budgetCurrency || buyerCurrency, memorySummary, sizeForQuery,
-            onSearchProgress,
+            onSearchProgress, shopperGender,
           )
           if (multiGroups) {
             const totalCount = multiGroups.reduce((sum, g) => sum + g.products.length, 0)
@@ -2002,7 +2023,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
 
         const multiGroups = await withDeadline(multiCategorySearch(
           searchQuery, llmBudget.budgetMax, countryCode, buyerCurrency,
-          memorySummary, sizeForQuery, onSearchProgress,
+          memorySummary, sizeForQuery, onSearchProgress, shopperGender,
         ), requestDeadline, null)
         if (multiGroups) {
           foundProductGroups = multiGroups
@@ -2260,7 +2281,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
         try {
           send('outfit', 'Pulling the pieces', `catalog.multi(${replyGarmentKeys.join(', ')})`)
           const groups = await withDeadline(multiCategorySearch(
-            surfaceQuery, undefined, countryCode, buyerCurrency, memorySummary, sizeForQuery, onSearchProgress,
+            surfaceQuery, undefined, countryCode, buyerCurrency, memorySummary, sizeForQuery, onSearchProgress, shopperGender,
           ), requestDeadline, null)
           if (groups && groups.length > 0) {
             foundProductGroups = groups

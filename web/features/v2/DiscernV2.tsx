@@ -1981,7 +1981,7 @@ export default function DiscernV2({
         .v2-menu-recent ul{gap:1px;}
         .v2-menu-recent li button{font-family:${V2.sans};font-size:14px;font-weight:400;letter-spacing:0;
           opacity:.82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block;}
-        .v2-menu-meta{margin-top:auto;display:flex;justify-content:flex-start;gap:18px;padding-top:16px;
+        .v2-menu-meta{margin-top:auto;display:flex;justify-content:flex-end;gap:18px;padding-top:16px;
           border-top:1px solid rgba(var(--srf-ink-rgb),.16);font-size:12px;}
         .v2-menu-meta div{display:flex;flex-direction:column;gap:5px;}
         .v2-menu-meta div:first-child{opacity:.55;}
@@ -1990,9 +1990,8 @@ export default function DiscernV2({
            here somebody reaches for while something is going wrong — but not a
            second full-width slab under New search. Solid so it reads as a
            control, compact so it does not compete with what opens the panel,
-           and left-hung on the same margin as everything above it. Still 44
-           tall: smaller is a matter of width, never of what a thumb has to
-           hit. */
+           and right-hung so it closes it. Still 44 tall: smaller is a matter of
+           width, never of what a thumb has to hit. */
         .v2-menu-meta .v2-feedback-btn{display:flex;align-items:center;justify-content:center;gap:7px;
           min-height:44px;padding:0 15px;border-radius:12px;opacity:1;border:none;
           background:var(--srf-fill);color:var(--srf-fill-ink);
