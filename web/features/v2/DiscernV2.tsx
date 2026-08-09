@@ -28,6 +28,7 @@ import { useSession, signOut } from 'next-auth/react'
 import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING, V2_HERO_COPY } from './theme'
 import V2Auth, { type V2AuthReason } from './V2Auth'
 import V2Feedback from './V2Feedback'
+import V2Profile from './V2Profile'
 import { buildCartLinks } from './cartLink'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -168,6 +169,7 @@ function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: Re
 // ── Component ────────────────────────────────────────────────────────────────
 export default function DiscernV2({
   heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onFeatured, onSearched, onSavedChange, heroCopy = 0,
+  buyerCountry,
 }: {
   heroMedia?: string; heroPoster?: string
   onQuery?: (q: string, history: V2Msg[], images: string[]) => Promise<{
@@ -184,6 +186,9 @@ export default function DiscernV2({
   onSavedChange?: (saved: V2Product[]) => void
   /** Index into V2_HERO_COPY, resolved on the server from the clock. */
   heroCopy?: number
+  /** Where the shopper is, resolved server-side from the request. Shown on the
+   *  account so the geo-scoped prices and brands are not a silent decision. */
+  buyerCountry?: string
 }) {
   const [view, setView] = useState<View>('home')
   const [input, setInput] = useState('')
@@ -1171,11 +1176,17 @@ export default function DiscernV2({
             {session?.user?.email && <div className="v2-profile-mail">{session.user.email}</div>}
 
             {authStatus === 'authenticated' ? (
-              <button className="v2-profile-act" tabIndex={menuOpen ? 0 : -1}
-                onClick={() => { setMenuOpen(false); setMenuView('nav'); signOut() }}>
-                <ExternalLinkIcon size={15} />
-                Sign out
-              </button>
+              <>
+                {/* The four facts the stylist actually uses. Nothing here could
+                    set them before, so every v2 shopper searched as a stranger
+                    while the request quietly carried empty fields. */}
+                <V2Profile country={buyerCountry} />
+                <button className="v2-profile-act" tabIndex={menuOpen ? 0 : -1}
+                  onClick={() => { setMenuOpen(false); setMenuView('nav'); signOut() }}>
+                  <ExternalLinkIcon size={15} />
+                  Sign out
+                </button>
+              </>
             ) : (
               <>
                 {/* Sizes live on the account (Convex); saved pieces live on this
