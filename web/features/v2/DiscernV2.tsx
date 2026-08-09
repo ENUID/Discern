@@ -1760,12 +1760,23 @@ export default function DiscernV2({
            nothing moves when the products arrive. It replaced a word centred in
            an empty screen, which told the shopper the app was busy and nothing
            about what was coming. */
+        /* Every number here is taken from the results page rather than chosen:
+           .v2-sec's top padding, its heading's line-height and margin,
+           .v2-sec-hero's max-width, and .v2-mosaic's own padding and gutters.
+           Measured against the real thing — same columns, same gutters, hero
+           within a couple of pixels — because a skeleton whose geometry is
+           merely similar makes the page jump at the moment it is replaced,
+           which is worse than no skeleton at all. */
         .v2-skel{position:absolute;inset:0;z-index:39;overflow:hidden;
-          padding:calc(env(safe-area-inset-top,0px) + 92px) 12px calc(var(--bar) + 60px);
+          padding:clamp(60px,15vw,100px) 0 calc(var(--bar) + 60px);
           background:${V2.bone};animation:v2-fade .2s ${V2.ease};}
-        .v2-skel-head{width:52%;max-width:220px;height:30px;margin:0 auto 20px;border-radius:12px;}
-        .v2-skel-hero{width:min(340px,86%);aspect-ratio:3/4;margin:0 auto 26px;border-radius:12px;}
-        .v2-skel-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px 12px;}
+        /* The heading plate is the h2's own clamp multiplied by its 1.1
+           line-height, and the hero sits on the h2's 8px bottom margin — so the
+           lead image lands where the real one will rather than near it. */
+        .v2-skel-head{width:52%;max-width:220px;height:clamp(29.7px,8.14vw,41.8px);
+          margin:0 auto 8px;border-radius:12px;}
+        .v2-skel-hero{width:min(420px,88vw);aspect-ratio:3/4;margin:0 auto;border-radius:12px;}
+        .v2-skel-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px 12px;padding:32px 12px 0;}
         .v2-skel-cell{display:flex;flex-direction:column;gap:10px;animation:v2-skel-in .5s ${V2.ease} backwards;}
         .v2-skel-img{width:100%;aspect-ratio:3/4;border-radius:12px;}
         .v2-skel-line{width:70%;height:12px;border-radius:999px;}
@@ -1777,9 +1788,16 @@ export default function DiscernV2({
         @keyframes v2-shimmer{from{background-position:130% 0}to{background-position:-30% 0}}
         @keyframes v2-skel-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
         @media(min-width:760px){.v2-skel-grid{grid-template-columns:repeat(3,1fr);}}
+        /* The results page changes its own padding, heading size and hero width
+           above 1024; the skeleton follows each of them. */
+        @media(min-width:1024px){
+          .v2-skel{padding-top:clamp(80px,7vw,120px);}
+          .v2-skel-head{height:clamp(37.4px,3.41vw,50.6px);}
+          .v2-skel-hero{width:min(340px,26vw);}
+        }
         @media(min-width:1180px){
           .v2-skel{padding-left:clamp(20px,3vw,44px);padding-right:clamp(20px,3vw,44px);}
-          .v2-skel-grid{grid-template-columns:repeat(4,1fr);gap:30px 20px;}
+          .v2-skel-grid{grid-template-columns:repeat(4,1fr);gap:30px 20px;padding:40px 0 0;}
         }
         @media(prefers-reduced-motion:reduce){
           .v2-skel-head,.v2-skel-hero,.v2-skel-img,.v2-skel-line{animation:none;background:${V2.boneDeep};}
