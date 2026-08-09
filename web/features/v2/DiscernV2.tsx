@@ -1105,20 +1105,33 @@ export default function DiscernV2({
         </button>
       )}
 
-      {/* Waiting has two shapes in the reference. The first search takes over
-          the screen — there is nothing behind it worth keeping. Every search
-          after that keeps your results on screen and narrates itself with a
-          small pill instead. */}
-      {loading && turns.length > 0 && (
-        <div className="v2-crafting" style={{ bottom: `calc(var(--bar) + 54px + ${kb}px)` }}>
-          <Progress light />
-          <span>{V2_LOADING[loadPhase][0]}{V2_LOADING[loadPhase][1]}</span>
+      {/* Waiting shows the shape of what is coming rather than a word in the
+          middle of an empty screen. The skeleton is the results page with its
+          pictures not yet in — heading, lead image, then the grid — so the page
+          does not jump when the real thing replaces it.
+
+          The status sits low and left, just above the composer: it is a
+          progress report, not the subject of the screen, and centring it made
+          it the thing you looked at. */}
+      {loading && (
+        <div className="v2-skel" aria-hidden>
+          <div className="v2-skel-head" />
+          <div className="v2-skel-hero" />
+          <div className="v2-skel-grid">
+            {[0, 1, 2, 3].map(i => (
+              <div className="v2-skel-cell" key={i} style={{ animationDelay: `${i * 90}ms` }}>
+                <div className="v2-skel-img" />
+                <div className="v2-skel-line" />
+              </div>
+            ))}
+          </div>
         </div>
       )}
-      {loading && turns.length === 0 && (
-        <div className="v2-loading">
-          <h2 key={loadPhase}>{V2_LOADING[loadPhase][0]}<em>{V2_LOADING[loadPhase][1]}</em></h2>
-          <Progress />
+      {loading && (
+        <div className="v2-crafting" style={{ bottom: `calc(var(--bar) + 22px + ${kb}px)` }}
+          role="status" aria-live="polite">
+          <Progress light />
+          <span>{V2_LOADING[loadPhase][0]}{V2_LOADING[loadPhase][1]}</span>
         </div>
       )}
 
@@ -1690,7 +1703,7 @@ export default function DiscernV2({
         .v2-comp{display:block;margin-bottom:8px;font-size:12px;letter-spacing:.06em;}
 
         /* The quiet, in-place "still working" note for follow-up searches. */
-        .v2-crafting{position:absolute;z-index:45;left:50%;translate:-50% 0;display:flex;align-items:center;gap:9px;
+        .v2-crafting{position:absolute;z-index:45;left:clamp(12px,3.6vw,18px);display:flex;align-items:center;gap:9px;
           padding:8px 15px;border-radius:999px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};font-size:13px;font-weight:400;white-space:nowrap;
@@ -1741,13 +1754,37 @@ export default function DiscernV2({
           background:${V2.glassDark};backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);animation:v2-fade .6s ${V2.ease};}
 
         /* Loading */
-        .v2-loading{position:absolute;left:0;right:0;top:0;bottom:calc(var(--bar) - 10px);z-index:39;
-          background:${V2.bone};display:flex;flex-direction:column;
-          align-items:center;justify-content:center;gap:26px;padding:0 24px;animation:v2-fade .35s ${V2.ease};}
-        .v2-loading h2{font-family:${V2.display};font-weight:600;font-size:clamp(24px,6.4vw,32px);letter-spacing:-.03em;margin:0;
-          animation:v2-phrase .5s ${V2.ease};}
-        @keyframes v2-phrase{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-        .v2-loading h2 em{font-style:normal;color:${V2.ink45};}
+        /* ── Waiting ────────────────────────────────────────────────────────
+           The results page with its pictures not yet in. Same geometry as the
+           real thing — the section heading, the lead image, then the grid — so
+           nothing moves when the products arrive. It replaced a word centred in
+           an empty screen, which told the shopper the app was busy and nothing
+           about what was coming. */
+        .v2-skel{position:absolute;inset:0;z-index:39;overflow:hidden;
+          padding:calc(env(safe-area-inset-top,0px) + 92px) 12px calc(var(--bar) + 60px);
+          background:${V2.bone};animation:v2-fade .2s ${V2.ease};}
+        .v2-skel-head{width:52%;max-width:220px;height:30px;margin:0 auto 20px;border-radius:12px;}
+        .v2-skel-hero{width:min(340px,86%);aspect-ratio:3/4;margin:0 auto 26px;border-radius:12px;}
+        .v2-skel-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px 12px;}
+        .v2-skel-cell{display:flex;flex-direction:column;gap:10px;animation:v2-skel-in .5s ${V2.ease} backwards;}
+        .v2-skel-img{width:100%;aspect-ratio:3/4;border-radius:12px;}
+        .v2-skel-line{width:70%;height:12px;border-radius:999px;}
+        /* One shimmer for every plate, so the whole page breathes together
+           rather than each tile pulsing on its own clock. */
+        .v2-skel-head,.v2-skel-hero,.v2-skel-img,.v2-skel-line{
+          background:linear-gradient(100deg,${V2.boneDeep} 20%,rgba(255,255,255,.85) 42%,${V2.boneDeep} 64%);
+          background-size:220% 100%;animation:v2-shimmer 1.5s linear infinite;}
+        @keyframes v2-shimmer{from{background-position:130% 0}to{background-position:-30% 0}}
+        @keyframes v2-skel-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+        @media(min-width:760px){.v2-skel-grid{grid-template-columns:repeat(3,1fr);}}
+        @media(min-width:1180px){
+          .v2-skel{padding-left:clamp(20px,3vw,44px);padding-right:clamp(20px,3vw,44px);}
+          .v2-skel-grid{grid-template-columns:repeat(4,1fr);gap:30px 20px;}
+        }
+        @media(prefers-reduced-motion:reduce){
+          .v2-skel-head,.v2-skel-hero,.v2-skel-img,.v2-skel-line{animation:none;background:${V2.boneDeep};}
+          .v2-skel-cell{animation:none}
+        }
         .v2-prog{display:block;width:132px;height:2px;border-radius:2px;overflow:hidden;
           background:rgba(26,26,28,.12);}
         .v2-prog.light{width:26px;background:rgba(255,255,255,.24);}
@@ -1941,10 +1978,10 @@ export default function DiscernV2({
            are unequal on purpose, since the control row carries its own optical
            inset. Only the dimensions came across — the glass is v2's. */
         /* ── The bar contrasts with what is behind it ──────────────────────
-           White is the resting state, because the film is what the bar spends
-           most of its life over and a dark bar on a dark picture is a hole in
-           the screen rather than a control. Over the bone paper of a results
-           page it inverts to near-black for the same reason in reverse.
+           Dark glass is the resting state and it inverts to light over the bone
+           paper of a results page. Tried the other way round — white at rest —
+           and it was worse in both places: heavy over the film, and on a
+           results page a white bar on bone is a control you have to hunt for.
 
            Both states are the same pane: same radius, same blur, same three
            insets — a hairline all the way round, a brighter line along the top
@@ -1957,43 +1994,43 @@ export default function DiscernV2({
            the dark state does the opposite. */
         .v2-bar{display:flex;flex-direction:column;gap:10px;padding:18px 16px 10px;width:100%;
           max-width:min(820px,96vw);margin:0 auto;border-radius:24px;
-          color:${V2.ink};background:rgba(250,249,247,.82);
+          color:#fff;background:rgba(28,27,26,.82);
           backdrop-filter:blur(26px) saturate(160%);-webkit-backdrop-filter:blur(26px) saturate(160%);
           box-shadow:
-            0 14px 46px rgba(0,0,0,.30),
-            0 2px 8px rgba(0,0,0,.14),
-            inset 0 0 0 1px rgba(26,26,28,.10),
-            inset 0 1.5px 0 rgba(255,255,255,.96),
-            inset 0 -1px 0 rgba(26,26,28,.05);
+            0 14px 46px rgba(0,0,0,.34),
+            0 2px 8px rgba(0,0,0,.16),
+            inset 0 0 0 1px rgba(255,255,255,.18),
+            inset 0 1.5px 0 rgba(255,255,255,.40),
+            inset 0 -1px 0 rgba(255,255,255,.13);
           /* Fast enough to feel like a property of the bar rather than an
              animation played at it, and linear because an eased fade at this
              size reads as a stutter. Every property that changes is listed:
              a shorthand that misses one leaves that part snapping. */
           transition:background .16s linear,color .16s linear,box-shadow .16s linear;}
-        .v2-bar.focus{background:rgba(253,252,251,.95);}
-        .v2-plus,.v2-send{background:rgba(26,26,28,.08);color:${V2.ink};}
-        .v2-send.on{background:${V2.ink};color:#fff;}
-        .v2-send.busy{background:none;color:${V2.ink};}
-        .v2-field textarea{color:${V2.ink};caret-color:${V2.ink};}
-        .v2-ph,.v2-marquee span{color:rgba(26,26,28,.5);}
-        .v2-shot-chip button{background:rgba(0,0,0,.5);}
+        .v2-bar.focus{background:rgba(22,21,20,.92);}
+        .v2-plus,.v2-send{background:rgba(255,255,255,.14);color:#fff;}
+        .v2-send.on{background:#fff;color:${V2.ink};}
+        .v2-send.busy{background:none;color:#fff;}
+        .v2-field textarea{color:#fff;caret-color:#fff;}
+        .v2-ph,.v2-marquee span{color:rgba(255,255,255,.6);}
+        .v2-shot-chip button{background:rgba(0,0,0,.62);}
 
-        /* Over paper: the same pane, inverted. */
-        .v2-bar.inverted{color:#fff;background:rgba(28,27,26,.82);
+        /* Over paper: the same pane, inverted to light. */
+        .v2-bar.inverted{color:${V2.ink};background:rgba(248,247,245,.88);
           box-shadow:
-            0 14px 46px rgba(0,0,0,.22),
-            0 2px 8px rgba(0,0,0,.10),
-            inset 0 0 0 1px rgba(255,255,255,.16),
-            inset 0 1.5px 0 rgba(255,255,255,.34),
-            inset 0 -1px 0 rgba(255,255,255,.10);}
-        .v2-bar.inverted.focus{background:rgba(22,21,20,.92);}
+            0 14px 46px rgba(0,0,0,.16),
+            0 2px 8px rgba(0,0,0,.06),
+            inset 0 0 0 1px rgba(26,26,28,.12),
+            inset 0 1.5px 0 rgba(255,255,255,.95),
+            inset 0 -1px 0 rgba(26,26,28,.05);}
+        .v2-bar.inverted.focus{background:rgba(252,251,250,.96);}
         .v2-bar.inverted .v2-plus,.v2-bar.inverted .v2-send{
-          background:rgba(255,255,255,.14);color:#fff;}
-        .v2-bar.inverted .v2-send.on{background:#fff;color:${V2.ink};}
-        .v2-bar.inverted .v2-send.busy{background:none;color:#fff;}
-        .v2-bar.inverted .v2-field textarea{color:#fff;caret-color:#fff;}
-        .v2-bar.inverted .v2-ph,.v2-bar.inverted .v2-marquee span{color:rgba(255,255,255,.6);}
-        .v2-bar.inverted .v2-shot-chip button{background:rgba(0,0,0,.62);}
+          background:rgba(26,26,28,.08);color:${V2.ink};}
+        .v2-bar.inverted .v2-send.on{background:${V2.ink};color:#fff;}
+        .v2-bar.inverted .v2-send.busy{background:none;color:${V2.ink};}
+        .v2-bar.inverted .v2-field textarea{color:${V2.ink};caret-color:${V2.ink};}
+        .v2-bar.inverted .v2-ph,.v2-bar.inverted .v2-marquee span{color:rgba(26,26,28,.5);}
+        .v2-bar.inverted .v2-shot-chip button{background:rgba(0,0,0,.5);}
         .v2-plus,.v2-send{flex-shrink:0;border:none;cursor:pointer;display:flex;align-items:center;
           justify-content:center;border-radius:50%;transition:background .16s linear,color .16s linear,transform .12s ${V2.ease};}
         .v2-plus{width:38px;height:38px;display:flex;align-items:center;justify-content:center;
