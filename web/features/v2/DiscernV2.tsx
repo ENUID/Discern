@@ -1497,7 +1497,7 @@ export default function DiscernV2({
         .v2-head-gap{flex:1;}
         .v2-newbtn{transition:opacity .25s ${V2.ease},transform .25s ${V2.ease};}
         .v2-newbtn.gone{opacity:0;pointer-events:none;transform:scale(.85);}
-        .v2-brand span{font-family:${V2.display};font-size:13.5px;font-weight:500;letter-spacing:.34em;
+        .v2-brand span{font-family:${V2.display};font-size:13px;font-weight:500;letter-spacing:.34em;
           text-indent:.34em;white-space:nowrap;line-height:1;}
         /* The rule needs air on both sides. The wordmark's trailing letter-space
            is not enough on its own — without a margin the divider sits against
@@ -1517,10 +1517,10 @@ export default function DiscernV2({
         .v2-saved-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 12px;}
         .v2-saved-cell{position:relative;display:flex;flex-direction:column;}
         .v2-saved-cell .v2-shot{width:100%;aspect-ratio:3/4;overflow:hidden;border:none;padding:0;
-          background:${V2.boneDeep};cursor:pointer;border-radius:8px;}
+          background:${V2.boneDeep};cursor:pointer;border-radius:12px;}
         .v2-saved-cell .v2-shot img{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-saved-cell .v2-heart{position:absolute;top:6px;right:6px;}
-        .v2-saved-name{font-size:12.5px;margin:9px 0 2px;line-height:1.3;}
+        .v2-saved-name{font-size:13px;margin:9px 0 2px;line-height:1.3;}
         .v2-saved-price{font-size:12px;color:${V2.ink45};}
         @media(min-width:760px){.v2-saved-grid{grid-template-columns:repeat(3,1fr);}}
 
@@ -1528,19 +1528,19 @@ export default function DiscernV2({
         .v2-hist{position:absolute;z-index:80;left:12px;right:12px;
           top:calc(env(safe-area-inset-top,0px) + 52px);max-width:340px;
           background:${V2.glassDark};backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
-          border:1px solid ${V2.glassEdge};border-radius:16px;padding:18px 18px 14px;
+          border:1px solid ${V2.glassEdge};border-radius:24px;padding:18px 18px 14px;
           color:#fff;animation:v2-pop .34s ${V2.ease};max-height:66vh;overflow-y:auto;}
         .v2-hist ul{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:2px;}
         .v2-hist li button{width:100%;text-align:left;background:none;border:none;cursor:pointer;
           color:#fff;font-family:${V2.sans};font-size:14px;line-height:1.4;padding:9px 8px;
-          border-radius:8px;transition:background .18s ${V2.ease};}
+          border-radius:12px;transition:background .18s ${V2.ease};}
         .v2-hist li button:hover{background:rgba(255,255,255,.1);}
         .v2-hist-empty{font-size:13px;color:rgba(255,255,255,.55);margin:10px 0 4px;}
 
         .v2-minibag{position:absolute;z-index:46;top:calc(env(safe-area-inset-top,0px) + 62px);right:12px;
           display:flex;gap:6px;padding:6px;border-radius:12px;background:${V2.glassDark};
           backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);animation:v2-rise .4s ${V2.ease};}
-        .v2-minibag button{width:44px;height:56px;padding:0;border:none;border-radius:7px;overflow:hidden;cursor:pointer;
+        .v2-minibag button{width:44px;height:56px;padding:0;border:none;border-radius:12px;overflow:hidden;cursor:pointer;
           background:none;box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-minibag img{width:100%;height:100%;object-fit:cover;display:block;}
 
@@ -1582,13 +1582,13 @@ export default function DiscernV2({
         .v2-hero2{padding-bottom:calc(var(--bar) + 54px);}
         .v2-one span{display:block;}
         .v2-inspire-cta{margin-top:20px;padding:11px 22px;border:none;border-radius:999px;cursor:pointer;
-          color:#fff;font-size:12.5px;font-weight:400;background:${V2.glassDark};
+          color:#fff;font-size:13px;font-weight:400;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};transition:background .22s ${V2.ease};}
         .v2-inspire-cta:hover{background:rgba(255,255,255,.18);}
         .v2-sugs{position:relative;z-index:2;display:flex;flex-direction:column;gap:9px;padding:22px 14px 0;}
         .v2-sug{text-align:left;padding:13px 18px;border:none;border-radius:999px;cursor:pointer;color:#fff;
-          font-size:13.5px;font-weight:400;background:${V2.glassDark};
+          font-size:13px;font-weight:400;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};transition:background .2s ${V2.ease};}
         .v2-sug:active{background:rgba(255,255,255,.2);}
@@ -1603,7 +1603,7 @@ export default function DiscernV2({
         .v2-shot img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;}
         .v2-sec-hero .v2-heart{position:absolute;right:12px;bottom:12px;}
         .v2-discover{display:inline-flex;align-items:center;gap:7px;margin-top:15px;background:none;border:none;
-          cursor:pointer;color:${V2.ink};font-size:14.5px;padding:6px 2px;}
+          cursor:pointer;color:${V2.ink};font-size:14px;padding:6px 2px;}
         .v2-discover span{font-size:17px;line-height:1;}
 
         /* Gutters, and air at the edges. The tiles were 3px apart and flush to
@@ -1628,7 +1628,7 @@ export default function DiscernV2({
            made the tiles look like different sizes when every image is identical.
            Fixed height, clipped, so each row starts on the same line. */
         .v2-tile-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-          padding:10px 2px 0;font-size:12.5px;line-height:1.35;height:calc(2 * 1.35em + 10px);text-align:left;}
+          padding:10px 2px 0;font-size:13px;line-height:1.35;height:calc(2 * 1.35em + 10px);text-align:left;}
         .v2-tile-name i{font-style:normal;color:${V2.ink45};}
 
         /* Look page */
@@ -1637,13 +1637,13 @@ export default function DiscernV2({
         .v2-rail::-webkit-scrollbar{display:none;}
         .v2-rail-item{position:relative;flex:0 0 auto;width:min(66vw,260px);scroll-snap-align:center;}
         .v2-rail-item .v2-heart{position:absolute;right:10px;top:calc(100% - 78px);}
-        .v2-rail-name{display:block;padding:10px 2px 0;font-size:12.5px;}
+        .v2-rail-name{display:block;padding:10px 2px 0;font-size:13px;}
         .v2-rail-name i{font-style:normal;color:${V2.ink45};}
         .v2-rail-nav{display:flex;gap:12px;justify-content:center;padding-top:22px;}
         .v2-rail-nav button{width:34px;height:34px;border-radius:50%;border:1px solid ${V2.hairline};
           background:none;cursor:pointer;font-size:16px;color:${V2.ink};line-height:1;}
         .v2-eyebrow{position:absolute;z-index:44;top:calc(env(safe-area-inset-top,0px) + 108px);left:20px;
-          font-size:10.5px;letter-spacing:.16em;color:${V2.ink70};}
+          font-size:11px;letter-spacing:.16em;color:${V2.ink70};}
 
         /* PDP */
         /* The header floats over the scroller, so the first photograph used to run
@@ -1653,7 +1653,7 @@ export default function DiscernV2({
         .v2-pdp-img{width:100%;display:block;background:${V2.boneDeep};}
         .v2-back{position:absolute;z-index:45;top:calc(env(safe-area-inset-top,0px) + 56px);left:14px;display:flex;
           align-items:center;gap:6px;padding:7px 14px 7px 11px;border:none;border-radius:999px;cursor:pointer;
-          font-size:12.5px;color:${V2.ink};background:${V2.glassLight};
+          font-size:13px;color:${V2.ink};background:${V2.glassLight};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 3px 16px rgba(0,0,0,.10);}
         .v2-back span{font-size:17px;line-height:1;}
 
@@ -1665,18 +1665,18 @@ export default function DiscernV2({
         /* Set as the reference sets them: uppercase, tracked out. */
         .v2-acc-pill{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border:none;border-radius:999px;
           letter-spacing:.08em;
-          cursor:pointer;font-size:11.5px;letter-spacing:0;font-weight:500;color:#fff;background:${V2.glassDark};
+          cursor:pointer;font-size:12px;letter-spacing:0;font-weight:500;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);}
         .v2-acc-pill i{font-style:normal;font-size:12px;opacity:.85;}
         .v2-acc-pill.on{background:rgba(28,27,25,.85);}
         .v2-panel{max-height:42vh;overflow-y:auto;
-          padding:16px 18px;border-radius:18px;color:#fff;background:${V2.glassDark};
+          padding:16px 18px;border-radius:24px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
           box-shadow:0 14px 44px rgba(0,0,0,.3);animation:v2-rise .3s ${V2.ease};}
         .v2-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
-        .v2-panel-head span{font-size:11.5px;letter-spacing:0;font-weight:500;opacity:.8;}
+        .v2-panel-head span{font-size:12px;letter-spacing:0;font-weight:500;opacity:.8;}
         .v2-panel-head button{background:none;border:none;font-size:17px;cursor:pointer;color:inherit;opacity:.75;line-height:1;}
-        .v2-panel p{font-size:13.5px;line-height:1.62;font-weight:400;margin:0;}
+        .v2-panel p{font-size:13px;line-height:1.62;font-weight:400;margin:0;}
         /* HOW TO STYLE lifts a light card instead of the dark one. */
         .v2-panel.light{color:${V2.ink};background:${V2.glassLight};border:1px solid rgba(255,255,255,.5);max-height:38vh;}
         .v2-style-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
@@ -1693,7 +1693,7 @@ export default function DiscernV2({
         .v2-crafting{position:absolute;z-index:45;left:50%;translate:-50% 0;display:flex;align-items:center;gap:9px;
           padding:8px 15px;border-radius:999px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
-          box-shadow:inset 0 0 0 1px ${V2.glassEdge};font-size:12.5px;font-weight:400;white-space:nowrap;
+          box-shadow:inset 0 0 0 1px ${V2.glassEdge};font-size:13px;font-weight:400;white-space:nowrap;
           animation:v2-fade .3s ${V2.ease};}
 
         /* In-flow dashed card at the foot of the product page. */
@@ -1701,31 +1701,31 @@ export default function DiscernV2({
         .v2-doc-row{display:flex;width:100%;justify-content:space-between;align-items:center;background:none;
           border:none;padding:15px 0;cursor:pointer;color:inherit;font-size:13px;font-weight:500;}
         .v2-doc-row i{font-style:normal;font-size:15px;opacity:.6;}
-        .v2-doc-body p{margin:0 0 14px;font-size:13.5px;line-height:1.62;font-weight:400;}
+        .v2-doc-body p{margin:0 0 14px;font-size:13px;line-height:1.62;font-weight:400;}
         .v2-doc-sku{display:block;margin-bottom:12px;font-size:11px;color:${V2.ink45};}
         .v2-doc-list{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:5px;}
         .v2-doc-list li{font-size:13px;line-height:1.5;font-weight:400;}
         .v2-other{margin-top:38px;}
-        .v2-eyebrow-in{font-size:12.5px;font-weight:500;color:${V2.ink45};text-align:center;margin-bottom:16px;}
+        .v2-eyebrow-in{font-size:13px;font-weight:500;color:${V2.ink45};text-align:center;margin-bottom:16px;}
         .v2-nested{margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.16);}
         .v2-nested button{display:flex;width:100%;justify-content:space-between;align-items:center;background:none;
-          border:none;padding:0;cursor:pointer;font-size:10.5px;letter-spacing:.15em;color:inherit;opacity:.75;}
+          border:none;padding:0;cursor:pointer;font-size:11px;letter-spacing:.15em;color:inherit;opacity:.75;}
         .v2-nested i{font-style:normal;font-size:15px;}
         .v2-nested-body{margin-top:10px !important;font-size:13px !important;}
 
         /* Trays */
-        .v2-tray{position:absolute;z-index:42;left:12px;right:12px;padding:9px;border-radius:18px;color:#fff;
+        .v2-tray{position:absolute;z-index:42;left:12px;right:12px;padding:9px;border-radius:24px;color:#fff;
           background:${V2.glassDark};backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
           box-shadow:0 14px 44px rgba(0,0,0,.3);animation:v2-rise .4s ${V2.ease};}
         .v2-tray-row{display:flex;gap:8px;}
-        .v2-chip{flex:1;min-width:0;aspect-ratio:1/1;padding:0;border:none;border-radius:8px;overflow:hidden;
+        .v2-chip{flex:1;min-width:0;aspect-ratio:1/1;padding:0;border:none;border-radius:12px;overflow:hidden;
           background:rgba(255,255,255,.1);cursor:pointer;box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-chip img{width:100%;height:100%;object-fit:cover;display:block;}
-        .v2-tray-row .v2-heart.ghost{flex:1;height:auto;aspect-ratio:1/1;border-radius:8px;color:#fff;
+        .v2-tray-row .v2-heart.ghost{flex:1;height:auto;aspect-ratio:1/1;border-radius:12px;color:#fff;
           background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-tray-cta{display:flex;gap:7px;margin-top:8px;align-items:center;}
 
-        .v2-pill{flex:1 1 84px;min-width:0;padding:10px 12px;border:none;border-radius:999px;cursor:pointer;font-size:11.5px;
+        .v2-pill{flex:1 1 84px;min-width:0;padding:10px 12px;border:none;border-radius:999px;cursor:pointer;font-size:12px;
           color:#fff;background:rgba(255,255,255,.16);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
           transition:background .18s ${V2.ease};}
         .v2-pill:active{background:rgba(255,255,255,.26);}
@@ -1737,7 +1737,7 @@ export default function DiscernV2({
         .v2-heart:active{transform:scale(.88);}
 
         .v2-hint{position:absolute;z-index:41;left:50%;translate:-50% 0;margin-bottom:14px;display:inline-flex;align-items:center;gap:9px;
-          padding:11px 20px;border:none;border-radius:999px;cursor:pointer;font-size:13.5px;color:#fff;
+          padding:11px 20px;border:none;border-radius:999px;cursor:pointer;font-size:13px;color:#fff;
           background:${V2.glassDark};backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);animation:v2-fade .6s ${V2.ease};}
 
         /* Loading */
@@ -1833,7 +1833,7 @@ export default function DiscernV2({
         .v2-recent-row{display:flex;align-items:center;gap:4px;min-height:44px;border-radius:12px;
           transition:background .12s;}
         .v2-recent-row:hover{background:rgba(255,255,255,.07);}
-        .v2-menu li button.v2-recent-go{flex:1;min-width:0;min-height:44px;padding:9px 6px;font-family:${V2.sans};font-size:13.5px;
+        .v2-menu li button.v2-recent-go{flex:1;min-width:0;min-height:44px;padding:9px 6px;font-family:${V2.sans};font-size:13px;
           font-weight:400;letter-spacing:0;opacity:.86;background:none;border:none;color:inherit;
           text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
         .v2-recent-acts{display:flex;gap:2px;padding-right:6px;opacity:0;transition:opacity .14s;}
@@ -1843,7 +1843,7 @@ export default function DiscernV2({
         .v2-recent-acts button::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
           transform:translate(-50%,-50%);}
         .v2-recent-acts button:hover{background:rgba(255,255,255,.12);}
-        .v2-recent-input{flex:1;min-width:0;margin:2px 6px;padding:7px 9px;border-radius:8px;
+        .v2-recent-input{flex:1;min-width:0;margin:2px 6px;padding:7px 9px;border-radius:12px;
           background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);color:#fff;
           font-family:${V2.sans};font-size:16px;outline:none;}
         /* Touch has no hover, so the controls are simply always there. */
@@ -1894,7 +1894,7 @@ export default function DiscernV2({
         /* Scales up from the centre rather than sliding, and stops short of the
            edges so the blurred boutique stays visible around it. */
         .v2-bag{position:absolute;z-index:80;inset:calc(env(safe-area-inset-top,0px) + 54px) 12px
-          calc(env(safe-area-inset-bottom,0px) + 16px);background:#fff;overflow-y:auto;border-radius:16px;
+          calc(env(safe-area-inset-bottom,0px) + 16px);background:#fff;overflow-y:auto;border-radius:24px;
           padding:26px 22px 30px;box-shadow:0 30px 90px rgba(0,0,0,.4);
           animation:v2-pop .42s ${V2.ease};transform-origin:center;}
         @keyframes v2-pop{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:none}}
@@ -1906,22 +1906,22 @@ export default function DiscernV2({
         .v2-line{display:flex;gap:14px;padding-bottom:22px;margin-bottom:22px;}
         .v2-line>img{width:74px;height:98px;object-fit:cover;flex-shrink:0;background:${V2.boneDeep};}
         .v2-line>div{display:flex;flex-direction:column;gap:3px;min-width:0;}
-        .v2-line-name{font-size:14.5px;}
+        .v2-line-name{font-size:14px;}
         .v2-line-price{font-size:14px;margin-bottom:6px;}
-        .v2-line-meta{font-size:12.5px;color:${V2.ink70};}
+        .v2-line-meta{font-size:13px;color:${V2.ink70};}
         .v2-line-sku{font-size:11px;color:${V2.ink45};}
-        .v2-qty{display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12.5px;color:${V2.ink70};}
+        .v2-qty{display:flex;align-items:center;gap:7px;margin-top:8px;font-size:13px;color:${V2.ink70};}
         .v2-qty button{width:20px;height:20px;border:none;background:none;cursor:pointer;font-size:14px;color:${V2.ink70};}
         .v2-qty b{font-weight:400;color:${V2.ink};}
-        .v2-remove{width:auto !important;margin-left:8px;text-decoration:underline;font-size:12.5px !important;}
+        .v2-remove{width:auto !important;margin-left:8px;text-decoration:underline;font-size:13px !important;}
         .v2-bag-sum{border-top:1px solid ${V2.hairline};padding-top:16px;display:flex;flex-direction:column;gap:9px;margin-bottom:22px;}
-        .v2-bag-sum div{display:flex;justify-content:space-between;font-size:13.5px;}
+        .v2-bag-sum div{display:flex;justify-content:space-between;font-size:13px;}
         .v2-pay{width:100%;padding:16px;border:none;border-radius:12px;background:${V2.ink};color:#fff;cursor:pointer;
           font-size:14px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:10px;}
         /* An empty bag must not offer a live Checkout — it was fully clickable
            at zero items, which is a promise the button could not keep. */
         .v2-pay:disabled{opacity:.34;cursor:not-allowed;}
-        .v2-bag-note{font-size:11.5px;line-height:1.5;color:${V2.ink45};text-align:center;margin:14px 0 0;}
+        .v2-bag-note{font-size:12px;line-height:1.5;color:${V2.ink45};text-align:center;margin:14px 0 0;}
         /* Only rendered when the browser refused a tab, so the shopper still has
            a way through to the brand. */
         .v2-bag-fallback{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:10px 0 0;}
@@ -1974,7 +1974,7 @@ export default function DiscernV2({
         .v2-bar-top{display:flex;align-items:flex-end;gap:8px;}
         .v2-bar-btm{display:flex;align-items:center;gap:6px;}
         .v2-bar-right{display:flex;align-items:center;gap:8px;margin-left:auto;}
-        .v2-shot-chip{position:relative;width:44px;height:44px;border-radius:8px;overflow:hidden;}
+        .v2-shot-chip{position:relative;width:44px;height:44px;border-radius:12px;overflow:hidden;}
         .v2-shot-chip img{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-shot-chip button{position:absolute;top:2px;right:2px;width:15px;height:15px;
           display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
@@ -2010,23 +2010,23 @@ export default function DiscernV2({
 
         /* Cart tray */
         .v2-cart{display:grid;
-          grid-template-columns:auto 1fr auto;gap:11px;align-items:center;padding:12px;border-radius:22px;color:#fff;
+          grid-template-columns:auto 1fr auto;gap:11px;align-items:center;padding:12px;border-radius:24px;color:#fff;
           background:${V2.glassDark};backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
           box-shadow:0 14px 44px rgba(0,0,0,.32);animation:v2-rise .42s ${V2.ease};}
         .v2-cart.tall{grid-template-columns:minmax(0,1fr);}
         .v2-cart>*{min-width:0;}
-        .v2-cart-thumb{width:56px;height:72px;object-fit:cover;border-radius:8px;display:block;box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
+        .v2-cart-thumb{width:56px;height:72px;object-fit:cover;border-radius:12px;display:block;box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-cart-meta{min-width:0;display:flex;flex-direction:column;gap:3px;}
         .v2-cart-name{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
         .v2-cart-price{font-size:12px;display:flex;gap:8px;align-items:baseline;}
         .v2-cart-price em{font-style:normal;text-decoration:line-through;opacity:.55;font-size:11px;}
         .v2-cart-price em::before{content:'|';text-decoration:none;display:inline-block;margin-right:8px;opacity:.7;}
-        .v2-cart-color{font-size:11.5px;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .v2-cart-color{font-size:12px;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
                 /* Add to cart, colours, size and close is four controls; on a narrow
            phone the third was being cut off at the edge. They wrap now. */
         .v2-cart-cta{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:2px;}
         .v2-buy{flex-shrink:0;padding:11px 16px;border:none;border-radius:999px;cursor:pointer;background:#fff;
-          color:${V2.ink};font-size:12.5px;min-width:92px;display:flex;align-items:center;justify-content:center;
+          color:${V2.ink};font-size:13px;min-width:92px;display:flex;align-items:center;justify-content:center;
           transition:transform .12s ${V2.ease};}
         .v2-buy:active{transform:scale(.97);}
         .v2-buy.off{background:rgba(255,255,255,.3);color:rgba(255,255,255,.75);cursor:default;}
@@ -2038,7 +2038,7 @@ export default function DiscernV2({
            product with a single colourway filled the dock with one enormous
            picture. */
         .v2-swatches{display:flex;flex-wrap:wrap;gap:9px;padding:2px;}
-        .v2-swatches button{flex:0 0 auto;width:64px;aspect-ratio:3/4;padding:0;border:none;border-radius:9px;overflow:hidden;
+        .v2-swatches button{flex:0 0 auto;width:64px;aspect-ratio:3/4;padding:0;border:none;border-radius:12px;overflow:hidden;
           cursor:pointer;background:rgba(255,255,255,.08);box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-swatches button.on{box-shadow:0 0 0 2px #fff;}
         .v2-swatches img{width:100%;height:100%;object-fit:cover;display:block;}
@@ -2047,9 +2047,27 @@ export default function DiscernV2({
                 .v2-sizes{display:flex;gap:10px;overflow-x:auto;scrollbar-width:none;padding:0 4px 4px;
           justify-content:flex-start;justify-content:safe center;scroll-snap-type:x proximity;}
         .v2-sizes::-webkit-scrollbar{display:none;}
-        .v2-sizes button{flex:0 0 auto;scroll-snap-align:center;width:44px;height:44px;border-radius:50%;cursor:pointer;font-size:13.5px;
+        .v2-sizes button{flex:0 0 auto;scroll-snap-align:center;width:44px;height:44px;border-radius:50%;cursor:pointer;font-size:13px;
           color:#fff;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);}
         .v2-sizes button.on{background:transparent;color:#fff;border-color:#fff;box-shadow:0 0 0 1px #fff;}
+
+
+        /* ── Reaching 44 ───────────────────────────────────────────────────
+           Every control below is drawn smaller than a finger on purpose. The
+           expander is a centred ::before, so the hit area grows and nothing on
+           screen moves. Declared last: several of these have a matching rule
+           earlier in the sheet at equal specificity, and source order is what
+           decides. Elements already absolutely positioned establish their own
+           containing block and must not be reset. */
+        .v2-discover,.v2-acc-pill,.v2-buy,.v2-pill,.v2-x,.v2-remove,.v2-qty button{position:relative;}
+        .v2-heart::before,.v2-back::before,.v2-x::before,.v2-bag-x::before,
+        .v2-qty button::before,.v2f-x::before{content:'';position:absolute;left:50%;top:50%;
+          width:44px;height:44px;transform:translate(-50%,-50%);}
+        .v2-discover::before,.v2-acc-pill::before,.v2-remove::before{content:'';position:absolute;
+          left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
+        /* These two carry real labels, so they grow rather than hide a target
+           behind a smaller drawing. */
+        .v2-buy,.v2-pill{min-height:44px;}
 
         @keyframes v2-rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
         @keyframes v2-fade{from{opacity:0}to{opacity:1}}
@@ -2069,7 +2087,7 @@ export default function DiscernV2({
             linear-gradient(165deg,#3B3833 0%,#2A2724 48%,#1E1C1A 100%);}
         .v2-shot .v2-img-ph,.v2-tile-btn .v2-img-ph{aspect-ratio:3/4;}
         .v2-pdp-img.v2-img-ph{aspect-ratio:3/4;}
-        .v2-cart-thumb.v2-img-ph{width:56px;height:72px;border-radius:8px;}
+        .v2-cart-thumb.v2-img-ph{width:56px;height:72px;border-radius:12px;}
 
         /* Nothing-found */
         .v2-empty{padding:clamp(90px,22vw,150px) 26px;text-align:center;display:flex;

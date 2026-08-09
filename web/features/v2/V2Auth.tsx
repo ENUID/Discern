@@ -215,7 +215,7 @@ export default function V2Auth({
         .v2a-outer{position:absolute;inset:0;z-index:86;display:flex;align-items:flex-end;
           justify-content:center;background:rgba(16,15,14,.46);
           backdrop-filter:blur(10px) saturate(130%);-webkit-backdrop-filter:blur(10px) saturate(130%);}
-        .v2a-card{width:100%;color:#fff;border-radius:28px 28px 0 0;
+        .v2a-card{width:100%;color:#fff;border-radius:24px 28px 0 0;
           padding:28px 24px 36px;max-height:94vh;overflow-y:auto;
           background:${V2.glassDark};
           backdrop-filter:blur(30px) saturate(160%);-webkit-backdrop-filter:blur(30px) saturate(160%);
@@ -241,8 +241,8 @@ export default function V2Auth({
 
         /* Google keeps its white plate — the mark is drawn for light ground and
            inverting it would break the brand asset. */
-        .v2a-google{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
-          padding:13px 16px;border-radius:30px;background:#fff;border:none;
+        .v2a-google{width:100%;min-height:44px;display:flex;align-items:center;justify-content:center;gap:10px;
+          padding:13px 16px;border-radius:999px;background:#fff;border:none;
           font-family:${V2.sans};font-size:14px;font-weight:500;color:#1A1A1C;cursor:pointer;
           margin-bottom:18px;transition:opacity .2s ${V2.ease};}
         .v2a-google:hover{opacity:.9;}
@@ -264,7 +264,7 @@ export default function V2Auth({
 
         /* Inverted from the main app: on dark glass the primary action is the
            light one. */
-        .v2a-primary{width:100%;padding:14px;border-radius:30px;background:#fff;color:${V2.ink};
+        .v2a-primary{width:100%;padding:14px;border-radius:999px;background:#fff;color:${V2.ink};
           border:none;cursor:pointer;font-family:${V2.sans};font-size:14px;font-weight:500;
           transition:opacity .2s ${V2.ease};}
         .v2a-primary:disabled{opacity:.4;cursor:default;}
@@ -291,7 +291,7 @@ export default function V2Auth({
 
         @media(min-width:600px){
           .v2a-outer{align-items:center;padding:18px;}
-          .v2a-card{max-width:420px;border-radius:26px;padding:36px 32px 28px;
+          .v2a-card{max-width:420px;border-radius:24px;padding:36px 32px 28px;
             border:1px solid ${V2.glassEdge};
             box-shadow:0 28px 80px rgba(0,0,0,.46),inset 0 1px 0 ${V2.glassEdge};
             animation:v2a-pop .28s ${V2.ease};}

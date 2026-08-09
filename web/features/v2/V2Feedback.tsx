@@ -133,17 +133,20 @@ export default function V2Feedback({ open, onClose }: { open: boolean; onClose: 
           max-height:88svh;overflow-y:auto;animation:v2f-rise .3s ${V2.ease};}
         @media(min-width:600px){
           .v2f-outer{align-items:center;}
-          .v2f-card{margin:0;border-radius:22px;}
+          .v2f-card{margin:0;border-radius:24px;}
         }
         .v2f-x{position:absolute;top:16px;right:16px;width:34px;height:34px;display:flex;align-items:center;
           justify-content:center;border:none;border-radius:50%;cursor:pointer;color:#fff;
           background:rgba(255,255,255,.12);}
+        /* 34px disc, 44px target. */
+        .v2f-x::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
+          transform:translate(-50%,-50%);}
         .v2f-card h2{font-family:${V2.editorial};font-weight:400;font-size:30px;line-height:1.1;
           margin:0 0 8px;padding-right:44px;}
-        .v2f-sub{font-size:13.5px;line-height:1.55;opacity:.62;margin:0 0 22px;}
+        .v2f-sub{font-size:13px;line-height:1.55;opacity:.62;margin:0 0 22px;}
         .v2f-kinds{display:flex;gap:8px;margin-bottom:20px;}
         .v2f-kinds button{flex:1;min-height:44px;padding:11px 10px;border-radius:12px;cursor:pointer;
-          font-family:${V2.sans};font-size:13.5px;color:#fff;background:rgba(255,255,255,.08);
+          font-family:${V2.sans};font-size:13px;color:#fff;background:rgba(255,255,255,.08);
           border:1px solid rgba(255,255,255,.16);transition:background .16s,border-color .16s;}
         .v2f-kinds button.on{background:#fff;color:${V2.ink};border-color:transparent;font-weight:500;}
         .v2f-label{display:flex;align-items:baseline;gap:7px;font-size:12px;opacity:.6;margin-bottom:7px;}
@@ -159,12 +162,12 @@ export default function V2Feedback({ open, onClose }: { open: boolean; onClose: 
         .v2f-msg:focus,.v2f-mail:focus{border-color:rgba(255,255,255,.5);background:rgba(255,255,255,.11);}
         .v2f-msg::placeholder,.v2f-mail::placeholder{color:rgba(255,255,255,.34);}
         .v2f-err{font-size:13px;color:#ff9c8f;margin-bottom:14px;}
-        .v2f-send{width:100%;min-height:48px;border:none;border-radius:14px;cursor:pointer;background:#fff;
+        .v2f-send{width:100%;min-height:48px;border:none;border-radius:12px;cursor:pointer;background:#fff;
           color:${V2.ink};font-family:${V2.sans};font-size:15px;font-weight:500;
           transition:opacity .16s;}
         .v2f-send:disabled{opacity:.42;cursor:default;}
         .v2f-done{text-align:center;padding:14px 0 4px;}
-        .v2f-done p{font-size:13.5px;opacity:.62;margin:0 0 24px;}
+        .v2f-done p{font-size:13px;opacity:.62;margin:0 0 24px;}
         @keyframes v2f-fade{from{opacity:0}to{opacity:1}}
         @keyframes v2f-rise{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
         @media(prefers-reduced-motion:reduce){
