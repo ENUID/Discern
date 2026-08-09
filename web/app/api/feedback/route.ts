@@ -10,12 +10,17 @@ import { makeIpRateLimiter } from '@/lib/rateLimit'
  * feedback at all.
  *
  * The sender's own address is required and becomes `replyTo`, so hitting reply
- * in the inbox writes back to them rather than to the no-reply this was sent
- * from. Without it a bug report is a dead end — no way to ask the one follow-up
- * question that usually resolves it.
+ * in the inbox writes back to them. Without it a bug report is a dead end — no
+ * way to ask the one follow-up question that usually resolves it.
  */
 
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? 'Discern <no-reply@discern.enuid.com>'
+// Every message has to be sent *from* something, and it has to be an address on
+// a domain Resend has verified — a shopper's own Gmail cannot be forged into
+// this slot. What it must not be is a no-reply: this is a conversation, so the
+// envelope says feedback@ and `replyTo` below points at the person who wrote.
+// Its own variable rather than the shared RESEND_FROM_EMAIL, so feedback does
+// not inherit whatever the sign-in codes are sent from.
+const FROM_EMAIL = process.env.FEEDBACK_FROM_EMAIL ?? 'Discern Feedback <feedback@discern.enuid.com>'
 // Goes to a person, not a queue. Overridable by env so it can be changed
 // without a deploy, but the default is the address that is actually read.
 const TO_EMAIL = process.env.FEEDBACK_TO_EMAIL ?? 'd0fourmir@gmail.com'
@@ -70,7 +75,7 @@ export async function POST(req: NextRequest) {
     const { error } = await resend.emails.send({
       from: FROM_EMAIL,
       to: TO_EMAIL,
-      // Replying goes to the shopper, not to the no-reply this was sent from.
+      // Reply goes straight to the person who wrote in.
       replyTo: from,
       // A stable, searchable prefix: every one of these can be found with
       // "[Discern feedback]" and filtered on in a mail client.
