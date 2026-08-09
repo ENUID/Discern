@@ -99,6 +99,11 @@ export async function askStylist(args: AskStylistArgs): Promise<any> {
             ? 'That was a lot of requests at once. Give it a few seconds and try again.'
             : 'Something went wrong on my end. Give it another go?',
           didSearch: false,
+          // Marked as a failure, not as an answer that happened to contain
+          // nothing. Without this the caller cannot tell a broken request from
+          // a shopper who said hello, and those two want opposite things to
+          // happen on screen.
+          failed: true,
         }
       }
       data = await readStylistStream(res, onProgress)
@@ -113,6 +118,19 @@ export async function askStylist(args: AskStylistArgs): Promise<any> {
     } catch (e) {
       if (signal?.aborted) return null
       if (attempt === MAX_ATTEMPTS - 1) throw e
+    }
+  }
+
+  // Three attempts and nothing on the wire: every one came back retryable, or
+  // the stream carried no result line. Returning null read downstream as
+  // "answered, with nothing to show" — indistinguishable from a greeting, which
+  // is how a failed search quietly dropped the shopper back on the home page
+  // with the question gone.
+  if (!data) {
+    return {
+      reply: 'I could not get an answer just then. Ask me again.',
+      didSearch: false,
+      failed: true,
     }
   }
 

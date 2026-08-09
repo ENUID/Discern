@@ -151,9 +151,9 @@ export default function V2Profile({ country }: { country?: string }) {
       <style jsx global>{`
         .v2p{width:100%;text-align:left;margin-top:26px;padding-top:22px;
           border-top:1px solid rgba(var(--srf-ink-rgb),.14);}
-        .v2p-eyebrow{display:block;font-size:11px;font-weight:500;opacity:.58;letter-spacing:.04em;
+        .v2p-eyebrow{display:block;font-size:11px;font-weight:500;opacity:.42;letter-spacing:.04em;
           margin-bottom:8px;}
-        .v2p-why{font-size:13px;line-height:1.55;opacity:.72;margin:0 0 18px;}
+        .v2p-why{font-size:13px;line-height:1.55;opacity:.6;margin:0 0 18px;}
         .v2p-genders{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:18px;}
         .v2p-genders button{min-height:44px;padding:10px 14px;border-radius:12px;cursor:pointer;
           font-family:${V2.sans};font-size:13px;color:inherit;background:rgba(var(--srf-ink-rgb),.08);
@@ -163,13 +163,13 @@ export default function V2Profile({ country }: { country?: string }) {
         .v2p-row{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 14px;
           border-radius:12px;background:rgba(var(--srf-ink-rgb),.07);
           border:1px solid rgba(var(--srf-ink-rgb),.14);}
-        .v2p-row label{flex:0 0 74px;font-size:13px;opacity:.75;}
+        .v2p-row label{flex:0 0 74px;font-size:13px;opacity:.62;}
         /* 16px: below that iOS zooms the page in when the field takes focus. */
         .v2p-row input{flex:1;min-width:0;border:none;background:none;outline:none;color:inherit;
           font-family:${V2.sans};font-size:16px;text-align:right;padding:11px 0;}
-        .v2p-row input::placeholder{color:rgba(var(--srf-ink-rgb),.5);}
-        .v2p-where{font-size:12px;line-height:1.5;opacity:.65;margin:0 0 18px;}
-        .v2p-where b{font-weight:500;opacity:.92;}
+        .v2p-row input::placeholder{color:rgba(var(--srf-ink-rgb),.32);}
+        .v2p-where{font-size:12px;line-height:1.5;opacity:.5;margin:0 0 18px;}
+        .v2p-where b{font-weight:500;opacity:.85;}
         .v2p-save{width:100%;min-height:44px;border-radius:12px;border:none;cursor:pointer;
           background:var(--srf-fill);color:var(--srf-fill-ink);font-family:${V2.sans};font-size:14px;font-weight:500;
           transition:opacity .16s;}

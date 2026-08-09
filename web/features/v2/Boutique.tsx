@@ -254,6 +254,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       look,
       answer: typeof data?.reply === 'string' ? data.reply : undefined,
       didSearch: typeof data?.searchQuery === 'string' && data.searchQuery.length > 0,
+      failed: data?.failed === true,
       light: data?.light === true,
     }
   }, [context])

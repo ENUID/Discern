@@ -71,6 +71,10 @@ export type V2Turn = {
   question: string
   answer?: string
   didSearch: boolean
+  /** The request broke rather than answering. Kept apart from an empty result
+   *  because "nothing fits that" and "that never got through" are different
+   *  facts, and only one of them is worth offering to try again. */
+  failed?: boolean
   sections: V2Section[]
 }
 /** Transcript entry sent back to the stylist so follow-ups have context. */
@@ -174,7 +178,7 @@ export default function DiscernV2({
   heroMedia?: string; heroPoster?: string
   onQuery?: (q: string, history: V2Msg[], images: string[]) => Promise<{
     sections: V2Section[]; look?: V2Product[]
-    answer?: string; didSearch?: boolean; light?: boolean
+    answer?: string; didSearch?: boolean; light?: boolean; failed?: boolean
   }>
   /** Real catalogue imagery for the three hero cards. Supplying this is what
    *  keeps the opening screen from depending on hand-placed jpgs. */
@@ -594,7 +598,11 @@ export default function DiscernV2({
       // nothing; it never writes a sentence on the page. So this leaves the
       // shopper exactly where they were rather than inventing a surface to put
       // prose on.
-      if (!sections.length && !res.didSearch) {
+      // A request that broke looks identical to this from here — no sections,
+      // no search — so without the flag it took the same exit, and a failed
+      // search silently put the shopper back on the home page with the question
+      // wiped. Now it lands on the results view and says what happened.
+      if (!sections.length && !res.didSearch && !res.failed) {
         setInput('')
         setLoading(false)
         return
@@ -602,7 +610,8 @@ export default function DiscernV2({
 
       setTurns(prev => [{
         id: `${prev.length}-${question.slice(0, 24)}`,
-        question, answer: res.answer, didSearch: res.didSearch === true, sections,
+        question, answer: res.answer, didSearch: res.didSearch === true,
+        failed: res.failed === true, sections,
       }, ...prev].slice(0, 12))
       if (res.look?.length) { setLook(res.look); setLookOpen(true) }
       show = true
@@ -610,7 +619,7 @@ export default function DiscernV2({
       // A failed lookup still lands on the results view — the empty state says
       // so plainly, which is calmer than an error dialog over the boutique.
       console.error('[v2] query failed:', e)
-      setTurns(prev => [{ id: `err-${prev.length}`, question, didSearch: true, sections: [] }, ...prev])
+      setTurns(prev => [{ id: `err-${prev.length}`, question, didSearch: false, failed: true, sections: [] }, ...prev])
       show = true
     } finally {
       // Cleared here, not at send: the reference keeps what you asked visible in
@@ -857,10 +866,24 @@ export default function DiscernV2({
               {/* "No match" is only honest when a search actually ran. It used
                   to fire for every conversational turn, so asking "does navy go
                   with olive" was answered by blaming the catalogue. */}
-              {turn.sections.length === 0 && turn.didSearch && (
+              {turn.sections.length === 0 && turn.didSearch && !turn.failed && (
                 <div className="v2-empty">
                   <h2>No match</h2>
                   <p>Nothing in the catalogue genuinely fits that. Change the colour, fabric or budget and I’ll look again.</p>
+                </div>
+              )}
+
+              {/* The search broke. Blaming the catalogue here would be a lie —
+                  it was never asked. The question is still on the page and one
+                  tap sends it again, which is the whole reason this view exists
+                  instead of a silent return to the home screen. */}
+              {turn.failed && (
+                <div className="v2-empty">
+                  <h2>That didn’t get through</h2>
+                  <p>Nothing reached the catalogue, so there is nothing to show yet.</p>
+                  <button className="v2-retry" onClick={() => run(turn.question)}>
+                    Ask again
+                  </button>
                 </div>
               )}
             {turn.sections.map((s, si) => (
@@ -1132,8 +1155,12 @@ export default function DiscernV2({
           </div>
         </div>
       )}
+      {/* Sits just clear of the bar rather than floating above it: the status
+          belongs to the question still sitting in the composer, and 22px of air
+          read as two unrelated things. --bar is the bar's top edge, so the
+          number below is the whole gap. */}
       {loading && (
-        <div className="v2-crafting" style={{ bottom: `calc(var(--bar) + 22px + ${kb}px)` }}
+        <div className="v2-crafting" style={{ bottom: `calc(var(--bar) - var(--bar-air) + 8px + ${kb}px)` }}
           role="status" aria-live="polite">
           <Progress light />
           <span>{V2_LOADING[loadPhase][0]}{V2_LOADING[loadPhase][1]}</span>
@@ -1467,7 +1494,12 @@ export default function DiscernV2({
       )}
 
       <style jsx global>{`
-        :root{--bar:96px;}
+        /* --bar is the composer wrapper measured from the bottom, and the
+           wrapper carries --bar-air of padding above the bar itself. Anything
+           anchored to --bar is therefore that much higher than it looks, which
+           is why the two are named: a gap can be stated against the bar's real
+           top edge instead of guessed at. */
+        :root{--bar:96px;--bar-air:14px;}
         .v2-root{position:fixed;inset:0;background:${V2.bone};color:${V2.ink};font-family:${V2.sans};overflow:hidden;}
 
         /* Above the menu scrim (70): the trigger doubles as the close control,
@@ -1840,22 +1872,22 @@ export default function DiscernV2({
            so those two surfaces are one system and either can be repainted from
            its own block rather than by hunting through forty rgba literals. */
         .v2-menu{position:absolute;z-index:74;top:0;left:0;bottom:0;width:min(290px,86%);
-          --srf-ink-rgb:26,26,28;
-          --srf-paper:rgba(248,247,245,.88);
-          --srf-fill:${V2.ink};
-          --srf-fill-ink:#fff;
+          --srf-ink-rgb:255,255,255;
+          --srf-paper:rgba(28,27,26,.86);
+          --srf-fill:#fff;
+          --srf-fill-ink:${V2.ink};
           color:rgb(var(--srf-ink-rgb));background:var(--srf-paper);
           backdrop-filter:blur(30px) saturate(140%);-webkit-backdrop-filter:blur(30px) saturate(140%);
-          border-right:1px solid rgba(var(--srf-ink-rgb),.12);box-shadow:8px 0 48px rgba(0,0,0,.22);
+          border-right:1px solid rgba(var(--srf-ink-rgb),.12);box-shadow:8px 0 48px rgba(0,0,0,.34);
           padding:calc(env(safe-area-inset-top,0px) + 24px) 16px calc(env(safe-area-inset-bottom,0px) + 20px);
           display:flex;flex-direction:column;gap:18px;overflow-y:auto;overscroll-behavior:contain;
           transform:translateX(-100%);pointer-events:none;
           transition:transform .34s cubic-bezier(.32,.72,0,1);}
         .v2-menu.on{transform:translateX(0);pointer-events:auto;}
-                .v2-eyebrow-s{font-size:11px;font-weight:500;opacity:.58;letter-spacing:.04em;padding-left:6px;}
+                .v2-eyebrow-s{font-size:11px;font-weight:500;opacity:.42;letter-spacing:.04em;padding-left:6px;}
                 .v2-menu-top{display:flex;align-items:center;justify-content:space-between;padding:0 6px;}
         .v2-menu-logo{width:34px;height:34px;border-radius:12px;display:block;object-fit:cover;
-          box-shadow:0 2px 10px rgba(0,0,0,.16);}
+          box-shadow:0 2px 10px rgba(0,0,0,.28);}
         .v2-avatar{position:relative;width:36px;height:36px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;color:inherit;
           background:rgba(var(--srf-ink-rgb),.12);font-family:${V2.sans};font-size:14px;font-weight:500;}
@@ -1880,11 +1912,11 @@ export default function DiscernV2({
           background:rgba(var(--srf-ink-rgb),.14);border-radius:999px;padding:2px 8px;}
         /* Listed, not live. Dimmed so the row reads as an announcement rather
            than a control, and the tag says when. */
-        ul.v2-menu-nav li button.soon{opacity:.58;cursor:default;}
+        ul.v2-menu-nav li button.soon{opacity:.45;cursor:default;}
         ul.v2-menu-nav li button.soon:hover{background:none;}
         ul.v2-menu-nav li button em.soon{background:none;border:1px solid rgba(var(--srf-ink-rgb),.28);border-radius:999px;
           font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;}
-        .v2-menu-empty{margin:0;font-size:13px;opacity:.61;}
+        .v2-menu-empty{margin:0;font-size:13px;opacity:.45;}
         /* Account view */
         .v2-avatar.on{background:var(--srf-fill);color:var(--srf-fill-ink);}
         .v2-profile{display:flex;flex-direction:column;align-items:center;text-align:center;
@@ -1894,8 +1926,8 @@ export default function DiscernV2({
           background:rgba(var(--srf-ink-rgb),.12);color:inherit;font-family:${V2.sans};font-size:28px;font-weight:500;}
         .v2-profile-face img{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-profile-name{font-family:${V2.sans};font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:4px;}
-        .v2-profile-mail{font-size:13px;opacity:.7;margin-bottom:26px;}
-        .v2-profile-why{font-size:13px;line-height:1.55;opacity:.72;margin:6px 0 20px;max-width:230px;}
+        .v2-profile-mail{font-size:13px;opacity:.55;margin-bottom:26px;}
+        .v2-profile-why{font-size:13px;line-height:1.55;opacity:.6;margin:6px 0 20px;max-width:230px;}
         .v2-profile-act{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;
           min-height:44px;padding:12px 16px;border-radius:12px;border:1px solid rgba(var(--srf-ink-rgb),.2);
           background:none;color:inherit;font-family:${V2.sans};font-size:14px;cursor:pointer;
@@ -1913,10 +1945,10 @@ export default function DiscernV2({
           transition:background .12s;}
         .v2-recent-row:hover{background:rgba(var(--srf-ink-rgb),.07);}
         .v2-menu li button.v2-recent-go{flex:1;min-width:0;min-height:44px;padding:9px 6px;font-family:${V2.sans};font-size:13px;
-          font-weight:400;letter-spacing:0;opacity:.92;background:none;border:none;color:inherit;
+          font-weight:400;letter-spacing:0;opacity:.86;background:none;border:none;color:inherit;
           text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
         .v2-recent-acts{display:flex;gap:2px;padding-right:6px;opacity:0;transition:opacity .14s;}
-        .v2-recent-row:hover .v2-recent-acts,.v2-recent-acts:focus-within{opacity:.8;}
+        .v2-recent-row:hover .v2-recent-acts,.v2-recent-acts:focus-within{opacity:.7;}
         .v2-recent-acts button{position:relative;width:30px;height:30px;display:flex;align-items:center;
           justify-content:center;background:none;border:none;color:inherit;cursor:pointer;border-radius:50%;}
         .v2-recent-acts button::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
@@ -1926,10 +1958,10 @@ export default function DiscernV2({
           background:rgba(var(--srf-ink-rgb),.1);border:1px solid rgba(var(--srf-ink-rgb),.22);color:inherit;
           font-family:${V2.sans};font-size:16px;outline:none;}
         /* Touch has no hover, so the controls are simply always there. */
-        @media(hover:none){.v2-recent-acts{opacity:.7;}}
+        @media(hover:none){.v2-recent-acts{opacity:.55;}}
         .v2-menu-x{width:34px;height:34px;margin:-8px -8px -8px 0;display:flex;align-items:center;
           justify-content:center;background:none;border:none;color:inherit;cursor:pointer;
-          position:relative;opacity:.8;}
+          position:relative;opacity:.7;}
         .v2-menu-x::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
           transform:translate(-50%,-50%);}
         .v2-menu ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:11px;}
@@ -1948,18 +1980,19 @@ export default function DiscernV2({
           display:flex;flex-direction:column;gap:8px;overflow-y:auto;overscroll-behavior:contain;}
         .v2-menu-recent ul{gap:1px;}
         .v2-menu-recent li button{font-family:${V2.sans};font-size:14px;font-weight:400;letter-spacing:0;
-          opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block;}
-        .v2-menu-meta{margin-top:auto;display:flex;justify-content:flex-end;gap:18px;padding-top:16px;
+          opacity:.82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block;}
+        .v2-menu-meta{margin-top:auto;display:flex;justify-content:flex-start;gap:18px;padding-top:16px;
           border-top:1px solid rgba(var(--srf-ink-rgb),.16);font-size:12px;}
         .v2-menu-meta div{display:flex;flex-direction:column;gap:5px;}
-        .v2-menu-meta div:first-child{opacity:.7;}
-        .v2-menu-meta button{background:none;border:none;padding:0;color:inherit;font:inherit;cursor:pointer;opacity:.82;}
+        .v2-menu-meta div:first-child{opacity:.55;}
+        .v2-menu-meta button{background:none;border:none;padding:0;color:inherit;font:inherit;cursor:pointer;opacity:.72;}
         /* A real button rather than a quiet footer link — it is the one thing
            here somebody reaches for while something is going wrong — but not a
            second full-width slab under New search. Solid so it reads as a
-           control, compact and right-hung so it closes the panel instead of
-           competing with what opens it. Still 44 tall: smaller is a matter of
-           width, never of what a thumb has to hit. */
+           control, compact so it does not compete with what opens the panel,
+           and left-hung on the same margin as everything above it. Still 44
+           tall: smaller is a matter of width, never of what a thumb has to
+           hit. */
         .v2-menu-meta .v2-feedback-btn{display:flex;align-items:center;justify-content:center;gap:7px;
           min-height:44px;padding:0 15px;border-radius:12px;opacity:1;border:none;
           background:var(--srf-fill);color:var(--srf-fill-ink);
@@ -2015,7 +2048,7 @@ export default function DiscernV2({
         /* Bar */
         .v2-bar-wrap.home{padding-bottom:calc(env(safe-area-inset-bottom,0px) + 38px);}
         .v2-bar-wrap{position:absolute;z-index:50;left:0;right:0;
-          padding:14px clamp(12px,3.6vw,18px) calc(env(safe-area-inset-bottom,0px) + 16px);pointer-events:none;}
+          padding:var(--bar-air) clamp(12px,3.6vw,18px) calc(env(safe-area-inset-bottom,0px) + 16px);pointer-events:none;}
         .v2-bar-wrap>*{pointer-events:auto;}
         /* Geometry taken from the chat composer: 820px, a 24px radius rather
            than a pill, and the field stacked above its controls. Horizontal
@@ -2239,6 +2272,10 @@ export default function DiscernV2({
           flex-direction:column;align-items:center;gap:20px;}
         .v2-empty h2{font-family:${V2.display};font-weight:600;letter-spacing:-.025em;font-size:clamp(26px,6.6vw,34px);margin:0;}
         .v2-empty p{font-size:14px;font-weight:400;color:${V2.ink70};margin:0;max-width:30ch;line-height:1.6;}
+        .v2-empty .v2-retry{min-height:44px;padding:0 20px;border-radius:12px;border:none;cursor:pointer;
+          background:${V2.ink};color:${V2.bone};font-family:${V2.sans};font-size:14px;font-weight:500;
+          transition:opacity .15s;}
+        .v2-empty .v2-retry:hover{opacity:.86;}
 
         @media(min-width:760px){
           :root{--bar:104px;}
