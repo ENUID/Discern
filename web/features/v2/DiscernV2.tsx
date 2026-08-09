@@ -2113,7 +2113,11 @@ export default function DiscernV2({
            above the page, the docks and trays float well clear of it. Declared
            late so it settles the several rules above it that set box-shadow at
            the same specificity. */
-        .v2-hint,.v2-acc-pill,.v2-inspire-cta,.v2-sug,.v2-crafting{
+        /* The scroll hint keeps the drop shadow but not the rim: it is a
+           prompt, not a control, and an outlined pill directly above the
+           composer competed with it. */
+        .v2-hint{box-shadow:0 6px 20px rgba(0,0,0,.22);}
+        .v2-acc-pill,.v2-inspire-cta,.v2-sug,.v2-crafting{
           box-shadow:
             0 6px 20px rgba(0,0,0,.22),
             inset 0 0 0 1px rgba(255,255,255,.18),

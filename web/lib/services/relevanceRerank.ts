@@ -2,6 +2,7 @@ import { groqChat, FAST_MODEL } from '../groq'
 import { cerebrasChat } from '../cerebras'
 import type { UcpProduct } from './GlobalCatalogService'
 import { matchStyles, vocabPromptBlock } from '../styleVocabulary'
+import { judgeKnowledge } from '../knowledgeModules'
 import { decomposeQuery } from '../queryParser'
 import { getRelevanceAdjustment } from './relevanceAdjustments'
 import { readPersistentRerankCache, writePersistentRerankCache } from './persistentRerankCache'
@@ -9,13 +10,18 @@ import { trendContextLine } from './trendConcepts'
 
 // ── Feature flags ─────────────────────────────────────────────────────────────
 // LLM rerank is ON by default — set RELEVANCE_RERANK=off to disable.
-// Always graceful: 6s timeout, silent fallback to BM25 order, 15-min cache.
+// Always graceful: timeout, silent fallback to BM25 order, 15-min cache.
 export function isRerankEnabled(): boolean {
   return (process.env.RELEVANCE_RERANK ?? 'on').toLowerCase() === 'on'
 }
 const RERANK_TOP_N   = Number(process.env.RELEVANCE_RERANK_TOP_N   ?? 20)
 const DESC_CHARS     = Number(process.env.RELEVANCE_RERANK_DESC_CHARS ?? 220)
-const TIMEOUT_MS     = Number(process.env.RELEVANCE_RERANK_TIMEOUT_MS ?? 2000)
+// 2000 was the value here while the comment above claimed 6s. Scoring twenty
+// products with a reason each does not finish in two seconds on a cold
+// provider, and every timeout silently falls back to keyword order — which is
+// exactly the generic, samey result this judge exists to prevent. Failing back
+// is still the right behaviour; failing back on almost every call was not.
+const TIMEOUT_MS     = Number(process.env.RELEVANCE_RERANK_TIMEOUT_MS ?? 6000)
 // Cost guard: cap LLM judge calls per rolling minute. Over budget → BM25 order
 // (still good, still free). 0 disables the cap. Default 120/min headroom.
 const MAX_LLM_PER_MIN = Number(process.env.RELEVANCE_RERANK_MAX_PER_MIN ?? 120)
@@ -181,16 +187,21 @@ async function llmRelevanceScores(
   // one short line. Empty string until the cron has produced data.
   const trendLine = trendContextLine()
 
-  const system = `You are the relevance engine behind Discern — a curated independent fashion platform. Your job: score how well each product actually satisfies the shopper's intent. Think like a seasoned boutique buyer, not a keyword matcher.
+  const system = `You are the buyer behind Discern — a curated independent fashion platform. Score how well each product actually answers the shopper, the way a stylist with thirty years on the floor would. Not a keyword matcher: the words overlapping is the least interesting thing about a piece.
 ${vocabBlock}${profileLine}${trendLine ? `${trendLine}\n` : ''}
+━━━ WHAT YOU KNOW ━━━
+${judgeKnowledge(query)}
+
 SCORING RUBRIC (0–100). Apply in strict order — a low score at any step caps the total:
 1. GARMENT CATEGORY (0–30 pts): Is it the item type they asked for? Completely wrong category (homeware, book, candle when they want a shirt) → 0–5. Adjacent but not quite right → 10–15. Correct → 25–30.
 2. GENDER (0–20 pts): Explicitly gendered request + wrong gender → 0–8. Unisex or ambiguous request → full pts.
-3. MATERIAL & COLOUR (0–20 pts): Exact match to named material/colour → 20. Implied by the aesthetic (quiet luxury → cashmere/linen/silk) → 15–18. Irrelevant material for the vibe → 0–8.
-4. STYLE & OCCASION (0–20 pts): Silhouette, formality level, and vibe match the moment they described → 15–20. Partially → 8–14. Mismatched (formal piece for beach, etc.) → 0–7.
-5. QUALITY SIGNAL (0–10 pts): When intent is open, prefer considered design, honest materials, and independent brands over generic filler.
+3. FABRIC & COLOUR (0–20 pts): Judge against the rules above, not against the words. A fibre that suits the season and the use, and a colour that sits in one temperature family or is a proven pairing → 16–20. Named match with the wrong fibre for the climate, or a colour that fights the rest of the ask → 6–12. Marketing with no fibre named → cap at 10.
+4. CUT & OCCASION (0–20 pts): The cut has to answer the ask and the formality has to clear its floor. Right category at the wrong formality — a sneaker for cocktail, a hoodie for an interview — is a failure however well the words match → 0–7. Silhouette, formality and vibe all land → 16–20.
+5. QUALITY SIGNAL (0–10 pts): Named fibre grade, stated weight, real construction and hardware over generic filler. When intent is open this is the tie-breaker.
 
-A precise match that truly fits the intent beats a generic item that merely contains the query words.
+Two things separate a good answer from a merely matching one, and both are invisible to a keyword search: whether the fabric suits the season and the use, and whether the colour and formality suit the moment. Weigh them accordingly.
+
+SPREAD THE SCORES. If everything lands in the seventies you have not judged anything — you have re-sorted a search. The best piece for this exact ask should clear the merely-plausible one by twenty points or more, and something that only shares vocabulary with the query belongs under 30.
 
 Output ONLY a JSON array — one object per product, no prose, no markdown, no explanation outside the JSON:
 [{"i":0,"s":87,"r":"linen camp collar, beach wedding vibe"},{"i":1,"s":12,"r":"synthetic — wrong material"},...]

@@ -194,3 +194,47 @@ export function selectKnowledgeModules(question: string, ctx: KnowledgeCtx = {})
   if (wantsRegional && cc !== 'in') picked.push(KNOW_REGIONAL)
   return picked.length ? '\n\n' + picked.join('\n\n') : ''
 }
+
+// ── Judging, not writing ─────────────────────────────────────────────────────
+// Everything above shapes what Fabrics SAYS. None of it reached the thing that
+// decides which products are SHOWN — that ran on keyword overlap plus a thin
+// generic rubric, which is why the prose read like a stylist while the results
+// read like a search box, and why two different questions could return the same
+// pieces.
+//
+// These are the same rules compressed to what a judge needs: enough to tell a
+// good answer from a merely matching one, small enough to run on every search.
+
+const JUDGE_COLOR = `COLOUR — one temperature per outfit: warm family (camel, tan, cream, chocolate, olive, rust) or cool (black, white, grey, navy, charcoal). Navy, mid-grey, denim and white bridge both. Camel with black is the one licensed cross-family pairing. Tonal and analogous read refined; complementary reads bold and wants one side muted (navy with amber, not cobalt with orange). Proven pairs: navy+camel, olive+rust, charcoal+burgundy, cream+chocolate, emerald+gold, white+light blue+tan, marigold+deep teal. Colour near the face has to flatter a person; colour below the waist only has to agree with the outfit — so a risky colour in trousers or shoes scores better than the same risk at the collar.`
+
+const JUDGE_FABRIC = `FABRIC — the fibre has to suit the season and the use. Hot or humid: linen, cotton voile, seersucker, lyocell, open weaves; polyester next to skin is wrong at any price. Cold: wool, lambswool, merino, cashmere, flannel, tweed. Quality tells that deserve a higher score: a named fibre grade or mill, stated GSM or momme, full or half canvas, horn or corozo buttons, long-staple cotton. Marketing that deserves a lower one: "premium fabric" with no fibre named, a 5%-cashmere blend sold as cashmere, a fused blazer at a tailored price.`
+
+const JUDGE_SILHOUETTE = `CUT — volume goes up or down, never both: a fitted top wants a wide or straight leg, an oversized top wants a slim bottom. Fit words are literal, not decorative — skinny, slim, straight, relaxed, tapered, oversized each mean a specific cut, and a piece whose cut contradicts the ask is a poor answer however well its words match.`
+
+const JUDGE_OCCASION = `OCCASION — formality is a floor, not a flavour. Black tie and cocktail exclude sneakers and casual cotton outright. Business casual is a blazer or fine knit over a collar. Smart casual is elevated basics, not a suit and not a hoodie. Heat changes the fabric at the same formality — a linen suit, never no suit. Overdressed recovers, underdressed does not, so when the ask is ambiguous the sharper piece is the safer answer. Beach and garden events exclude black; weddings exclude anything that competes with the couple.`
+
+const JUDGE_TRIGGERS: { text: string; words: string[] }[] = [
+  { text: JUDGE_COLOR, words: ['colour', 'color', 'palette', 'tone', 'shade', 'match', 'goes with', 'pair', 'combination', 'contrast', 'neutral', 'bright', 'pastel', 'monochrome'] },
+  { text: JUDGE_FABRIC, words: ['fabric', 'material', 'linen', 'cotton', 'wool', 'cashmere', 'silk', 'leather', 'denim', 'knit', 'breathable', 'warm', 'winter', 'summer', 'monsoon', 'humid', 'quality', 'lasts'] },
+  { text: JUDGE_SILHOUETTE, words: ['fit', 'oversized', 'slim', 'relaxed', 'baggy', 'tapered', 'straight', 'wide', 'cropped', 'longline', 'silhouette', 'shape', 'proportion', 'layer'] },
+  { text: JUDGE_OCCASION, words: ['wedding', 'party', 'interview', 'office', 'work', 'formal', 'casual', 'date', 'dinner', 'beach', 'travel', 'festival', 'diwali', 'eid', 'sangeet', 'mehendi', 'cocktail', 'black tie', 'occasion', 'event'] },
+]
+
+/**
+ * The fashion rules worth handing the relevance judge for one query.
+ *
+ * Selected rather than always-on because this runs on every search and the
+ * whole block would cost more than the judgement is worth. Colour and occasion
+ * carry the most weight when nothing matches, since those are the two axes a
+ * keyword search is blindest to.
+ */
+export function judgeKnowledge(query: string): string {
+  const q = ' ' + (query || '').toLowerCase().replace(/[^a-z0-9']+/g, ' ') + ' '
+  const picked = JUDGE_TRIGGERS
+    .filter(t => t.words.some(w => (w.includes(' ') ? q.includes(w) : q.includes(` ${w} `))))
+    .map(t => t.text)
+  // Nothing named: an open ask still has to be judged as fashion, and colour
+  // and occasion are what separate a considered answer from a keyword match.
+  if (!picked.length) return `${JUDGE_COLOR}\n${JUDGE_OCCASION}`
+  return picked.slice(0, 3).join('\n')
+}
