@@ -652,11 +652,6 @@ export default function DiscernV2({
       go: () => setBagOpen(true) },
     { label: 'History', icon: <HistoryIcon size={16} />, count: 0, soon: false,
       go: () => setHistOpen(true) },
-    // Named Feedback because that is the word people look for when something
-    // has gone wrong and they want to tell someone. "Report a problem" would be
-    // narrower than what this takes, and "Tell us something" says nothing.
-    { label: 'Feedback', icon: <DocumentIcon size={16} />, count: 0, soon: false,
-      go: () => setFeedbackOpen(true) },
   ]
 
   /** The letter on the avatar, as the sidebar had it. */
@@ -1245,11 +1240,18 @@ export default function DiscernV2({
           </>
         )}
 
-        {menuView === 'nav' && authStatus === 'authenticated' && (
+        {/* Feedback sits at the foot rather than among the destinations: it is
+            not a place in the app, it is the way out of a problem, and the foot
+            of the drawer is where you look once nothing else has helped.
+            Sign-out used to be here and now lives in the account view alone —
+            two ways out of an account is one more than anyone needs, and this is
+            the more useful thing to have within reach. */}
+        {menuView === 'nav' && (
           <div className="v2-menu-meta">
-            <button tabIndex={menuOpen ? 0 : -1} onClick={() => { setMenuOpen(false); signOut() }}>
-              <ExternalLinkIcon size={15} />
-              Sign out
+            <button className="v2-feedback-btn" tabIndex={menuOpen ? 0 : -1}
+              onClick={() => { setMenuOpen(false); setFeedbackOpen(true) }}>
+              <DocumentIcon size={15} />
+              Feedback
             </button>
           </div>
         )}
@@ -1868,6 +1870,13 @@ export default function DiscernV2({
         .v2-menu-meta div{display:flex;flex-direction:column;gap:5px;}
         .v2-menu-meta div:first-child{opacity:.55;}
         .v2-menu-meta button{background:none;border:none;padding:0;color:inherit;font:inherit;cursor:pointer;opacity:.72;}
+        /* A real button rather than a quiet footer link — it is the one thing
+           here somebody reaches for while something is going wrong. */
+        .v2-menu-meta .v2-feedback-btn{display:flex;align-items:center;justify-content:center;gap:9px;
+          width:100%;min-height:44px;padding:11px 16px;border-radius:12px;opacity:1;
+          border:1px solid rgba(255,255,255,.2);font-family:${V2.sans};font-size:14px;
+          transition:background .14s;}
+        .v2-menu-meta .v2-feedback-btn:hover{background:rgba(255,255,255,.08);}
         .v2-menu-cta{display:flex;align-items:center;gap:10px;justify-content:center;cursor:pointer;
           padding:14px;border:1px solid rgba(255,255,255,.28);border-radius:2px;background:none;
           color:#fff;font-size:11px;letter-spacing:.16em;transition:background .24s ${V2.ease};}
