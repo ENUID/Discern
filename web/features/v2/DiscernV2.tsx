@@ -1379,7 +1379,7 @@ export default function DiscernV2({
                 control focuses the field: at this size most of its area is
                 margin, and margin that looks like a text field should behave
                 like one. */}
-            <div className={`v2-bar ${focused ? 'focus' : ''} ${onDark ? 'on-dark' : 'on-light'}`}
+            <div className={`v2-bar ${focused ? 'focus' : ''} ${onDark ? '' : 'inverted'}`}
               onMouseDown={e => {
                 if (e.target !== e.currentTarget &&
                     !(e.target as HTMLElement).classList?.contains('v2-bar-top')) return
@@ -1940,54 +1940,64 @@ export default function DiscernV2({
            so unequal sides would shift every child off-centre; top and bottom
            are unequal on purpose, since the control row carries its own optical
            inset. Only the dimensions came across — the glass is v2's. */
+        /* ── The bar contrasts with what is behind it ──────────────────────
+           White is the resting state, because the film is what the bar spends
+           most of its life over and a dark bar on a dark picture is a hole in
+           the screen rather than a control. Over the bone paper of a results
+           page it inverts to near-black for the same reason in reverse.
+
+           Both states are the same pane: same radius, same blur, same three
+           insets — a hairline all the way round, a brighter line along the top
+           where light would catch an edge, a fainter one along the bottom for
+           thickness. Only the polarity changes, so it reads as the bar adapting
+           rather than as two different controls swapping places.
+
+           The rim inverts with it. A white rim on a white bar is no rim at all,
+           so the light state takes a dark hairline and keeps the white specular;
+           the dark state does the opposite. */
         .v2-bar{display:flex;flex-direction:column;gap:10px;padding:18px 16px 10px;width:100%;
-          max-width:min(820px,96vw);margin:0 auto;border-radius:24px;color:#fff;background:${V2.glassDark};
-          backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%);
-          /* The edge is what makes this read as a pane of glass rather than a
-             dark rectangle. There was a 1px highlight on the top and nothing
-             anywhere else, so against the film the bar had no bottom or sides —
-             it dissolved into the picture. Three insets do the work: a hairline
-             all the way round to cut the shape out of whatever is behind it, a
-             brighter line along the top where light would catch a real edge,
-             and a fainter one along the bottom for the thickness.
-             One transition, not two: the second declaration used to replace
-             the first, which quietly dropped colour from it and left the
-             light/dark flip animating only its background. */
+          max-width:min(820px,96vw);margin:0 auto;border-radius:24px;
+          color:${V2.ink};background:rgba(250,249,247,.82);
+          backdrop-filter:blur(26px) saturate(160%);-webkit-backdrop-filter:blur(26px) saturate(160%);
           box-shadow:
-            0 12px 44px rgba(0,0,0,.34),
-            0 2px 8px rgba(0,0,0,.16),
-            inset 0 0 0 1px rgba(255,255,255,.18),
-            inset 0 1.5px 0 rgba(255,255,255,.40),
-            inset 0 -1px 0 rgba(255,255,255,.13);
-          transition:background .18s linear,color .18s linear,box-shadow .18s linear;}
-        .v2-bar.focus{background:rgba(26,24,21,.9);}
-        /* ── The bar reads against whatever is behind it ────────────────────
-           On the film it goes light; on bone paper it goes dark. Both are the
-           same shape and the same glass, only inverted, so the change reads as
-           the bar adapting rather than as a different control. Fast and linear
-           — an eased fade at this size looks like a bug. */
-        /* Inverted, same construction: on paper the rim has to be the darker
-           line and the specular stays white, or the bar has no edge at all. */
-        .v2-bar.on-light{background:rgba(248,247,245,.86);color:${V2.ink};
+            0 14px 46px rgba(0,0,0,.30),
+            0 2px 8px rgba(0,0,0,.14),
+            inset 0 0 0 1px rgba(26,26,28,.10),
+            inset 0 1.5px 0 rgba(255,255,255,.96),
+            inset 0 -1px 0 rgba(26,26,28,.05);
+          /* Fast enough to feel like a property of the bar rather than an
+             animation played at it, and linear because an eased fade at this
+             size reads as a stutter. Every property that changes is listed:
+             a shorthand that misses one leaves that part snapping. */
+          transition:background .16s linear,color .16s linear,box-shadow .16s linear;}
+        .v2-bar.focus{background:rgba(253,252,251,.95);}
+        .v2-plus,.v2-send{background:rgba(26,26,28,.08);color:${V2.ink};}
+        .v2-send.on{background:${V2.ink};color:#fff;}
+        .v2-send.busy{background:none;color:${V2.ink};}
+        .v2-field textarea{color:${V2.ink};caret-color:${V2.ink};}
+        .v2-ph,.v2-marquee span{color:rgba(26,26,28,.5);}
+        .v2-shot-chip button{background:rgba(0,0,0,.5);}
+
+        /* Over paper: the same pane, inverted. */
+        .v2-bar.inverted{color:#fff;background:rgba(28,27,26,.82);
           box-shadow:
-            0 12px 44px rgba(0,0,0,.16),
-            0 2px 8px rgba(0,0,0,.06),
-            inset 0 0 0 1px rgba(26,26,28,.12),
-            inset 0 1.5px 0 rgba(255,255,255,.95),
-            inset 0 -1px 0 rgba(26,26,28,.05);}
-        .v2-bar.on-light .v2-plus,.v2-bar.on-light .v2-send{
-          background:rgba(26,26,28,.08);color:${V2.ink};}
-        .v2-bar.on-light .v2-send.on{background:${V2.ink};color:#fff;}
-        .v2-bar.on-light .v2-send.busy{background:none;color:${V2.ink};}
-        .v2-bar.on-light textarea{color:${V2.ink};caret-color:${V2.ink};}
-        .v2-bar.on-light .v2-ph,.v2-bar.on-light .v2-marquee span{color:rgba(26,26,28,.5);}
-        .v2-bar.on-light.focus{background:rgba(252,251,250,.96);}
-        .v2-bar.on-light .v2-shot-chip button{background:rgba(0,0,0,.5);}
+            0 14px 46px rgba(0,0,0,.22),
+            0 2px 8px rgba(0,0,0,.10),
+            inset 0 0 0 1px rgba(255,255,255,.16),
+            inset 0 1.5px 0 rgba(255,255,255,.34),
+            inset 0 -1px 0 rgba(255,255,255,.10);}
+        .v2-bar.inverted.focus{background:rgba(22,21,20,.92);}
+        .v2-bar.inverted .v2-plus,.v2-bar.inverted .v2-send{
+          background:rgba(255,255,255,.14);color:#fff;}
+        .v2-bar.inverted .v2-send.on{background:#fff;color:${V2.ink};}
+        .v2-bar.inverted .v2-send.busy{background:none;color:#fff;}
+        .v2-bar.inverted .v2-field textarea{color:#fff;caret-color:#fff;}
+        .v2-bar.inverted .v2-ph,.v2-bar.inverted .v2-marquee span{color:rgba(255,255,255,.6);}
+        .v2-bar.inverted .v2-shot-chip button{background:rgba(0,0,0,.62);}
         .v2-plus,.v2-send{flex-shrink:0;border:none;cursor:pointer;display:flex;align-items:center;
-          justify-content:center;border-radius:50%;color:#fff;transition:background .2s ${V2.ease},transform .12s ${V2.ease};}
-        .v2-plus{width:38px;height:38px;background:rgba(255,255,255,.13);
-          display:flex;align-items:center;justify-content:center;border-radius:50%;
-          cursor:pointer;flex-shrink:0;color:inherit;}
+          justify-content:center;border-radius:50%;transition:background .16s linear,color .16s linear,transform .12s ${V2.ease};}
+        .v2-plus{width:38px;height:38px;display:flex;align-items:center;justify-content:center;
+          border-radius:50%;cursor:pointer;flex-shrink:0;}
         .v2-plus:active{transform:scale(.9);}
         /* Attached photos sit above the field, inside the same glass bar. The
            column gap spaces them now, so the old order/margin overrides that
@@ -2000,27 +2010,26 @@ export default function DiscernV2({
         .v2-shot-chip img{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-shot-chip button{position:absolute;top:2px;right:2px;width:15px;height:15px;
           display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
-          background:rgba(0,0,0,.62);cursor:pointer;padding:0;}
+          cursor:pointer;padding:0;}
         .v2-plus:active{transform:scale(.9);}
-        .v2-send{width:33px;height:33px;background:rgba(255,255,255,.13);
-          transition:transform .16s ${V2.ease},background .2s ${V2.ease};}
+        .v2-send{width:33px;height:33px;
+          transition:transform .16s ${V2.ease},background .16s linear,color .16s linear;}
         .v2-send:active{transform:scale(.86);}
         .v2-bar-press{transform-origin:center bottom;transition:transform .2s ${V2.ease};}
         .v2-bar-press:active{transform:scale(.985);}
-        .v2-send.on{background:#fff;color:${V2.ink};}
-        .v2-send.busy{background:none;color:inherit;box-shadow:inset 0 0 0 1.25px currentColor;opacity:.75;}
+        .v2-send.busy{background:none;box-shadow:inset 0 0 0 1.25px currentColor;opacity:.75;}
         .v2-send.busy svg{animation:v2-pulse 1.1s ${V2.easeInOut} infinite;}
         @keyframes v2-pulse{0%,100%{opacity:1}50%{opacity:.35}}
         .v2-field{position:relative;flex:1;min-width:0;overflow:hidden;}
         .v2-field textarea{width:100%;border:none;background:none;outline:none;resize:none;font-family:${V2.sans};
-          font-size:16px;line-height:1.42;color:#fff;max-height:76px;overflow-y:auto;display:block;caret-color:#fff;}
-        .v2-ph{position:absolute;left:0;top:0;pointer-events:none;font-size:16px;line-height:1.42;color:rgba(255,255,255,.6);}
+          font-size:16px;line-height:1.42;max-height:76px;overflow-y:auto;display:block;}
+        .v2-ph{position:absolute;left:0;top:0;pointer-events:none;font-size:16px;line-height:1.42;}
         /* Idle prompt drifts continuously, matching the reference ticker. */
         .v2-marquee{position:absolute;left:0;right:0;top:0;pointer-events:none;overflow:hidden;
           mask-image:linear-gradient(to right,transparent,#000 9%,#000 91%,transparent);
           -webkit-mask-image:linear-gradient(to right,transparent,#000 9%,#000 91%,transparent);}
         .v2-marquee>div{display:flex;gap:44px;width:max-content;animation:v2-drift 44s linear infinite;}
-        .v2-marquee span{font-size:16px;line-height:1.42;color:rgba(255,255,255,.6);white-space:nowrap;}
+        .v2-marquee span{font-size:16px;line-height:1.42;white-space:nowrap;}
         @keyframes v2-drift{from{transform:translateX(0)}to{transform:translateX(-50%)}}
         @media(prefers-reduced-motion:reduce){
           .v2-marquee>div{animation:none}
