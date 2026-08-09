@@ -124,50 +124,57 @@ export default function V2Feedback({ open, onClose }: { open: boolean; onClose: 
         .v2f-outer{position:absolute;inset:0;z-index:120;display:flex;align-items:flex-end;justify-content:center;
           background:rgba(16,14,12,.5);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
           animation:v2f-fade .22s ${V2.ease};}
+        /* Same four values as the drawer — see the note there. Denser paper
+           than the drawer's because this one sits over a scrim and a form
+           should not have the page reading through it. */
         .v2f-card{position:relative;width:100%;max-width:min(460px,96vw);
+          --srf-ink-rgb:26,26,28;
+          --srf-paper:rgba(248,247,245,.97);
+          --srf-fill:${V2.ink};
+          --srf-fill-ink:#fff;
           margin:0 auto calc(env(safe-area-inset-bottom,0px) + 12px);
           padding:26px 22px calc(env(safe-area-inset-bottom,0px) + 22px);
-          border-radius:24px;color:#fff;background:rgba(28,27,26,.94);
+          border-radius:24px;color:rgb(var(--srf-ink-rgb));background:var(--srf-paper);
           backdrop-filter:blur(30px) saturate(140%);-webkit-backdrop-filter:blur(30px) saturate(140%);
-          border:1px solid rgba(255,255,255,.12);box-shadow:0 -10px 60px rgba(0,0,0,.4);
+          border:1px solid rgba(var(--srf-ink-rgb),.1);box-shadow:0 -10px 60px rgba(0,0,0,.26);
           max-height:88svh;overflow-y:auto;animation:v2f-rise .3s ${V2.ease};}
         @media(min-width:600px){
           .v2f-outer{align-items:center;}
           .v2f-card{margin:0;border-radius:24px;}
         }
         .v2f-x{position:absolute;top:16px;right:16px;width:34px;height:34px;display:flex;align-items:center;
-          justify-content:center;border:none;border-radius:50%;cursor:pointer;color:#fff;
-          background:rgba(255,255,255,.12);}
+          justify-content:center;border:none;border-radius:50%;cursor:pointer;color:inherit;
+          background:rgba(var(--srf-ink-rgb),.12);}
         /* 34px disc, 44px target. */
         .v2f-x::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
           transform:translate(-50%,-50%);}
         .v2f-card h2{font-family:${V2.editorial};font-weight:400;font-size:30px;line-height:1.1;
           margin:0 0 8px;padding-right:44px;}
-        .v2f-sub{font-size:13px;line-height:1.55;opacity:.62;margin:0 0 22px;}
+        .v2f-sub{font-size:13px;line-height:1.55;opacity:.75;margin:0 0 22px;}
         .v2f-kinds{display:flex;gap:8px;margin-bottom:20px;}
         .v2f-kinds button{flex:1;min-height:44px;padding:11px 10px;border-radius:12px;cursor:pointer;
-          font-family:${V2.sans};font-size:13px;color:#fff;background:rgba(255,255,255,.08);
-          border:1px solid rgba(255,255,255,.16);transition:background .16s,border-color .16s;}
-        .v2f-kinds button.on{background:#fff;color:${V2.ink};border-color:transparent;font-weight:500;}
-        .v2f-label{display:flex;align-items:baseline;gap:7px;font-size:12px;opacity:.6;margin-bottom:7px;}
-        .v2f-label em{font-style:normal;font-size:11px;opacity:.7;}
+          font-family:${V2.sans};font-size:13px;color:inherit;background:rgba(var(--srf-ink-rgb),.08);
+          border:1px solid rgba(var(--srf-ink-rgb),.16);transition:background .16s,border-color .16s;}
+        .v2f-kinds button.on{background:var(--srf-fill);color:var(--srf-fill-ink);border-color:transparent;font-weight:500;}
+        .v2f-label{display:flex;align-items:baseline;gap:7px;font-size:12px;opacity:.72;margin-bottom:7px;}
+        .v2f-label em{font-style:normal;font-size:11px;opacity:.8;}
         /* 16px on every field: below that iOS zooms the page in on focus. */
         .v2f-msg,.v2f-mail{width:100%;box-sizing:border-box;padding:13px 14px;border-radius:12px;
-          background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);color:#fff;
+          background:rgba(var(--srf-ink-rgb),.07);border:1px solid rgba(var(--srf-ink-rgb),.16);color:inherit;
           font-family:${V2.sans};font-size:16px;line-height:1.5;outline:none;
           transition:border-color .18s,background .18s;}
         .v2f-msg{resize:vertical;min-height:112px;margin-bottom:18px;}
         .v2f-mail{margin-bottom:8px;}
-        .v2f-note{font-size:12px;opacity:.5;margin:0 0 20px;}
-        .v2f-msg:focus,.v2f-mail:focus{border-color:rgba(255,255,255,.5);background:rgba(255,255,255,.11);}
-        .v2f-msg::placeholder,.v2f-mail::placeholder{color:rgba(255,255,255,.34);}
-        .v2f-err{font-size:13px;color:#ff9c8f;margin-bottom:14px;}
-        .v2f-send{width:100%;min-height:48px;border:none;border-radius:12px;cursor:pointer;background:#fff;
-          color:${V2.ink};font-family:${V2.sans};font-size:15px;font-weight:500;
+        .v2f-note{font-size:12px;opacity:.65;margin:0 0 20px;}
+        .v2f-msg:focus,.v2f-mail:focus{border-color:rgba(var(--srf-ink-rgb),.45);background:rgba(var(--srf-ink-rgb),.11);}
+        .v2f-msg::placeholder,.v2f-mail::placeholder{color:rgba(var(--srf-ink-rgb),.46);}
+        .v2f-err{font-size:13px;color:#9c2b1b;margin-bottom:14px;}
+        .v2f-send{width:100%;min-height:48px;border:none;border-radius:12px;cursor:pointer;background:var(--srf-fill);
+          color:var(--srf-fill-ink);font-family:${V2.sans};font-size:15px;font-weight:500;
           transition:opacity .16s;}
         .v2f-send:disabled{opacity:.42;cursor:default;}
         .v2f-done{text-align:center;padding:14px 0 4px;}
-        .v2f-done p{font-size:13px;opacity:.62;margin:0 0 24px;}
+        .v2f-done p{font-size:13px;opacity:.75;margin:0 0 24px;}
         @keyframes v2f-fade{from{opacity:0}to{opacity:1}}
         @keyframes v2f-rise{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
         @media(prefers-reduced-motion:reduce){

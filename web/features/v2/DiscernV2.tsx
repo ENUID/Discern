@@ -1274,7 +1274,7 @@ export default function DiscernV2({
           <div className="v2-menu-meta">
             <button className="v2-feedback-btn" tabIndex={menuOpen ? 0 : -1}
               onClick={() => { setMenuOpen(false); setFeedbackOpen(true) }}>
-              <DocumentIcon size={15} />
+              <DocumentIcon size={14} />
               Feedback
             </button>
           </div>
@@ -1834,18 +1834,19 @@ export default function DiscernV2({
         .v2-ov{position:absolute;inset:0;z-index:73;background:rgba(16,14,12,0);pointer-events:none;
           transition:background .34s;}
         .v2-ov.on{background:rgba(16,14,12,.4);pointer-events:auto;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);}
-        /* The drawer's whole palette is four values. Every rule below states
-           its colour as a tint of --m-ink-rgb or one of the fill pair, so the
-           surface can be flipped from the one place rather than by hunting
-           through forty rgba literals. */
+        /* A flipping surface's whole palette is four values: an ink channel
+           every tint is expressed against, the paper it sits on, and the pair
+           for solid buttons. Stated once here and once on the feedback sheet,
+           so those two surfaces are one system and either can be repainted from
+           its own block rather than by hunting through forty rgba literals. */
         .v2-menu{position:absolute;z-index:74;top:0;left:0;bottom:0;width:min(290px,86%);
-          --m-ink-rgb:26,26,28;
-          --m-paper:rgba(248,247,245,.88);
-          --m-fill:${V2.ink};
-          --m-fill-ink:#fff;
-          color:rgb(var(--m-ink-rgb));background:var(--m-paper);
+          --srf-ink-rgb:26,26,28;
+          --srf-paper:rgba(248,247,245,.88);
+          --srf-fill:${V2.ink};
+          --srf-fill-ink:#fff;
+          color:rgb(var(--srf-ink-rgb));background:var(--srf-paper);
           backdrop-filter:blur(30px) saturate(140%);-webkit-backdrop-filter:blur(30px) saturate(140%);
-          border-right:1px solid rgba(var(--m-ink-rgb),.12);box-shadow:8px 0 48px rgba(0,0,0,.22);
+          border-right:1px solid rgba(var(--srf-ink-rgb),.12);box-shadow:8px 0 48px rgba(0,0,0,.22);
           padding:calc(env(safe-area-inset-top,0px) + 24px) 16px calc(env(safe-area-inset-bottom,0px) + 20px);
           display:flex;flex-direction:column;gap:18px;overflow-y:auto;overscroll-behavior:contain;
           transform:translateX(-100%);pointer-events:none;
@@ -1857,14 +1858,14 @@ export default function DiscernV2({
           box-shadow:0 2px 10px rgba(0,0,0,.16);}
         .v2-avatar{position:relative;width:36px;height:36px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;color:inherit;
-          background:rgba(var(--m-ink-rgb),.12);font-family:${V2.sans};font-size:14px;font-weight:500;}
-                .v2-avatar:hover{background:rgba(var(--m-ink-rgb),.2);}
+          background:rgba(var(--srf-ink-rgb),.12);font-family:${V2.sans};font-size:14px;font-weight:500;}
+                .v2-avatar:hover{background:rgba(var(--srf-ink-rgb),.2);}
         /* The disc is 36 because that is the drawing; the finger gets 44. */
         .v2-avatar::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
           transform:translate(-50%,-50%);}
         .v2-newchat{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;
           min-height:44px;padding:11px 16px;border-radius:12px;border:none;cursor:pointer;
-          background:var(--m-fill);color:var(--m-fill-ink);font-family:${V2.sans};font-size:13px;font-weight:500;
+          background:var(--srf-fill);color:var(--srf-fill-ink);font-family:${V2.sans};font-size:13px;font-weight:500;
           transition:opacity .15s;}
         .v2-newchat:hover{opacity:.86;}
         /* The fixed destinations. A row, not a headline — the chat UI's shape:
@@ -1874,33 +1875,33 @@ export default function DiscernV2({
           padding:11px 6px;border-radius:12px;border:none;cursor:pointer;background:none;color:inherit;
           font-family:${V2.sans};font-size:14px;font-weight:400;letter-spacing:0;text-align:left;
           transition:background .12s;}
-        ul.v2-menu-nav li button:hover{background:rgba(var(--m-ink-rgb),.08);opacity:1;}
+        ul.v2-menu-nav li button:hover{background:rgba(var(--srf-ink-rgb),.08);opacity:1;}
         ul.v2-menu-nav li button em{margin-left:auto;font-style:normal;font-size:11px;font-weight:500;
-          background:rgba(var(--m-ink-rgb),.14);border-radius:999px;padding:2px 8px;}
+          background:rgba(var(--srf-ink-rgb),.14);border-radius:999px;padding:2px 8px;}
         /* Listed, not live. Dimmed so the row reads as an announcement rather
            than a control, and the tag says when. */
         ul.v2-menu-nav li button.soon{opacity:.58;cursor:default;}
         ul.v2-menu-nav li button.soon:hover{background:none;}
-        ul.v2-menu-nav li button em.soon{background:none;border:1px solid rgba(var(--m-ink-rgb),.28);border-radius:999px;
+        ul.v2-menu-nav li button em.soon{background:none;border:1px solid rgba(var(--srf-ink-rgb),.28);border-radius:999px;
           font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;}
         .v2-menu-empty{margin:0;font-size:13px;opacity:.61;}
         /* Account view */
-        .v2-avatar.on{background:var(--m-fill);color:var(--m-fill-ink);}
+        .v2-avatar.on{background:var(--srf-fill);color:var(--srf-fill-ink);}
         .v2-profile{display:flex;flex-direction:column;align-items:center;text-align:center;
           padding:14px 6px 10px;gap:0;}
         .v2-profile-face{width:78px;height:78px;border-radius:50%;overflow:hidden;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;margin-bottom:16px;
-          background:rgba(var(--m-ink-rgb),.12);color:inherit;font-family:${V2.sans};font-size:28px;font-weight:500;}
+          background:rgba(var(--srf-ink-rgb),.12);color:inherit;font-family:${V2.sans};font-size:28px;font-weight:500;}
         .v2-profile-face img{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-profile-name{font-family:${V2.sans};font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:4px;}
         .v2-profile-mail{font-size:13px;opacity:.7;margin-bottom:26px;}
         .v2-profile-why{font-size:13px;line-height:1.55;opacity:.72;margin:6px 0 20px;max-width:230px;}
         .v2-profile-act{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;
-          min-height:44px;padding:12px 16px;border-radius:12px;border:1px solid rgba(var(--m-ink-rgb),.2);
+          min-height:44px;padding:12px 16px;border-radius:12px;border:1px solid rgba(var(--srf-ink-rgb),.2);
           background:none;color:inherit;font-family:${V2.sans};font-size:14px;cursor:pointer;
           transition:background .14s;}
-        .v2-profile-act:hover{background:rgba(var(--m-ink-rgb),.08);}
-        .v2-profile-act.primary{background:var(--m-fill);color:var(--m-fill-ink);border-color:transparent;font-weight:500;}
+        .v2-profile-act:hover{background:rgba(var(--srf-ink-rgb),.08);}
+        .v2-profile-act.primary{background:var(--srf-fill);color:var(--srf-fill-ink);border-color:transparent;font-weight:500;}
         /* Sign out is not the next step after Save — one commits the form, the
            other leaves the account. Sitting flush they read as one control cut
            in half, so the sizes block ends and this begins. */
@@ -1910,7 +1911,7 @@ export default function DiscernV2({
            rather than a list of questions and four icons. */
         .v2-recent-row{display:flex;align-items:center;gap:4px;min-height:44px;border-radius:12px;
           transition:background .12s;}
-        .v2-recent-row:hover{background:rgba(var(--m-ink-rgb),.07);}
+        .v2-recent-row:hover{background:rgba(var(--srf-ink-rgb),.07);}
         .v2-menu li button.v2-recent-go{flex:1;min-width:0;min-height:44px;padding:9px 6px;font-family:${V2.sans};font-size:13px;
           font-weight:400;letter-spacing:0;opacity:.92;background:none;border:none;color:inherit;
           text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -1920,9 +1921,9 @@ export default function DiscernV2({
           justify-content:center;background:none;border:none;color:inherit;cursor:pointer;border-radius:50%;}
         .v2-recent-acts button::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
           transform:translate(-50%,-50%);}
-        .v2-recent-acts button:hover{background:rgba(var(--m-ink-rgb),.12);}
+        .v2-recent-acts button:hover{background:rgba(var(--srf-ink-rgb),.12);}
         .v2-recent-input{flex:1;min-width:0;margin:2px 6px;padding:7px 9px;border-radius:12px;
-          background:rgba(var(--m-ink-rgb),.1);border:1px solid rgba(var(--m-ink-rgb),.22);color:inherit;
+          background:rgba(var(--srf-ink-rgb),.1);border:1px solid rgba(var(--srf-ink-rgb),.22);color:inherit;
           font-family:${V2.sans};font-size:16px;outline:none;}
         /* Touch has no hover, so the controls are simply always there. */
         @media(hover:none){.v2-recent-acts{opacity:.7;}}
@@ -1943,27 +1944,31 @@ export default function DiscernV2({
         .v2-menu li button:not(.v2-menu-nav *),.v2-menu-meta button{position:relative;}
         .v2-menu li button:not(.v2-menu-nav *)::before,.v2-menu-meta button::before{content:'';position:absolute;
           left:0;right:0;top:50%;height:44px;transform:translateY(-50%);}
-        .v2-menu-recent{padding-top:16px;border-top:1px solid rgba(var(--m-ink-rgb),.14);flex:1;min-height:0;
+        .v2-menu-recent{padding-top:16px;border-top:1px solid rgba(var(--srf-ink-rgb),.14);flex:1;min-height:0;
           display:flex;flex-direction:column;gap:8px;overflow-y:auto;overscroll-behavior:contain;}
         .v2-menu-recent ul{gap:1px;}
         .v2-menu-recent li button{font-family:${V2.sans};font-size:14px;font-weight:400;letter-spacing:0;
           opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block;}
-        .v2-menu-meta{margin-top:auto;display:flex;justify-content:space-between;gap:18px;padding-top:16px;
-          border-top:1px solid rgba(var(--m-ink-rgb),.16);font-size:12px;}
+        .v2-menu-meta{margin-top:auto;display:flex;justify-content:flex-end;gap:18px;padding-top:16px;
+          border-top:1px solid rgba(var(--srf-ink-rgb),.16);font-size:12px;}
         .v2-menu-meta div{display:flex;flex-direction:column;gap:5px;}
         .v2-menu-meta div:first-child{opacity:.7;}
         .v2-menu-meta button{background:none;border:none;padding:0;color:inherit;font:inherit;cursor:pointer;opacity:.82;}
         /* A real button rather than a quiet footer link — it is the one thing
-           here somebody reaches for while something is going wrong. */
-        .v2-menu-meta .v2-feedback-btn{display:flex;align-items:center;justify-content:center;gap:9px;
-          width:100%;min-height:44px;padding:11px 16px;border-radius:12px;opacity:1;
-          border:1px solid rgba(var(--m-ink-rgb),.2);font-family:${V2.sans};font-size:14px;
-          transition:background .14s;}
-        .v2-menu-meta .v2-feedback-btn:hover{background:rgba(var(--m-ink-rgb),.08);}
+           here somebody reaches for while something is going wrong — but not a
+           second full-width slab under New search. Solid so it reads as a
+           control, compact and right-hung so it closes the panel instead of
+           competing with what opens it. Still 44 tall: smaller is a matter of
+           width, never of what a thumb has to hit. */
+        .v2-menu-meta .v2-feedback-btn{display:flex;align-items:center;justify-content:center;gap:7px;
+          min-height:44px;padding:0 15px;border-radius:12px;opacity:1;border:none;
+          background:var(--srf-fill);color:var(--srf-fill-ink);
+          font-family:${V2.sans};font-size:13px;font-weight:500;transition:opacity .14s;}
+        .v2-menu-meta .v2-feedback-btn:hover{opacity:.86;}
         .v2-menu-cta{display:flex;align-items:center;gap:10px;justify-content:center;cursor:pointer;
-          padding:14px;border:1px solid rgba(var(--m-ink-rgb),.28);border-radius:2px;background:none;
+          padding:14px;border:1px solid rgba(var(--srf-ink-rgb),.28);border-radius:2px;background:none;
           color:inherit;font-size:11px;letter-spacing:.16em;transition:background .24s ${V2.ease};}
-        .v2-menu-cta:hover{background:rgba(var(--m-ink-rgb),.1);}
+        .v2-menu-cta:hover{background:rgba(var(--srf-ink-rgb),.1);}
         /* Hamburger → ✕ on the trigger itself. */
 
         /* Bag sheet */
