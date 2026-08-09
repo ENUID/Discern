@@ -1879,7 +1879,7 @@ export default function DiscernV2({
         /* Account view */
         .v2-avatar.on{background:#fff;color:${V2.ink};}
         .v2-profile{display:flex;flex-direction:column;align-items:center;text-align:center;
-          padding:14px 6px 0;gap:0;}
+          padding:14px 6px 10px;gap:0;}
         .v2-profile-face{width:78px;height:78px;border-radius:50%;overflow:hidden;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;margin-bottom:16px;
           background:rgba(255,255,255,.12);color:#fff;font-family:${V2.sans};font-size:28px;font-weight:500;}
@@ -1893,6 +1893,10 @@ export default function DiscernV2({
           transition:background .14s;}
         .v2-profile-act:hover{background:rgba(255,255,255,.08);}
         .v2-profile-act.primary{background:#fff;color:${V2.ink};border-color:transparent;font-weight:500;}
+        /* Sign out is not the next step after Save — one commits the form, the
+           other leaves the account. Sitting flush they read as one control cut
+           in half, so the sizes block ends and this begins. */
+        .v2p + .v2-profile-act{margin-top:14px;}
         /* Recents: the row is the query, its controls sit at the end and only
            come up on hover or focus, so the list reads as a list of questions
            rather than a list of questions and four icons. */
