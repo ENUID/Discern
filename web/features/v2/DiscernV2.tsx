@@ -1942,17 +1942,39 @@ export default function DiscernV2({
            inset. Only the dimensions came across — the glass is v2's. */
         .v2-bar{display:flex;flex-direction:column;gap:10px;padding:18px 16px 10px;width:100%;
           max-width:min(820px,96vw);margin:0 auto;border-radius:24px;color:#fff;background:${V2.glassDark};
-          transition:background .18s linear,color .18s linear;
           backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%);
-          box-shadow:0 10px 40px rgba(0,0,0,.26),inset 0 1px 0 ${V2.glassEdge};transition:background .3s ${V2.ease};}
+          /* The edge is what makes this read as a pane of glass rather than a
+             dark rectangle. There was a 1px highlight on the top and nothing
+             anywhere else, so against the film the bar had no bottom or sides —
+             it dissolved into the picture. Three insets do the work: a hairline
+             all the way round to cut the shape out of whatever is behind it, a
+             brighter line along the top where light would catch a real edge,
+             and a fainter one along the bottom for the thickness.
+             One transition, not two: the second declaration used to replace
+             the first, which quietly dropped colour from it and left the
+             light/dark flip animating only its background. */
+          box-shadow:
+            0 12px 44px rgba(0,0,0,.34),
+            0 2px 8px rgba(0,0,0,.16),
+            inset 0 0 0 1px rgba(255,255,255,.18),
+            inset 0 1.5px 0 rgba(255,255,255,.40),
+            inset 0 -1px 0 rgba(255,255,255,.13);
+          transition:background .18s linear,color .18s linear,box-shadow .18s linear;}
         .v2-bar.focus{background:rgba(26,24,21,.9);}
         /* ── The bar reads against whatever is behind it ────────────────────
            On the film it goes light; on bone paper it goes dark. Both are the
            same shape and the same glass, only inverted, so the change reads as
            the bar adapting rather than as a different control. Fast and linear
            — an eased fade at this size looks like a bug. */
+        /* Inverted, same construction: on paper the rim has to be the darker
+           line and the specular stays white, or the bar has no edge at all. */
         .v2-bar.on-light{background:rgba(248,247,245,.86);color:${V2.ink};
-          box-shadow:0 10px 40px rgba(0,0,0,.14),inset 0 0 0 1px rgba(0,0,0,.06);}
+          box-shadow:
+            0 12px 44px rgba(0,0,0,.16),
+            0 2px 8px rgba(0,0,0,.06),
+            inset 0 0 0 1px rgba(26,26,28,.12),
+            inset 0 1.5px 0 rgba(255,255,255,.95),
+            inset 0 -1px 0 rgba(26,26,28,.05);}
         .v2-bar.on-light .v2-plus,.v2-bar.on-light .v2-send{
           background:rgba(26,26,28,.08);color:${V2.ink};}
         .v2-bar.on-light .v2-send.on{background:${V2.ink};color:#fff;}
@@ -2068,6 +2090,33 @@ export default function DiscernV2({
         /* These two carry real labels, so they grow rather than hide a target
            behind a smaller drawing. */
         .v2-buy,.v2-pill{min-height:44px;}
+
+
+        /* ── One material ──────────────────────────────────────────────────
+           Everything that floats over content is the same pane of glass, so it
+           takes the same edge as the composer: a hairline all the way round, a
+           brighter line where light would catch the top, and a fainter one
+           along the bottom for thickness. Before this there were three
+           treatments and two surfaces with no edge at all, which is why the
+           scroll pill beside the bar looked like a different substance.
+
+           Two tiers, because they sit at two heights: the small pills rest just
+           above the page, the docks and trays float well clear of it. Declared
+           late so it settles the several rules above it that set box-shadow at
+           the same specificity. */
+        .v2-hint,.v2-acc-pill,.v2-inspire-cta,.v2-sug,.v2-crafting{
+          box-shadow:
+            0 6px 20px rgba(0,0,0,.22),
+            inset 0 0 0 1px rgba(255,255,255,.18),
+            inset 0 1.2px 0 rgba(255,255,255,.34),
+            inset 0 -1px 0 rgba(255,255,255,.10);}
+        .v2-cart,.v2-tray,.v2-minibag button{
+          box-shadow:
+            0 14px 44px rgba(0,0,0,.34),
+            0 2px 8px rgba(0,0,0,.16),
+            inset 0 0 0 1px rgba(255,255,255,.18),
+            inset 0 1.5px 0 rgba(255,255,255,.38),
+            inset 0 -1px 0 rgba(255,255,255,.12);}
 
         @keyframes v2-rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
         @keyframes v2-fade{from{opacity:0}to{opacity:1}}
