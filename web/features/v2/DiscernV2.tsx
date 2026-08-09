@@ -1779,14 +1779,17 @@ export default function DiscernV2({
         .v2-menu.on{transform:translateX(0);pointer-events:auto;}
                 .v2-eyebrow-s{font-size:11px;font-weight:500;opacity:.42;letter-spacing:.04em;padding-left:6px;}
                 .v2-menu-top{display:flex;align-items:center;justify-content:space-between;padding:0 6px;}
-        .v2-menu-logo{width:34px;height:34px;border-radius:9px;display:block;object-fit:cover;
+        .v2-menu-logo{width:34px;height:34px;border-radius:12px;display:block;object-fit:cover;
           box-shadow:0 2px 10px rgba(0,0,0,.28);}
-        .v2-avatar{width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
+        .v2-avatar{position:relative;width:36px;height:36px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;color:#fff;
           background:rgba(255,255,255,.12);font-family:${V2.sans};font-size:14px;font-weight:500;}
-        .v2-avatar:hover{background:rgba(255,255,255,.2);}
+                .v2-avatar:hover{background:rgba(255,255,255,.2);}
+        /* The disc is 36 because that is the drawing; the finger gets 44. */
+        .v2-avatar::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
+          transform:translate(-50%,-50%);}
         .v2-newchat{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;
-          padding:11px 16px;border-radius:12px;border:none;cursor:pointer;
+          min-height:44px;padding:11px 16px;border-radius:12px;border:none;cursor:pointer;
           background:#fff;color:${V2.ink};font-family:${V2.sans};font-size:13px;font-weight:500;
           transition:opacity .15s;}
         .v2-newchat:hover{opacity:.86;}
@@ -1794,17 +1797,17 @@ export default function DiscernV2({
            icon, label, and a count when there is one. */
         .v2-menu-nav{display:flex;flex-direction:column;gap:2px;}
         ul.v2-menu-nav li button{display:flex;align-items:center;gap:13px;width:100%;min-height:44px;
-          padding:11px 12px;border-radius:10px;border:none;cursor:pointer;background:none;color:inherit;
+          padding:11px 6px;border-radius:12px;border:none;cursor:pointer;background:none;color:inherit;
           font-family:${V2.sans};font-size:14px;font-weight:400;letter-spacing:0;text-align:left;
           transition:background .12s;}
         ul.v2-menu-nav li button:hover{background:rgba(255,255,255,.08);opacity:1;}
         ul.v2-menu-nav li button em{margin-left:auto;font-style:normal;font-size:11px;font-weight:500;
-          background:rgba(255,255,255,.14);border-radius:20px;padding:2px 8px;}
+          background:rgba(255,255,255,.14);border-radius:999px;padding:2px 8px;}
         /* Listed, not live. Dimmed so the row reads as an announcement rather
            than a control, and the tag says when. */
         ul.v2-menu-nav li button.soon{opacity:.45;cursor:default;}
         ul.v2-menu-nav li button.soon:hover{background:none;}
-        ul.v2-menu-nav li button em.soon{background:none;border:1px solid rgba(255,255,255,.28);
+        ul.v2-menu-nav li button em.soon{background:none;border:1px solid rgba(255,255,255,.28);border-radius:999px;
           font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;}
         .v2-menu-empty{margin:0;font-size:13px;opacity:.45;}
         /* Account view */
@@ -1827,16 +1830,18 @@ export default function DiscernV2({
         /* Recents: the row is the query, its controls sit at the end and only
            come up on hover or focus, so the list reads as a list of questions
            rather than a list of questions and four icons. */
-        .v2-recent-row{display:flex;align-items:center;gap:4px;border-radius:8px;
+        .v2-recent-row{display:flex;align-items:center;gap:4px;min-height:44px;border-radius:12px;
           transition:background .12s;}
         .v2-recent-row:hover{background:rgba(255,255,255,.07);}
-        .v2-recent-go{flex:1;min-width:0;padding:9px 10px;font-family:${V2.sans};font-size:13.5px;
+        .v2-menu li button.v2-recent-go{flex:1;min-width:0;min-height:44px;padding:9px 6px;font-family:${V2.sans};font-size:13.5px;
           font-weight:400;letter-spacing:0;opacity:.86;background:none;border:none;color:inherit;
           text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
         .v2-recent-acts{display:flex;gap:2px;padding-right:6px;opacity:0;transition:opacity .14s;}
         .v2-recent-row:hover .v2-recent-acts,.v2-recent-acts:focus-within{opacity:.7;}
-        .v2-recent-acts button{width:26px;height:26px;display:flex;align-items:center;justify-content:center;
-          background:none;border:none;color:inherit;cursor:pointer;border-radius:6px;}
+        .v2-recent-acts button{position:relative;width:30px;height:30px;display:flex;align-items:center;
+          justify-content:center;background:none;border:none;color:inherit;cursor:pointer;border-radius:50%;}
+        .v2-recent-acts button::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
+          transform:translate(-50%,-50%);}
         .v2-recent-acts button:hover{background:rgba(255,255,255,.12);}
         .v2-recent-input{flex:1;min-width:0;margin:2px 6px;padding:7px 9px;border-radius:8px;
           background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);color:#fff;
