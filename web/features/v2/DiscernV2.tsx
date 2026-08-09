@@ -2018,7 +2018,7 @@ export default function DiscernV2({
             0 14px 46px rgba(0,0,0,.34),
             0 2px 8px rgba(0,0,0,.16),
             inset 0 0 0 1px rgba(255,255,255,.18),
-            inset 0 1.5px 0 rgba(255,255,255,.40),
+            inset 0 1px 0 rgba(255,255,255,.46),
             inset 0 -1px 0 rgba(255,255,255,.13);
           /* Fast enough to feel like a property of the bar rather than an
              animation played at it, and linear because an eased fade at this
@@ -2039,7 +2039,7 @@ export default function DiscernV2({
             0 14px 46px rgba(0,0,0,.16),
             0 2px 8px rgba(0,0,0,.06),
             inset 0 0 0 1px rgba(26,26,28,.12),
-            inset 0 1.5px 0 rgba(255,255,255,.95),
+            inset 0 1px 0 rgba(255,255,255,.95),
             inset 0 -1px 0 rgba(26,26,28,.05);}
         .v2-bar.inverted.focus{background:rgba(252,251,250,.96);}
         .v2-bar.inverted .v2-plus,.v2-bar.inverted .v2-send{
@@ -2183,7 +2183,7 @@ export default function DiscernV2({
             0 14px 44px rgba(0,0,0,.34),
             0 2px 8px rgba(0,0,0,.16),
             inset 0 0 0 1px rgba(255,255,255,.18),
-            inset 0 1.5px 0 rgba(255,255,255,.38),
+            inset 0 1px 0 rgba(255,255,255,.44),
             inset 0 -1px 0 rgba(255,255,255,.12);}
 
         @keyframes v2-rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
