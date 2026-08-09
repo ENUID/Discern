@@ -22,8 +22,16 @@ import { V2 } from './theme'
  * unusual value costs nothing.
  */
 
-const GENDERS = ['Women', 'Men', 'Both', 'Non-binary'] as const
+const GENDERS = ['Women', 'Men'] as const
 type Gender = (typeof GENDERS)[number]
+
+// An account written before this — or by the chat UI, which offered four —
+// can still hold a value these two chips cannot show. It reads back as
+// unselected, and the backend still understands the old values (route.ts
+// branches on 'Both'), so nothing breaks; it is only overwritten if the
+// shopper picks one of these.
+const asGender = (v: unknown): Gender | '' =>
+  (GENDERS as readonly string[]).includes(v as string) ? (v as Gender) : ''
 
 const FIELDS = [
   { key: 'tops' as const, label: 'Tops', hint: (g?: string) => (g === 'Women' ? 'XS, S, M…' : 'S, M, L, XL…') },
@@ -65,13 +73,15 @@ export default function V2Profile({ country }: { country?: string }) {
   useEffect(() => {
     if (!loaded || !profile?.sizes) return
     const s = profile.sizes
-    setGender((GENDERS as readonly string[]).includes(s.gender) ? (s.gender as Gender) : '')
+    setGender(asGender(s.gender))
     setSizes({ tops: s.tops ?? '', bottoms: s.bottoms ?? '', shoes: s.shoes ?? '' })
   }, [loaded, profile])
 
   const dirty = useMemo(() => {
     const s = profile?.sizes ?? {}
-    return (s.gender ?? '') !== gender
+    // Compared against the normalised value, so an account holding an old
+    // four-way answer does not open with Save already lit.
+    return asGender(s.gender) !== gender
       || (s.tops ?? '') !== sizes.tops
       || (s.bottoms ?? '') !== sizes.bottoms
       || (s.shoes ?? '') !== sizes.shoes
