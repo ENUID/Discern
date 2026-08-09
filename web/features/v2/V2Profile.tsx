@@ -22,7 +22,7 @@ import { V2 } from './theme'
  * unusual value costs nothing.
  */
 
-const GENDERS = ['Women', 'Men'] as const
+const GENDERS = ['Men', 'Women'] as const
 type Gender = (typeof GENDERS)[number]
 
 // An account written before this — or by the chat UI, which offered four —
