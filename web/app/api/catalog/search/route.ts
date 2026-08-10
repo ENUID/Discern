@@ -100,18 +100,30 @@ export async function POST(req: NextRequest) {
     g && !decomposeQuery(s).gender ? `${g} ${s}`.trim() : s
 
   try {
-    // An occasion is a whole outfit — retrieve each slot on its own, which is
-    // the same shape the stylist's multi-category search produces.
-    // Naming a garment beats naming an occasion: "shoes for work" is a request
-    // for shoes, and answering it with a blazer, a shirt and trousers is
-    // answering a question nobody asked. The stylist route makes the same
-    // check; this one has to agree with it or the two paths give different
-    // answers to the same sentence.
-    const namedGarments = decomposeQuery(q).garmentKeys.length
-    const plan = namedGarments > 0 ? null : outfitPlan(q, gender)
-    if (plan && plan.slots.length >= 2) {
-      const fabric = plan.fabrics[0] ?? ''
-      const groups = (await byDeadline(Promise.all(plan.slots.slice(0, 4).map(async (slot) => {
+    // Three shapes of request, and they have to be told apart in this order —
+    // getting it wrong is what turned "shirts and trousers" into trousers.
+    //
+    //   two or more garments named  → one strip each, exactly what was asked
+    //   one garment named          → that garment, even if an occasion is also
+    //                                named: "shoes for work" wants shoes, not a
+    //                                blazer and a shirt
+    //   no garment named           → the occasion decides the slots
+    //
+    // The single-search path below compiles to ONE garment (the compiler keeps
+    // the most specific hit), so a two-garment request that reaches it loses
+    // one of them silently. The stylist route splits the same way; these two
+    // have to agree or the same sentence gets two different answers depending
+    // on which path served it.
+    const named = decomposeQuery(q).garmentKeys
+    const plan = named.length > 0 ? null : outfitPlan(q, gender)
+    const slots: string[] = named.length >= 2 ? named.slice(0, 4)
+      : (plan && plan.slots.length >= 2 ? plan.slots.slice(0, 4) : [])
+
+    if (slots.length >= 2) {
+      // Only an occasion contributes a fabric; a named garment is taken as
+      // asked, without a fibre nobody mentioned.
+      const fabric = plan?.fabrics[0] ?? ''
+      const groups = (await byDeadline(Promise.all(slots.map(async (slot) => {
         const term = GARMENT_VOCAB[slot]?.query[0] || slot
         const sub = withGender([fabric, term].filter(Boolean).join(' '))
         try {
@@ -134,7 +146,7 @@ export async function POST(req: NextRequest) {
           seen.add(id)
           return true
         })
-        return NextResponse.json({ products: flat, groups, query: q, plan: plan.occasion })
+        return NextResponse.json({ products: flat, groups, query: q, plan: plan?.occasion ?? 'named-garments' })
       }
     }
 
