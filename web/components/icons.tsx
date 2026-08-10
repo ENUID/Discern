@@ -281,3 +281,76 @@ export const ArrowUpIcon = (p: IconProps) => (
     <path d="M5.9 11.5 12 5.4l6.1 6.1" />
   </Svg>
 )
+
+/* ── The search, step by step ─────────────────────────────────────────────────
+   One icon per stage the stylist actually reports, drawn in the same 24-grid
+   1.25px cut as everything above. They are specific to what is happening —
+   reading, going through rails, narrowing, judging, assembling — rather than a
+   generic spinner repeated five times, because the point of showing the steps
+   is that they are different steps.                                          */
+
+/** Reading the request. A line of text with its last word still being taken in. */
+export function ReadingIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4 7h16M4 12h11" />
+      <path d="M4 17h5" />
+      <circle cx="17.5" cy="16.5" r="2.6" />
+    </Svg>
+  )
+}
+
+/** Going through the rails. A hanging rail with two garments on it. */
+export function RailIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M3 5h18" />
+      <path d="M8.5 5v2.2" />
+      <path d="M8.5 7.2 5.6 10.4V19h5.8v-8.6L8.5 7.2Z" />
+      <path d="M16 5v2.2" />
+      <path d="M16 7.2l-2.2 2.6" />
+      <path d="M18.2 9.8 16 7.2" />
+      <path d="M13.8 9.8V19h4.4V9.8" />
+    </Svg>
+  )
+}
+
+/** Narrowing. A funnel — what goes in is more than what comes out. */
+export function NarrowIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M3.5 5h17l-6.6 7.6V20l-3.8-2.4v-5L3.5 5Z" />
+    </Svg>
+  )
+}
+
+/** Judging a piece. An eye, because this stage is somebody looking. */
+export function AppraiseIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="2.6" />
+    </Svg>
+  )
+}
+
+/** Judging the cloth. A swatch with its weave shown. */
+export function SwatchIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4.5 4.5h15v15h-15z" />
+      <path d="M4.5 9.5h15M4.5 14.5h15M9.5 4.5v15M14.5 4.5v15" />
+    </Svg>
+  )
+}
+
+/** Putting the look together. Three pieces stacking into one. */
+export function AssembleIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M12 3 3.5 7.5 12 12l8.5-4.5L12 3Z" />
+      <path d="M3.5 12 12 16.5 20.5 12" />
+      <path d="M3.5 16.5 12 21l8.5-4.5" />
+    </Svg>
+  )
+}

@@ -13,6 +13,14 @@ import DiscernV2, { type V2Product, type V2Section } from '@/features/v2/Discern
 import type { V2Msg } from '@/features/v2/DiscernV2'
 import { askStylist } from '@/features/stylist/askStylist'
 import { useStylistContext } from '@/features/stylist/useStylistContext'
+import { productSlotCategories } from '@/lib/queryParser'
+
+/** The word a slot goes by in a heading. Plural, because a section holds
+ *  several — and "Outerwear" rather than "Outer", which is a database column. */
+const SLOT_WORDS: Record<string, string> = {
+  top: 'tops', bottom: 'trousers', outer: 'outerwear',
+  dress: 'dresses', shoes: 'shoes', accessory: 'accessories',
+}
 
 // The stylist endpoint streams newline-delimited JSON: many {type:'progress'}
 // lines then a single {type:'result'}. Same reader shape as the main app.
@@ -177,7 +185,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
     // What the backend is doing right now, forwarded verbatim to the status
     // line. The endpoint has always streamed these at its real boundaries; the
     // interface simply never asked for them.
-    onProgress?: (phase: string) => void,
+    onProgress?: (step: { text: string; icon?: string }) => void,
   ) => {
     // askStylist rethrows on the last attempt when the request never
     // completed — a dead connection, DNS, a killed function. That throw used to
@@ -215,7 +223,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       || (Array.isArray(d?.outfitGroups) && d.outfitGroups.length > 0)
 
     if (!brought(data) && (data?.failed || data?.busy || data?.retryable || !data)) {
-      onProgress?.('Going straight to the catalogue')
+      onProgress?.({ text: 'Going straight to the catalogue', icon: 'search' })
       try {
         const r = await fetch('/api/catalog/search', {
           method: 'POST',
@@ -254,11 +262,57 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
      *  where the reference puts a real collection name, and a heading that says
      *  nothing is worse than no heading. Falls back to the shopper's own
      *  wording, which is at least true. */
-    const heading = (label?: string) => {
-      const s = (label || data?.searchQuery || q || '').trim()
-      if (!s) return ''
-      return s.charAt(0).toUpperCase() + s.slice(1)
+    /** The name of what is on the page.
+     *
+     *  This fell back to the shopper's own sentence, so a page of sneakers was
+     *  headed "Men i need some trousers and shoes maybe from comet" — their
+     *  words read back to them, with the typo, as a title. A heading names the
+     *  selection; it is not a receipt for the question.
+     *
+     *  So it is built from the garments actually shown: "Trousers & shoes",
+     *  "Cashmere sweaters", "Shoes". The pieces on screen decide it, which also
+     *  means it stays honest when the search finds one of the two things asked
+     *  for — the old version promised trousers over a page of shoes. */
+    const TITLE_STRIP = /\b(i|me|my|we|need|want|looking|look|for|some|any|please|maybe|can|you|give|show|find|get|the|a|an|of|from|with|to|and|men|mens|women|womens|guys|girls|under|below|around)\b/gi
+
+    const titleFor = (products: V2Product[], label?: string): string => {
+      // What is genuinely on the page, in the order the sections run.
+      const kinds: string[] = []
+      for (const pr of products.slice(0, 24)) {
+        for (const k of Array.from(productSlotCategories({ title: pr.title, tags: [], description: pr.description }))) {
+          const word = SLOT_WORDS[k]
+          if (word && !kinds.includes(word)) kinds.push(word)
+        }
+      }
+
+      // A group label from the backend is already a garment name — trust it,
+      // just tidy the case.
+      const fromLabel = (label || '').trim()
+      if (fromLabel && fromLabel.split(/\s+/).length <= 3) {
+        return fromLabel.charAt(0).toUpperCase() + fromLabel.slice(1).toLowerCase()
+      }
+
+      // A qualifier worth keeping — a fibre or a colour the shopper named —
+      // makes "Cashmere sweaters" out of "sweaters".
+      const q0 = (data?.searchQuery || q || '').toLowerCase()
+      const qualifier = (q0.match(/\b(cashmere|merino|wool|linen|cotton|silk|leather|suede|denim|velvet|corduroy|tweed|black|white|navy|cream|beige|camel|olive|burgundy|grey|brown|tan)\b/) || [])[0]
+
+      if (kinds.length === 0) {
+        // Nothing recognisable — fall back to the query with the filler removed
+        // rather than to the raw sentence.
+        const bare = (data?.searchQuery || q || '').replace(TITLE_STRIP, ' ').replace(/[^a-z0-9\s'-]/gi, ' ')
+          .replace(/\s+/g, ' ').trim()
+        if (!bare) return ''
+        return bare.charAt(0).toUpperCase() + bare.slice(1)
+      }
+
+      const named = kinds.length === 1 ? kinds[0]
+        : kinds.length === 2 ? `${kinds[0]} & ${kinds[1]}`
+        : `${kinds.slice(0, -1).join(', ')} & ${kinds[kinds.length - 1]}`
+      const full = qualifier && kinds.length === 1 ? `${qualifier} ${named}` : named
+      return full.charAt(0).toUpperCase() + full.slice(1)
     }
+
 
     // A multi-garment search comes back as labelled groups — one editorial
     // section per garment, which maps exactly onto this layout.
@@ -266,7 +320,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       for (const g of data.foundProductGroups) {
         const products = (g?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
         if (!products.length) continue
-        sections.push({ title: heading(g?.label), hero: products[0], products: products.slice(1) })
+        sections.push({ title: titleFor(products, g?.label), hero: products[0], products: products.slice(1) })
       }
     }
 
@@ -274,7 +328,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
     if (!sections.length && Array.isArray(data?.foundProducts) && data.foundProducts.length > 0) {
       const products = data.foundProducts.map(toProduct).filter((p: V2Product) => p.image)
       if (products.length) {
-        sections.push({ title: heading(), hero: products[0], products: products.slice(1) })
+        sections.push({ title: titleFor(products), hero: products[0], products: products.slice(1) })
       }
     }
 
@@ -311,7 +365,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       for (const g of data.outfitGroups) {
         const products = (g?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
         if (!products.length) continue
-        sections.push({ title: heading(g?.label), hero: products[0], products: products.slice(1) })
+        sections.push({ title: titleFor(products, g?.label), hero: products[0], products: products.slice(1) })
       }
       look = (data.outfitGroups[0]?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
     }

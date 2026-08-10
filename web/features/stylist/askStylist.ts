@@ -30,13 +30,13 @@ export type AskStylistArgs = {
   products?: unknown[]
   context?: StylistContext
   /** Progress lines the endpoint streams while it works. */
-  onProgress?: (phase: string) => void
+  onProgress?: (step: { text: string; icon?: string }) => void
   signal?: AbortSignal
 }
 
 /** Reads the endpoint's newline-delimited JSON: many {type:'progress'} lines,
  *  then one {type:'result'}. A partial trailing line is normal and skipped. */
-async function readStylistStream(res: Response, onProgress?: (p: string) => void): Promise<any> {
+async function readStylistStream(res: Response, onProgress?: (step: { text: string; icon?: string }) => void): Promise<any> {
   if (!res.body) return null
   const reader = res.body.getReader()
   const dec = new TextDecoder()
@@ -56,7 +56,9 @@ async function readStylistStream(res: Response, onProgress?: (p: string) => void
       // still speaks it.
       else if (o.type === 'progress' && onProgress) {
         const line = typeof o.main === 'string' ? o.main : typeof o.phase === 'string' ? o.phase : null
-        if (line) onProgress(line)
+        // The icon travels with the line. The endpoint has always sent it and
+        // it was being dropped, so every stage looked identical on screen.
+        if (line) onProgress({ text: line, icon: typeof o.icon === 'string' ? o.icon : undefined })
       }
     } catch { /* partial line — the next chunk completes it */ }
   }

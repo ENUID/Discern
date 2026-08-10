@@ -23,7 +23,7 @@
  *    shipping, subtotal, then PROCEED TO PAYMENT with the redirect notice.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpIcon, BagIcon, ChevronIcon, CloseIcon, DocumentIcon, EditIcon, ExternalLinkIcon, HeartIcon, HistoryIcon, PlusIcon, SparkleIcon, TagIcon, TrashIcon, UserIcon } from '@/components/icons'
+import { AppraiseIcon, ArrowUpIcon, AssembleIcon, BagIcon, ChevronIcon, CloseIcon, DocumentIcon, EditIcon, ExternalLinkIcon, HeartIcon, HistoryIcon, NarrowIcon, PlusIcon, RailIcon, ReadingIcon, SwatchIcon, SparkleIcon, TagIcon, TrashIcon, UserIcon } from '@/components/icons'
 import { useSession, signOut } from 'next-auth/react'
 import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING, V2_HERO_COPY } from './theme'
 import V2Auth, { type V2AuthReason } from './V2Auth'
@@ -133,6 +133,24 @@ const money = (n?: number, c = 'USD') =>
 // ── Progress line ────────────────────────────────────────────────────────────
 // The only decoration on the page, and it is load-bearing: it says work is
 // happening. A hairline that sweeps, nothing more.
+/** The icon for whatever the search is doing right now.
+ *
+ *  The endpoint labels every stage it reports — read, search, filter, curate,
+ *  fabric, outfit — and those labels were being thrown away, so five different
+ *  stages looked like one. Anything unrecognised falls back to the reading
+ *  glyph, so a new stage added on the server can never leave a hole here. */
+function StepIcon({ name }: { name?: string }) {
+  const size = 14
+  switch (name) {
+    case 'search': return <span className="v2-step-ic" key="search"><RailIcon size={size} /></span>
+    case 'filter': return <span className="v2-step-ic" key="filter"><NarrowIcon size={size} /></span>
+    case 'curate': return <span className="v2-step-ic" key="curate"><AppraiseIcon size={size} /></span>
+    case 'fabric': return <span className="v2-step-ic" key="fabric"><SwatchIcon size={size} /></span>
+    case 'outfit': return <span className="v2-step-ic" key="outfit"><AssembleIcon size={size} /></span>
+    default:       return <span className="v2-step-ic" key="read"><ReadingIcon size={size} /></span>
+  }
+}
+
 function Progress({ light }: { light?: boolean }) {
   return (
     <span className={`v2-prog ${light ? 'light' : ''}`} aria-hidden>
@@ -241,7 +259,7 @@ export default function DiscernV2({
   buyerCountry,
 }: {
   heroMedia?: string; heroPoster?: string
-  onQuery?: (q: string, history: V2Msg[], images: string[], onProgress?: (phase: string) => void) => Promise<{
+  onQuery?: (q: string, history: V2Msg[], images: string[], onProgress?: (step: { text: string; icon?: string }) => void) => Promise<{
     sections: V2Section[]; look?: V2Product[]
     answer?: string; didSearch?: boolean; light?: boolean; failed?: boolean; busy?: boolean
   }>
@@ -267,7 +285,7 @@ export default function DiscernV2({
   /** What the backend says it is doing, when it says anything. The canned
    *  sequence below is the fallback for the seconds before the first line
    *  arrives — not the narration itself, which it used to be. */
-  const [livePhase, setLivePhase] = useState<string | null>(null)
+  const [livePhase, setLivePhase] = useState<{ text: string; icon?: string } | null>(null)
   /** Something Fabrics said that had no products attached to it. Shown above
    *  the composer until the next question, because a stylist who answers you
    *  out loud and is never heard is indistinguishable from a broken app. */
@@ -795,7 +813,7 @@ export default function DiscernV2({
     let show = false
     try {
       const res = onQuery
-        ? await onQuery(question, history, sentPhotos, p => setLivePhase(p))
+        ? await onQuery(question, history, sentPhotos, s => setLivePhase(s))
         : { sections: [], look: undefined, answer: undefined, didSearch: false, light: false }
       const sections = res.sections ?? []
 
@@ -1487,12 +1505,12 @@ export default function DiscernV2({
       {loading && (
         <div className="v2-crafting" style={{ bottom: `calc(var(--bar) - var(--bar-air) + 8px + ${kb}px)` }}
           role="status" aria-live="polite">
-          <Progress light />
-          {/* Keyed on the text so React swaps the element and the crossfade
-              actually runs — without the key it is one node whose textContent
-              changes, and the animation never restarts. */}
-          <span key={livePhase ?? loadPhase} className="v2-crafting-line">
-            {livePhase ?? V2_LOADING[loadPhase][0] + V2_LOADING[loadPhase][1]}
+          {/* Icon and words are one step and swap together, keyed on the text.
+              Without the key React keeps one node and mutates its textContent,
+              so neither the crossfade nor the shimmer ever restarts. */}
+          <StepIcon name={livePhase?.icon} />
+          <span key={livePhase?.text ?? loadPhase} className="v2-crafting-line">
+            {livePhase?.text ?? V2_LOADING[loadPhase][0] + V2_LOADING[loadPhase][1]}
           </span>
         </div>
       )}
@@ -2280,8 +2298,26 @@ export default function DiscernV2({
         }
         /* Each status line replaces the one before it rather than the text
            mutating in place, so the pill reads as a sequence of steps. */
-        .v2-crafting-line{animation:v2-line .26s ${V2.ease};}
+        /* The light passes THROUGH the words rather than sitting on them: the
+           gradient is clipped to the glyphs, its bright stop is a lift of the
+           text's own colour rather than a white flare, and it travels slowly.
+           A hard specular sweep reads as a loading bar dropped on the text;
+           this reads as the line being alive. */
+        .v2-crafting-line{
+          animation:v2-line .26s ${V2.ease}, v2-glow 2.8s linear .3s infinite;
+          background-image:linear-gradient(100deg,rgba(255,255,255,.6) 0%,rgba(255,255,255,.6) 40%,rgba(255,255,255,1) 50%,rgba(255,255,255,.6) 60%,rgba(255,255,255,.6) 100%);
+          background-size:300% 100%;background-position:170% 0;
+          -webkit-background-clip:text;background-clip:text;
+          color:transparent;-webkit-text-fill-color:transparent;}
         @keyframes v2-line{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+        @keyframes v2-glow{from{background-position:170% 0}to{background-position:-70% 0}}
+        /* The icon arrives with its line, so the two read as one step landing
+           rather than a static badge beside moving text. */
+        .v2-step-ic{display:flex;align-items:center;justify-content:center;flex-shrink:0;
+          opacity:.92;animation:v2-line .3s ${V2.ease};}
+        @media(prefers-reduced-motion:reduce){
+          .v2-crafting-line{animation:none;background:none;color:#fff;-webkit-text-fill-color:#fff;}
+          .v2-step-ic{animation:none;}}
 
         /* ── Drawer + scrim ────────────────────────────────────────────────
            A full-height panel that slides in from the left edge, which is what
