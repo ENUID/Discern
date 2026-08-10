@@ -1,0 +1,120 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { GlobalCatalogService } from '@/lib/services/GlobalCatalogService'
+import {
+  normalizeFashionTypos, buildMandatoryConcepts, classifyQuerySlot,
+  GARMENT_VOCAB, decomposeQuery,
+} from '@/lib/queryParser'
+import { compileIntent } from '@/lib/intentCompiler'
+import { outfitPlan } from '@/lib/fashion/outfitKnowledge'
+import { makeIpRateLimiter } from '@/lib/rateLimit'
+
+/**
+ * The catalogue, without the model.
+ *
+ * /api/ai/stylist is the good answer and it depends on a language model, which
+ * means it depends on somebody else's quota, uptime and latency. When that
+ * fails there is nothing wrong with the catalogue — the brands are up, the
+ * products are there — and yet the shopper was getting an apology and an empty
+ * screen, because every path to a product ran through the model.
+ *
+ * This is the path that does not. It reads the question with the same
+ * deterministic machinery the stylist uses before it ever calls a model — the
+ * typo corrector, the occasion planner, the intent compiler, the concept
+ * builder — and searches. No styling, no reasoning, no prose. Just the pieces.
+ *
+ * The interface calls it whenever the stylist comes back with nothing, so a
+ * model outage costs the quality of the answer and never the answer itself.
+ */
+
+export const maxDuration = 60
+export const dynamic = 'force-dynamic'
+
+// Same shape of protection as the other unauthenticated endpoints: this one
+// fans out to brand stores, so it must not be scriptable into a load generator.
+const isRateLimited = makeIpRateLimiter(20, 60_000)
+
+type Group = { label: string; query: string; products: unknown[] }
+
+export async function POST(req: NextRequest) {
+  if (isRateLimited(req)) {
+    return NextResponse.json({ products: [], groups: [], reason: 'rate-limited' }, { status: 429 })
+  }
+
+  let body: any = {}
+  try { body = await req.json() } catch { /* defaults below */ }
+
+  const raw = typeof body?.q === 'string' ? body.q.trim().slice(0, 300) : ''
+  if (!raw) return NextResponse.json({ products: [], groups: [], reason: 'empty-query' })
+
+  const q = normalizeFashionTypos(raw)
+  const countryCode: string | null =
+    typeof body?.country === 'string' && body.country.trim() ? body.country.trim().toUpperCase() : null
+  const currency: string =
+    typeof body?.currency === 'string' && body.currency.trim() ? body.currency.trim().toUpperCase() : 'USD'
+  const gender: string | null = typeof body?.gender === 'string' ? body.gender.trim() : null
+  const sizes = body?.sizes && typeof body.sizes === 'object' ? body.sizes : {}
+
+  const sizeFor = (text: string): string | null => {
+    const slot = classifyQuerySlot(text)
+    if (slot === 'top' || slot === 'outer' || slot === 'dress') return sizes.tops || null
+    if (slot === 'bottom') return sizes.bottoms || null
+    if (slot === 'shoes') return sizes.shoes || null
+    return null
+  }
+
+  // Gender is prepended rather than trusted to be in the sentence: "what do I
+  // wear to an interview" carries none, and menswear and womenswear are
+  // different searches.
+  const g = /^w/i.test(gender || '') ? 'women' : /^m/i.test(gender || '') ? 'men' : ''
+  const withGender = (s: string) =>
+    g && !decomposeQuery(s).gender ? `${g} ${s}`.trim() : s
+
+  try {
+    // An occasion is a whole outfit — retrieve each slot on its own, which is
+    // the same shape the stylist's multi-category search produces.
+    const plan = outfitPlan(q, gender)
+    if (plan && plan.slots.length >= 2) {
+      const fabric = plan.fabrics[0] ?? ''
+      const groups = (await Promise.all(plan.slots.slice(0, 4).map(async (slot) => {
+        const term = GARMENT_VOCAB[slot]?.query[0] || slot
+        const sub = withGender([fabric, term].filter(Boolean).join(' '))
+        try {
+          const found = await GlobalCatalogService.search(
+            sub, undefined, [], countryCode, true, buildMandatoryConcepts(sub),
+            'relevance', currency, { fastFirstPage: true }, [], undefined, sub, sizeFor(sub),
+          )
+          const label = term.charAt(0).toUpperCase() + term.slice(1)
+          return { label, query: sub, products: found.slice(0, 8) } as Group
+        } catch {
+          return { label: term, query: sub, products: [] } as Group
+        }
+      }))).filter(gr => gr.products.length > 0)
+
+      if (groups.length) {
+        const seen = new Set<string>()
+        const flat = groups.flatMap(gr => gr.products).filter((p: any) => {
+          const id = String(p?.id ?? '')
+          if (!id || seen.has(id)) return false
+          seen.add(id)
+          return true
+        })
+        return NextResponse.json({ products: flat, groups, query: q, plan: plan.occasion })
+      }
+    }
+
+    // Otherwise: one search, compiled if the sentence compiles and taken
+    // literally if it does not.
+    const compiled = compileIntent(withGender(q), currency)
+    const term = compiled?.args.searchQuery || withGender(q)
+    const found = await GlobalCatalogService.search(
+      term, compiled?.args.budgetMax, [], countryCode, true,
+      compiled?.args.mandatoryConcepts || buildMandatoryConcepts(term),
+      compiled?.args.sort || 'relevance', compiled?.args.budgetCurrency || currency,
+      { fastFirstPage: true }, [], undefined, raw, sizeFor(term),
+    )
+    return NextResponse.json({ products: found.slice(0, 12), groups: [], query: term })
+  } catch (e) {
+    console.error('[catalog/search] failed:', e)
+    return NextResponse.json({ products: [], groups: [], reason: 'search-failed' }, { status: 200 })
+  }
+}

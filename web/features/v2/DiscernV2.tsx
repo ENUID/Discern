@@ -753,16 +753,21 @@ export default function DiscernV2({
         // indistinguishable from the app having done nothing.
         if (!words) {
           setTurns(prev => [{ id: `empty-${prev.length}`, question, didSearch: false, failed: true, busy: res.busy === true, sections: [] }, ...prev].slice(0, 12))
+          // Return, do not fall through. The push below would add a SECOND
+          // turn for the same question — an ordinary empty one — and the
+          // results view renders only the newest, so the failure state was
+          // recorded and then immediately hidden behind a blank page.
           show = true
-        } else {
           setInput('')
-          setSaid(words)
-          setLoading(false)
+          setSaid(null)
           return
         }
-      } else {
-        setSaid(null)
+        setInput('')
+        setSaid(words)
+        setLoading(false)
+        return
       }
+      setSaid(null)
 
       setTurns(prev => [{
         id: `${prev.length}-${question.slice(0, 24)}`,

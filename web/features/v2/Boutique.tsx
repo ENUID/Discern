@@ -174,13 +174,71 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
     // interface simply never asked for them.
     onProgress?: (phase: string) => void,
   ) => {
-    const data = await askStylist({
-      question: q,
-      messages: history.slice(-6),
-      images,
-      context,
-      onProgress,
-    })
+    // askStylist rethrows on the last attempt when the request never
+    // completed — a dead connection, DNS, a killed function. That throw used to
+    // fly past the catalogue fallback below and land in the interface's own
+    // catch, so the one failure most likely to be a network fault was the one
+    // failure that skipped the network-free path.
+    let data: any = null
+    try {
+      data = await askStylist({
+        question: q,
+        messages: history.slice(-6),
+        images,
+        context,
+        onProgress,
+      })
+    } catch (e) {
+      console.error('[boutique] stylist unreachable:', e)
+    }
+
+    /** The catalogue, when the stylist could not answer.
+     *
+     *  /api/ai/stylist needs a language model and therefore somebody else's
+     *  quota and uptime; /api/catalog/search needs neither. Every route to a
+     *  product used to run through the model, so a provider outage emptied the
+     *  screen — the brands were up the whole time and the shopper still got an
+     *  apology. This asks the catalogue directly with the same question.
+     *
+     *  It runs only when the stylist produced no pieces at all, so a working
+     *  model is never second-guessed, and it is silent on failure: if this
+     *  cannot answer either, the honest empty state stands. */
+    const brought = (d: any) =>
+      (Array.isArray(d?.foundProducts) && d.foundProducts.length > 0)
+      || (Array.isArray(d?.foundProductGroups) && d.foundProductGroups.length > 0)
+      || (Array.isArray(d?.outfitSlots) && d.outfitSlots.length > 0)
+      || (Array.isArray(d?.outfitGroups) && d.outfitGroups.length > 0)
+
+    if (!brought(data) && (data?.failed || data?.busy || data?.retryable || !data)) {
+      onProgress?.('Going straight to the catalogue')
+      try {
+        const r = await fetch('/api/catalog/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            q,
+            country: context.buyerCountry,
+            currency: context.buyerCurrency,
+            gender: context.shopperGender,
+            sizes: context.shopperSizes,
+          }),
+        })
+        if (r.ok) {
+          const c = await r.json()
+          if (Array.isArray(c?.products) && c.products.length > 0) {
+            data = {
+              ...(data ?? {}),
+              reply: data?.reply,
+              searchQuery: c.query || q,
+              foundProducts: c.products,
+              foundProductGroups: Array.isArray(c.groups) && c.groups.length ? c.groups : undefined,
+              // It answered, just not the way it wanted to. Not a failure.
+              failed: false, retryable: false, degraded: true,
+            }
+          }
+        }
+      } catch { /* the empty state below is still honest */ }
+    }
 
     const sections: V2Section[] = []
     let look: V2Product[] | undefined
