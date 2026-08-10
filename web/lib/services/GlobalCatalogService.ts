@@ -15,7 +15,7 @@
  */
 
 import { UCP_REGISTRY, detectBrandsInQuery, BRAND_NAMES, getStoreCountry, GEO_REGIONS, brandQualityScore } from '../stores'
-import { GARMENT_PRODUCT_TERMS, matchesGarmentExclusion } from '../queryParser'
+import { GARMENT_PRODUCT_TERMS, matchesGarmentExclusion, COLOR_VOCAB } from '../queryParser'
 import { getExchangeRates } from '../exchangeRates'
 import { rerankByRelevance } from './relevanceRerank'
 import { matchStyles, styleRecallSignals } from '../styleVocabulary'
@@ -405,6 +405,85 @@ function productGenderSignal(p: UcpProduct): 'men' | 'women' | null {
   return null
 }
 
+// ─── Colour: a stated fact, not a preference ────────────────────────────────
+// "White shirts" came back with green ones in the page. Colour was a +10
+// ranking nudge inside applyConceptRelevance, which only ever SORTS — nothing
+// was ever dropped for being the wrong colour, so the page filled to its
+// minimum with whatever else the stores returned. Sorted correctly, and wrong.
+//
+// A shopper who says white has not expressed a preference; they have stated a
+// requirement, the same way a size is. So a product whose own colour is legibly
+// something else is removed. "Cannot tell" is not "wrong" — a piece that names
+// no colour anywhere survives, because most independent stores are inconsistent
+// about it and dropping the silent ones would empty the page.
+
+/** Every colour family this product legibly claims, from its title, its tags
+ *  and its Color option — the three places a store actually writes one. */
+function familiesIn(text: string): Set<string> {
+  const hay = text.toLowerCase()
+  const found = new Set<string>()
+  for (const [family, synonyms] of Object.entries(COLOR_VOCAB)) {
+    if (synonyms.some(t => new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(hay))) {
+      found.add(family)
+    }
+  }
+  return found
+}
+
+function productColorFamilies(p: UcpProduct): Set<string> {
+  // The title first, and alone when it says anything. A store's tag list
+  // routinely carries every colourway a style comes in, so a piece called
+  // "Green Tropical Shirt Set" and tagged white passed a tag-based check while
+  // being, in its name and its photograph, green. What a piece is called is
+  // what the shopper sees.
+  const fromTitle = familiesIn(p.title || '')
+  if (fromTitle.size > 0) return fromTitle
+
+  return familiesIn([
+    (p.tags || []).join(' '),
+    (p.options || []).filter(o => /colou?r/i.test(o.name || '')).flatMap(o => o.values || []).join(' '),
+  ].join(' '))
+}
+
+/** Families that overlap enough that one is not "wrong" for the other — the
+ *  vocabulary deliberately shares synonyms (ivory is both white and cream,
+ *  navy is both navy and blue), so a strict family match would reject pieces a
+ *  person would call correct. */
+function colorFamiliesAgree(a: string, b: string): boolean {
+  if (a === b) return true
+  const sa = new Set(COLOR_VOCAB[a] ?? []), sb = COLOR_VOCAB[b] ?? []
+  return sb.some(t => sa.has(t))
+}
+
+/** The colour families the shopper actually named.
+ *
+ *  Matched by overlap, not by array identity. Two code paths build these
+ *  groups — buildMandatoryConcepts and the intent compiler — and they do not
+ *  produce byte-identical arrays, so an exact comparison silently matched
+ *  nothing on the compiled path. Which is the worst kind of bug: the filter
+ *  existed, was correct, and never ran.
+ */
+function requestedColorsFromConcepts(groups: string[][]): string[] {
+  const out: string[] = []
+  for (const g of groups) {
+    if (!g.length) continue
+    const tokens = g.map(t => String(t).toLowerCase().trim())
+    let best: string | null = null
+    let bestHits = 0
+    for (const [family, synonyms] of Object.entries(COLOR_VOCAB)) {
+      const set = new Set(synonyms)
+      const hits = tokens.filter(t => set.has(t)).length
+      if (hits > bestHits) { bestHits = hits; best = family }
+    }
+    // Most of the group has to be this family's vocabulary, or a garment list
+    // that happens to contain one colour word would read as a colour request.
+    if (best && bestHits >= Math.max(2, Math.ceil(tokens.length * 0.6)) && !out.includes(best)) {
+      out.push(best)
+    }
+  }
+  return out
+}
+
 // Which concept group (if any) names the requested gender? Only the
 // dedicated gender group ever contains these terms — garment/material/color
 // vocabularies don't — so this reads the shopper's actual request, not a
@@ -770,6 +849,14 @@ function applyFiltersAndSort(
      *  capping let one keyword-rich brand eat all 30 slots, then shrink the
      *  page to a handful of its own products. */
     perVendorCap?: number
+    /** Who is shopping, from their profile — not from the words they typed.
+     *
+     *  Gender was only ever a filter when the QUERY named one, so a man whose
+     *  profile says men still got womenswear for "a linen shirt", which names
+     *  no gender at all. Most requests name none. This is the default the
+     *  request falls back to, and an explicit gender in the query still wins:
+     *  a man asking for a dress for his wife must still get dresses. */
+    preferGender?: 'men' | 'women' | null
   },
 ): UcpProduct[] {
   const excluded = new Set(params.excludeIds)
@@ -784,18 +871,39 @@ function applyFiltersAndSort(
     return true
   })
 
+  // Gender is a hard filter, not a ranking signal — reject clear opposite-
+  // gender matches. The query wins when it names one; otherwise the shopper's
+  // profile decides. This runs whether or not there are concepts, because a
+  // query with no concepts is exactly the case that used to leak.
+  //
+  // Never lets it empty the page: in the pathological case where everything
+  // found reads as the opposite gender, the unfiltered set stands rather than
+  // showing nothing.
+  const requestedGender = requestedGenderFromConcepts(params.concepts ?? []) ?? params.preferGender ?? null
+  if (requestedGender) {
+    const opposite = requestedGender === 'men' ? 'women' : 'men'
+    const genderSafe = out.filter(p => productGenderSignal(p) !== opposite)
+    if (genderSafe.length > 0) out = genderSafe
+  }
+
+  // Colour, on the same footing as gender: a named colour is a requirement.
+  // A piece that legibly claims a different family is out; a piece that claims
+  // none survives. Never empties the page.
+  const requestedColors = requestedColorsFromConcepts(params.concepts ?? [])
+  if (requestedColors.length > 0) {
+    const rightColor = out.filter(p => {
+      const mine = productColorFamilies(p)
+      if (mine.size === 0) return true                       // the store said nothing
+      for (const want of requestedColors) {
+        for (const has of Array.from(mine)) if (colorFamiliesAgree(want, has)) return true
+      }
+      return false
+    })
+    if (rightColor.length > 0) out = rightColor
+  }
+
   // Concept layer: drop off-garment items (when safe) and rank by concept fit.
   if (params.concepts && params.concepts.length > 0) {
-    // Gender is a hard filter, not a ranking signal — reject clear opposite-
-    // gender matches before the soft concept scoring below. Never let it
-    // empty the page (falls back to unfiltered in the pathological case
-    // where literally everything found is opposite-gender).
-    const requestedGender = requestedGenderFromConcepts(params.concepts)
-    if (requestedGender) {
-      const opposite = requestedGender === 'men' ? 'women' : 'men'
-      const genderSafe = out.filter(p => productGenderSignal(p) !== opposite)
-      if (genderSafe.length > 0) out = genderSafe
-    }
     out = applyConceptRelevance(out, params.concepts, 4)
   }
 
@@ -849,6 +957,14 @@ export class GlobalCatalogService {
      *  (tops/bottoms/shoes) — a soft reorder signal only, see applySizePreference. */
     preferredSize?: string | null,
   ): Promise<UcpProduct[]> {
+    // The shopper's own gender, read off the taste line the route builds. It is
+    // the fallback the filter uses when the query names none, which is most of
+    // the time — "a linen shirt" has no gender in it and used to return both.
+    const preferGender: 'men' | 'women' | null =
+      /\b(women|womens|women's|female|ladies)\b/i.test(_tasteProfile || '') ? 'women'
+      : /\b(men|mens|men's|male)\b/i.test(_tasteProfile || '') ? 'men'
+      : null
+
     const rawQuery = query.trim()
     // For brand-only searches (brandDomains pre-supplied), allow empty rawQuery —
     // we'll browse the brand's catalog with a broad/empty query instead of returning early.
@@ -920,7 +1036,7 @@ export class GlobalCatalogService {
     const enough = () =>
       applyFiltersAndSort(entry!.products, {
         budgetMax, budgetCurrency: bcur, excludeIds, sort, limit, rates,
-        concepts: mandatoryConcepts, perVendorCap,
+        concepts: mandatoryConcepts, perVendorCap, preferGender,
       }).length >= limit
 
     const ingest = (batchRaw: any[][]) => {
@@ -966,7 +1082,7 @@ export class GlobalCatalogService {
     if (!isLoadMore && !entry.broadened) {
       const current = applyFiltersAndSort(entry.products, {
         budgetMax, budgetCurrency: bcur, excludeIds, sort, limit, rates,
-        concepts: mandatoryConcepts, perVendorCap,
+        concepts: mandatoryConcepts, perVendorCap, preferGender,
       })
       // An occasion query is thin at a much higher count than a garment query,
       // because everything it did retrieve came from three words that name no
@@ -1038,7 +1154,7 @@ export class GlobalCatalogService {
 
     let result = applyFiltersAndSort(entry.products, {
       budgetMax, budgetCurrency: bcur, excludeIds, sort, limit, rates,
-      concepts: mandatoryConcepts, perVendorCap,
+      concepts: mandatoryConcepts, perVendorCap, preferGender,
     })
 
     // Optional LLM rerank for nuanced relevance queries (first page only).

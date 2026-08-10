@@ -69,12 +69,17 @@ function toColors(p: any) {
   const names: string[] = opt(p, /colou?r/i)
   if (!names.length) return undefined
   return names.slice(0, 6).map(name => {
-    const v = (p?.variants ?? []).find((vr: any) =>
+    // Every variant in this colourway, not the first one found. A colour comes
+    // in sizes; picking the first variant meant a sold-out S made the whole
+    // colour read "Unavailable" while M and L were sitting in stock. That is
+    // the button on the product page refusing a sale the brand would have made.
+    const inColour = (p?.variants ?? []).filter((vr: any) =>
       (vr?.options ?? []).some((o: any) => String(o?.label ?? '').toLowerCase() === name.toLowerCase()))
     return {
       name,
-      image: v?.media?.[0]?.url || img(p),
-      available: v ? v.availability !== false : true,
+      image: inColour.find((v: any) => v?.media?.[0]?.url)?.media?.[0]?.url || img(p),
+      // Available if ANY size in this colour is.
+      available: inColour.length === 0 || inColour.some((v: any) => v.availability !== false),
     }
   })
 }

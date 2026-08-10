@@ -30,6 +30,7 @@ import V2Auth, { type V2AuthReason } from './V2Auth'
 import V2Feedback from './V2Feedback'
 import V2Profile from './V2Profile'
 import { buildCartLinks } from './cartLink'
+import { productSlotCategories, type SlotCategory } from '@/lib/queryParser'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export type V2Color = { name: string; code?: string; image: string; available?: boolean }
@@ -541,8 +542,47 @@ export default function DiscernV2({
   // whatever the catalog gives us on the separators it actually uses.
   const detailLines = useMemo(() => {
     const raw = product?.details || product?.materials || ''
-    const parts = raw.split(/\s*[\n•;]\s*|\.\s+(?=[A-Z])/).map(s => s.trim()).filter(Boolean)
-    return parts.length ? parts.slice(0, 8) : ['Made in Italy', 'Specialist clean only']
+    const parts = raw.split(/\s*[\n•;,]\s*|\.\s+(?=[A-Z])/).map(s => s.trim()).filter(Boolean)
+
+    // These come from the store's own tag list, which is written for a search
+    // index, not for a person: "RRDENIM", "similar_product_rare-rr-denim",
+    // "Group_Supima Cotton", "MATERIAL_100% Supima Cotton". Printing them under
+    // MATERIALS is printing somebody's database.
+    //
+    // What is worth keeping is a fibre statement. Keys, slugs and style codes
+    // go; what is left is deduplicated by the fibre it names, keeping the
+    // richest phrasing — so "Group_Supima Cotton", "Material Group_Supima
+    // Cotton" and "MATERIAL_100% Supima Cotton" collapse to the one that
+    // actually says the percentage.
+    const KEYWORDS = /^(material|materials|group|fabric|composition|comp|made of|type)\b[\s_:-]*/i
+    const kept: string[] = []
+    for (const part of parts) {
+      let t = part.replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
+      // strip repeated leading keys: "Material Group Supima Cotton"
+      for (let i = 0; i < 3 && KEYWORDS.test(t); i++) t = t.replace(KEYWORDS, '').trim()
+      if (!t) continue
+      if (/[a-z0-9]+-[a-z0-9-]{3,}/i.test(t)) continue       // similar-product-rare-rr-denim
+      if (/^[A-Z0-9]{4,}$/.test(t)) continue                  // RRDENIM, a style code
+      if (t.length < 3 || t.length > 90) continue
+      if (/^[\d\s.%]+$/.test(t)) continue
+      if (t === t.toUpperCase() && t.length > 4 && !/%/.test(t)) {
+        t = t.charAt(0) + t.slice(1).toLowerCase()
+      }
+      kept.push(t.charAt(0).toUpperCase() + t.slice(1))
+    }
+    // Collapse by fibre: two lines naming the same fibre are one fact, and the
+    // one carrying a percentage is the one worth showing.
+    const fibreOf = (t: string) => t.toLowerCase().replace(/[^a-z]/g, '')
+    const best = new Map<string, string>()
+    for (const t of kept) {
+      const k = fibreOf(t)
+      const prev = best.get(k)
+      if (!prev || (/%/.test(t) && !/%/.test(prev))) best.set(k, t)
+    }
+    const clean = Array.from(best.values()).filter((t, _i, all) =>
+      // drop a line whose fibre is already spelled out inside a longer one
+      !all.some(o => o !== t && fibreOf(o).includes(fibreOf(t)) && /%/.test(o)))
+    return clean.length ? clean.slice(0, 6) : []
   }, [product])
 
   // The reference leads the MATERIALS panel with the composition in caps.
@@ -557,10 +597,32 @@ export default function DiscernV2({
    *  existed. */
   const sections = useMemo(() => turns[0]?.sections ?? [], [turns])
 
+  /** What to wear it WITH.
+   *
+   *  This took the first four things in the results, which for a t-shirt search
+   *  is four more t-shirts — an outfit suggestion made entirely of the garment
+   *  you are already looking at. A piece is styled by what sits in the OTHER
+   *  slots, so this picks one per slot in wear order and never repeats the
+   *  slot the product itself occupies. */
   const styleWith = useMemo(() => {
     if (!product) return []
     const pool = (look?.length ? look : sections.flatMap(s => [...(s.hero ? [s.hero] : []), ...s.products]))
-    return pool.filter(p => p.id !== product.id && p.image).slice(0, 4)
+      .filter(p => p.id !== product.id && p.image)
+
+    const slotsOf = (p: V2Product) =>
+      productSlotCategories({ title: p.title, tags: [], description: p.description })
+    const mine = slotsOf(product)
+
+    const ORDER: SlotCategory[] = ['outer', 'top', 'bottom', 'dress', 'shoes', 'accessory']
+    const picked: V2Product[] = []
+    const used = new Set<SlotCategory>()
+    for (const slot of ORDER) {
+      if (mine.has(slot)) continue
+      const hit = pool.find(p => !picked.includes(p) && slotsOf(p).has(slot))
+      if (hit) { picked.push(hit); used.add(slot) }
+      if (picked.length === 4) break
+    }
+    return picked
   }, [product, look, sections])
 
   useEffect(() => {
@@ -1252,7 +1314,15 @@ export default function DiscernV2({
                 <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
               </div>
               {composition && <span className="v2-comp">{composition}</span>}
-              <p>{product.materials || product.description || 'Composition details are being added for this piece.'}</p>
+              {/* The cleaned lines, not the raw tag list — see detailLines.
+                  When a store publishes no composition at all, say that;
+                  the placeholder that used to sit here claimed a provenance
+                  and a care instruction nobody here has verified. */}
+              {detailLines.length > 0
+                ? <ul className="v2-mat-list">{detailLines.map(d => <li key={d}>{d}</li>)}</ul>
+                : <p>{product.description
+                      ? product.description
+                      : 'This brand does not publish a fabric composition for this piece.'}</p>}
             </div>
           )}
           {acc === 'style' && (
@@ -1271,7 +1341,11 @@ export default function DiscernV2({
                   ))}
                 </div>
               ) : (
-                <p>{product.howToStyle || 'Works with straight trousers and a plain leather shoe.'}</p>
+                /* No invented styling advice about a garment this app has
+                   not seen. Either there are real pieces to pair it with or
+                   there is a way to go and find some. */
+                <p>{product.howToStyle
+                  || 'Nothing in this search to pair it with yet — ask what to wear it with and I’ll pull the pieces.'}</p>
               )}
             </div>
           )}
@@ -2036,6 +2110,10 @@ export default function DiscernV2({
           text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.18);}
         .v2-sku{display:block;margin-top:14px;font-size:11px;opacity:.6;}
         .v2-comp{display:block;margin-bottom:8px;font-size:12px;letter-spacing:.06em;}
+        /* One fact per line, the way a composition reads on a care label. A
+           comma-run of tags reads as data; this reads as a garment. */
+        .v2-mat-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;}
+        .v2-mat-list li{font-size:13px;line-height:1.5;opacity:.88;}
 
         /* The quiet, in-place "still working" note for follow-up searches. */
         .v2-crafting{position:absolute;z-index:45;left:var(--col-l);max-width:var(--col-w);display:flex;align-items:center;gap:9px;

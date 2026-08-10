@@ -634,9 +634,29 @@ async function stylistChat(
   // skipped it instantly and a healthy provider answered. Capping each attempt
   // makes the FIRST request behave like that resend: a stalled provider is
   // abandoned quickly and the next one gets its shot inside the same budget.
+  // ── Skip a provider that is known to be out ──────────────────────────────
+  // lib/groq.ts keeps a cooldown for OpenRouter and Groq; Gemini, Cerebras and
+  // NVIDIA had none, so a provider whose free tier was exhausted was tried
+  // again on every single request — up to ATTEMPT_MS burnt each time before
+  // failing over. With two of five pools out of quota that is most of a minute
+  // spent rediscovering it, per shopper, forever.
+  //
+  // A quota or auth failure is not transient: the key is spent or wrong, and it
+  // will still be spent in ten seconds. So it is remembered. A timeout is NOT
+  // remembered — that really can be a one-off.
+  const now = Date.now()
+  const live = attempts.filter(a => {
+    const until = providerOut.get(a.name.split('(')[0])
+    if (until && until > now) { console.log(`[stylist] skipping ${a.name} — out of quota until ${new Date(until).toISOString()}`); return false }
+    return true
+  })
+  // Never skip everything: if every pool is marked out, try them all anyway
+  // rather than fail without asking.
+  const chain = live.length ? live : attempts
+
   const ATTEMPT_MS = Number(process.env.STYLIST_ATTEMPT_MS ?? 11_000)
   const attemptTimedOut = Symbol('attempt-timeout')
-  for (const a of attempts) {
+  for (const a of chain) {
     try {
       const result = await Promise.race([
         a.run(),
@@ -671,7 +691,14 @@ async function stylistChat(
       if (cleaned) return { ...result, content: cleaned, provider: a.name }
       errors.push(`${a.name}: empty content`)
     } catch (err) {
-      errors.push(`${a.name}: ${(err as Error).message}`)
+      const msg = (err as Error).message || ''
+      // Spent key or wrong key — do not pay for this again for a while.
+      if (/\b429\b|rate limit|too many requests|quota|insufficient|billing|credit|\b401\b|\b403\b|unauthor|invalid api key/i.test(msg)) {
+        const base = a.name.split('(')[0]
+        providerOut.set(base, Date.now() + PROVIDER_OUT_MS)
+        console.warn(`[stylist] ${base} marked out for ${PROVIDER_OUT_MS / 60000}min — ${msg.slice(0, 120)}`)
+      }
+      errors.push(`${a.name}: ${msg}`)
     }
   }
 
@@ -681,6 +708,11 @@ async function stylistChat(
 
 // True when a failure was caused by every model being rate-limited, so the UI
 // can show a warm "we're busy" message instead of a generic error.
+// Providers whose key is spent or invalid, and when to bother with them again.
+// Module scope, so one request's discovery spares every request after it.
+const providerOut = new Map<string, number>()
+const PROVIDER_OUT_MS = 10 * 60_000
+
 function isRateLimited(err: unknown): boolean {
   const msg = (err as Error)?.message || ''
   return /\b429\b|rate limit|too many requests|quota/i.test(msg)
