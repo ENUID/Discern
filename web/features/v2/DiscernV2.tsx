@@ -30,6 +30,7 @@ import V2Auth, { type V2AuthReason } from './V2Auth'
 import V2Feedback from './V2Feedback'
 import V2Profile from './V2Profile'
 import { buildCartLinks } from './cartLink'
+import { useSyncedShelf } from './useSyncedShelf'
 import { productSlotCategories, type SlotCategory } from '@/lib/queryParser'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -307,6 +308,9 @@ export default function DiscernV2({
    *  time they open the drawer, where the piece went. */
   const [bagSeen, setBagSeen] = useState(0)
   const bagFirstWrite = useRef(true)
+  /** True once the local stores have been read — the sync must not push an
+   *  empty bag over a full one during the first render. */
+  const [shelfReady, setShelfReady] = useState(false)
   const [histOpen, setHistOpen] = useState(false)
   const [asked, setAsked] = useState<string[]>([])
   /** Which recent is being renamed, by its current text. */
@@ -410,7 +414,13 @@ export default function DiscernV2({
         const list = JSON.parse(raw) as V2CartLine[]
         if (Array.isArray(list)) setCart(list.filter(l => l?.product?.id))
       }
+      const rawAsked = localStorage.getItem('discern.v2.asked')
+      if (rawAsked) {
+        const list = JSON.parse(rawAsked) as string[]
+        if (Array.isArray(list)) setAsked(list.filter(x => typeof x === 'string'))
+      }
     } catch { /* private mode, quota, or a shape from an older build */ }
+    setShelfReady(true)
   }, [])
 
   useEffect(() => {
@@ -421,8 +431,21 @@ export default function DiscernV2({
     if (bagFirstWrite.current) { bagFirstWrite.current = false; return }
     try {
       localStorage.setItem('discern.v2.bag', JSON.stringify(cart))
+      localStorage.setItem('discern.v2.asked', JSON.stringify(asked))
     } catch { /* nothing worth breaking a bag over */ }
-  }, [cart])
+  }, [cart, asked])
+
+  // ── The same account, on every device ────────────────────────────────────
+  // Signed out this does nothing and the two stores above are the whole story.
+  // Signed in, the account row is the truth: bag a coat on the phone and it is
+  // in the bag on the laptop; delete a recent on the laptop and it is gone from
+  // the phone. See useSyncedShelf for why the first exchange is a union and
+  // every one after it is a replacement.
+  const adoptShelf = useCallback((shelf: { bag: V2CartLine[]; recents: string[] }) => {
+    setCart(shelf.bag.filter(l => l?.product?.id))
+    setAsked(shelf.recents)
+  }, [])
+  useSyncedShelf({ bag: cart as never, recents: asked, onRemote: adoptShelf as never, ready: shelfReady })
 
   // What is in the bag is the strongest taste signal there is — stronger than
   // the saved list this replaced, because it is what someone intends to pay
@@ -913,6 +936,13 @@ export default function DiscernV2({
   const initial = (session?.user?.name || session?.user?.email || '').trim().charAt(0).toUpperCase()
 
   /** Back to a blank page, as the chat UI's New chat did. */
+  /** Back to the opening screen, keeping everything. Distinct from New chat,
+   *  which deliberately throws the turn away. */
+  const goHome = useCallback(() => {
+    setProduct(null); setLookOpen(false); setView('home'); setSaid(null)
+    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
+  }, [])
+
   const newSearch = useCallback(() => {
     setTurns([]); setLook(null); setLookOpen(false); setProduct(null)
     setInput(''); setPhotos([]); setView('home'); setSaid(null)
@@ -1062,10 +1092,16 @@ export default function DiscernV2({
             which leaves the header holding what a header should: one way in,
             and the name of the thing. */}
         <div className="v2-head-gap" />
-        <div className="v2-brand">
+        {/* The wordmark is the way home, as it is on every shop on the
+            internet. It was inert, so the only route back from a product page
+            was Back, and from a results page there was none at all. It goes to
+            the opening screen without clearing the conversation — the recents
+            and the bag are untouched, and New chat is still the thing that
+            starts over. */}
+        <button className="v2-brand" onClick={goHome} aria-label="Discern — home">
           <span>DISCERN</span>
           <i>BETA</i>
-        </div>
+        </button>
         {/* Opposite the menu, as the chat UI had it: the way back to a blank
             page. Hidden on the home screen, which is already that page. */}
         <button className={`v2-ic v2-round v2-newbtn ${view === 'home' ? 'gone' : ''}`}
@@ -1911,8 +1947,14 @@ export default function DiscernV2({
            as misaligned. Centred on the window rather than on the space the
            icons leave, which is the only way it holds when the menu button
            grows a label on a wide screen. */
+        /* pointer-events was none while this was decorative; it is the way
+           home now, so it has to be reachable — and it needs a real target,
+           because the wordmark itself is 13px of tracked-out caps. */
         .v2-brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-          display:flex;align-items:center;pointer-events:none;}
+          border:none;background:none;padding:0;cursor:pointer;color:inherit;
+          display:flex;align-items:center;}
+        .v2-brand::before{content:'';position:absolute;left:50%;top:50%;
+          width:calc(100% + 24px);height:44px;transform:translate(-50%,-50%);}
         .v2-head-gap{flex:1;}
         .v2-newbtn{transition:opacity .25s ${V2.ease},transform .25s ${V2.ease};}
         .v2-newbtn.gone{opacity:0;pointer-events:none;transform:scale(.85);}

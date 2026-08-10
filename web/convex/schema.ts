@@ -41,6 +41,25 @@ export default defineSchema({
   }).index("by_user", ["userId"])
     .index("by_user_product", ["userId", "product.id"]),
 
+  // ── One shelf per account, shared by every device ────────────────────────
+  // The bag and the recents lived in the browser, so the same person signed in
+  // on a phone, a laptop and a tablet had three different bags and three
+  // different histories. Bagging a coat on the train and opening the laptop at
+  // home showed an empty bag.
+  //
+  // One row, replaced whole on each write rather than a row per line: a bag is
+  // small, it is always read and written in full, and a document write is
+  // atomic — which means two devices cannot interleave into a half-merged bag.
+  // `updatedAt` is what lets a device tell a stale local copy from a fresh one.
+  shopper_shelf: defineTable({
+    userId: v.id("users"),
+    /** Cart lines, exactly as the interface holds them. */
+    bag: v.optional(v.any()),
+    /** Questions asked, newest first. */
+    recents: v.optional(v.array(v.string())),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
+
   search_history: defineTable({
     userId: v.id("users"),
     query: v.string(),
