@@ -167,12 +167,19 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
   // `messages` was hardcoded to [] — v2 had no memory at all, so every turn
   // arrived as turn one and a follow-up like "cheaper" was a brand-new
   // conversation. The caller owns the transcript and passes it in.
-  const onQuery = useCallback(async (q: string, history: V2Msg[] = [], images: string[] = []) => {
+  const onQuery = useCallback(async (
+    q: string, history: V2Msg[] = [], images: string[] = [],
+    // What the backend is doing right now, forwarded verbatim to the status
+    // line. The endpoint has always streamed these at its real boundaries; the
+    // interface simply never asked for them.
+    onProgress?: (phase: string) => void,
+  ) => {
     const data = await askStylist({
       question: q,
       messages: history.slice(-6),
       images,
       context,
+      onProgress,
     })
 
     const sections: V2Section[] = []

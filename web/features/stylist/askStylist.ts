@@ -48,7 +48,16 @@ async function readStylistStream(res: Response, onProgress?: (p: string) => void
     try {
       const o = JSON.parse(t)
       if (o.type === 'result') out = o
-      else if (o.type === 'progress' && onProgress && typeof o.phase === 'string') onProgress(o.phase)
+      // The endpoint writes { type:'progress', icon, main, detail }. This read
+      // `o.phase`, which it has never sent, so every progress line was parsed
+      // and dropped — the interface narrated the wait with a canned four-phrase
+      // loop while the real one ("Searching 62 brands", "Comparing 40 pieces")
+      // went in the bin. `phase` stays as a fallback in case anything older
+      // still speaks it.
+      else if (o.type === 'progress' && onProgress) {
+        const line = typeof o.main === 'string' ? o.main : typeof o.phase === 'string' ? o.phase : null
+        if (line) onProgress(line)
+      }
     } catch { /* partial line — the next chunk completes it */ }
   }
   for (;;) {

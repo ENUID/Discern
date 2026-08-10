@@ -218,7 +218,8 @@ async function multiCategorySearch(
   budgetMax: number | null | undefined,
   countryCode: string | null,
   buyerCurrency: string,
-  memorySummary: string | undefined,
+  /** The shopper, in one line — see the tasteProfile builder in the handler. */
+  tasteProfile: string | undefined,
   // Per-garment size, not one shared value — the shopper's TOP size must not
   // nudge the bottoms strip. Resolved per subQuery from its own garment slot.
   sizeForQuery: (q: string) => string | null,
@@ -272,7 +273,7 @@ async function multiCategorySearch(
           subQuery, budgetMax, [], countryCode, true, concepts,
           'relevance', buyerCurrency,
           { fastFirstPage: true, onProgress: onProgress ? (e => onProgress({ ...e, label })) : undefined },
-          [], memorySummary, subQuery, sizeForQuery(subQuery),
+          [], tasteProfile, subQuery, sizeForQuery(subQuery),
         )
         // Filter by the SPECIFIC garment, not its broad slot — t-shirt and shirt
         // both live in the 'top' slot, so a slot-level filter let button-up
@@ -1339,7 +1340,7 @@ async function runStylistRequest(
       ? body.buyerCountry.trim().toUpperCase()
       : req.headers.get('x-vercel-ip-country') || req.headers.get('cf-ipcountry') || null)
     const memorySummary: string | undefined = typeof body?.memorySummary === 'string' && body.memorySummary.trim()
-      ? body.memorySummary.trim()
+      ? body.tasteProfile.trim()
       : undefined
     const shopperGender: string | undefined = typeof body?.shopperGender === 'string' && body.shopperGender.trim()
       ? body.shopperGender.trim()
@@ -1377,6 +1378,43 @@ async function runStylistRequest(
       if (slot === 'shoes') return shopperSizes.shoes || null
       return null
     }
+
+    /** Who is asking, in one line, for the ranker.
+     *
+     *  This slot used to carry `tasteProfile` alone — a premium feature that is
+     *  undefined for almost everybody. So relevanceRerank was handed an empty
+     *  profile: nothing about the shopper reached the judge's prompt, and its
+     *  cache keys on that same value, which meant every shopper with the same
+     *  query shared one cached ordering. Two people on two phones asking the
+     *  same thing got the same list because the system had, quite literally,
+     *  computed it once for nobody in particular.
+     *
+     *  Everything below already arrives with every request. Ordering matters:
+     *  gender leads, so readGender finds it without parsing prose.
+     */
+    const bagVendors = Array.from(new Set(
+      (Array.isArray(body?.savedProducts) ? body.savedProducts : [])
+        .map((p: any) => (typeof p?.vendor === 'string' ? p.vendor.trim() : ''))
+        .filter(Boolean),
+    )).slice(0, 5)
+    const bagPrices = (Array.isArray(body?.savedProducts) ? body.savedProducts : [])
+      .map((p: any) => (typeof p?.price === 'number' ? p.price : null))
+      .filter((n: number | null): n is number => n !== null)
+    const tasteProfile: string | undefined = [
+      shopperGender,
+      shopperProfile && shopperProfile !== shopperGender ? shopperProfile : '',
+      bagVendors.length ? `bag: ${bagVendors.join(', ')}` : '',
+      // A price band beats a price: the point is the register they shop in, not
+      // a filter, and one expensive coat should not raise the floor on knitwear.
+      bagPrices.length
+        ? `usual spend around ${Math.round(bagPrices.reduce((a: number, b: number) => a + b, 0) / bagPrices.length)}`
+        : '',
+      Array.isArray(body?.recentSearches) && body.recentSearches.length
+        ? `recently looked for: ${body.recentSearches.slice(0, 4).join('; ')}`
+        : '',
+      memorySummary || '',
+      countryCode ? `shopping from ${countryCode}` : '',
+    ].filter(Boolean).join(' · ') || undefined
 
     // Maps the catalog search's real internal boundaries (the parallel store
     // fetch, an optional broaden pass, the LLM relevance judge) into live status
@@ -1445,7 +1483,7 @@ async function runStylistRequest(
         const results = await GlobalCatalogService.search(
           loadMoreQuery, undefined, excludeIds, countryCode, true, concepts,
           'relevance', buyerCurrency, { fastFirstPage: true, loadMore: true }, [],
-          memorySummary, undefined, sizeForQuery(loadMoreQuery),
+          tasteProfile, undefined, sizeForQuery(loadMoreQuery),
         )
         send('curate', 'Ranking the next best picks', `rank.relevance(${results.length} candidates)`)
         // A category "See more" (single-garment query, e.g. the Shorts strip's
@@ -1559,7 +1597,7 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
           // both garments, so multiCategorySearch can give each its own group.
           const multiGroups = await multiCategorySearch(
             genderedQuestion, compiled.args.budgetMax, countryCode,
-            compiled.args.budgetCurrency || buyerCurrency, memorySummary, sizeForQuery,
+            compiled.args.budgetCurrency || buyerCurrency, tasteProfile, sizeForQuery,
             onSearchProgress, shopperGender,
           )
           if (multiGroups) {
@@ -1584,7 +1622,7 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
             compiled.args.searchQuery, compiled.args.budgetMax, [], countryCode, true,
             compiled.args.mandatoryConcepts || [], compiled.args.sort || 'relevance',
             compiled.args.budgetCurrency || buyerCurrency, { fastFirstPage: true, onProgress: onSearchProgress }, [],
-            memorySummary, question, preferredSize,
+            tasteProfile, question, preferredSize,
           )
           // Agentic refine, bounded to exactly one extra round: a budget cap
           // is the single most common, and only confidently-safe-to-relax,
@@ -1596,7 +1634,7 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
               compiled.args.searchQuery, undefined, [], countryCode, true,
               compiled.args.mandatoryConcepts || [], compiled.args.sort || 'relevance',
               compiled.args.budgetCurrency || buyerCurrency, { fastFirstPage: true }, [],
-              memorySummary, question, preferredSize,
+              tasteProfile, question, preferredSize,
             )
             if (widened.length > results.length) {
               results = widened
@@ -1670,8 +1708,8 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
           return `SHOPPER PROFILE use this for every recommendation, search token, and size comment:\n${profileSrc}\n${genderNote}\nWhen discussing fit, use their listed size as the baseline and note if something runs small/large relative to it.`
         })()
       : ''
-    const memoryBlock = memorySummary
-      ? `SHOPPER MEMORY (from previous Fabrics sessions):\n${memorySummary}`
+    const memoryBlock = tasteProfile
+      ? `SHOPPER MEMORY (from previous Fabrics sessions):\n${tasteProfile}`
       : ''
     // Country grounds every recommendation in reality: climate-appropriate
     // materials, local dress norms and occasions (a festival query means
@@ -1684,7 +1722,7 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
       ? `SHOPPER'S KNOWN WARDROBE (from a photo scan Fabrics already did):\n${shopperWardrobe}\nUse this to spot real gaps and avoid recommending near-duplicates of what they already own — reference specific pieces by name when it's genuinely relevant, don't force it into every reply.`
       : ''
     // Free-tier personalization — saved products + recent searches, available
-    // to every shopper (not gated behind memorySummary, which is premium-only).
+    // to every shopper (not gated behind tasteProfile, which is premium-only).
     const personalLines: string[] = []
     if (savedProductsCtx.length > 0) {
       const summary = savedProductsCtx.map(p => `${p.title}${p.vendor ? ` by ${p.vendor}` : ''}`).join('; ')
@@ -2022,7 +2060,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
 
         const multiGroups = await withDeadline(multiCategorySearch(
           searchQuery, llmBudget.budgetMax, countryCode, buyerCurrency,
-          memorySummary, sizeForQuery, onSearchProgress, shopperGender,
+          tasteProfile, sizeForQuery, onSearchProgress, shopperGender,
         ), requestDeadline, null)
         if (multiGroups) {
           foundProductGroups = multiGroups
@@ -2040,7 +2078,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
           llmBudget.budgetMax, [], countryCode, true, concepts,
           'relevance', buyerCurrency,
           { fastFirstPage: true, onProgress: onSearchProgress }, [],
-          memorySummary,
+          tasteProfile,
           question, preferredSize,
         ), requestDeadline, [] as any[])
         let refineNote = ''
@@ -2061,7 +2099,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
             const broad = await withDeadline(GlobalCatalogService.search(
               debranded, llmBudget.budgetMax, [], countryCode, true, buildMandatoryConcepts(debranded),
               'relevance', buyerCurrency, { fastFirstPage: true }, [],
-              memorySummary, question, preferredSize,
+              tasteProfile, question, preferredSize,
             ), requestDeadline, [] as any[])
             const names = brands.map(brandNameOf).filter(Boolean).join(' & ')
             if (broad.length > 0) {
@@ -2082,7 +2120,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
             const widened = await withDeadline(GlobalCatalogService.search(
               searchQuery, undefined, [], countryCode, true, concepts,
               'relevance', buyerCurrency, { fastFirstPage: true }, [],
-              memorySummary, question, preferredSize,
+              tasteProfile, question, preferredSize,
             ), requestDeadline, [] as any[])
             if (widened.length > results.length) {
               results = widened
@@ -2105,7 +2143,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
               const retry = await withDeadline(GlobalCatalogService.search(
                 broadened, undefined, [], countryCode, true, buildMandatoryConcepts(broadened),
                 'relevance', buyerCurrency, { fastFirstPage: true }, [],
-                memorySummary, question, preferredSize,
+                tasteProfile, question, preferredSize,
               ), requestDeadline, [] as any[])
               if (retry.length > results.length) {
                 results = retry
@@ -2149,7 +2187,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
             const results = await GlobalCatalogService.search(
               q, undefined, [], countryCode, true, concepts,
               'relevance', buyerCurrency, { fastFirstPage: true }, [],
-              memorySummary, undefined, sizeForQuery(q),
+              tasteProfile, undefined, sizeForQuery(q),
             )
             const filtered = slotCat ? results.filter(p => productMatchesSlot(p, slotCat)) : results
             return { query: q, label, slotCat, filtered, results }
@@ -2202,7 +2240,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
             const results = await GlobalCatalogService.search(
               q, undefined, [], countryCode, true, buildMandatoryConcepts(q),
               'relevance', buyerCurrency, { fastFirstPage: true }, [],
-              memorySummary, undefined, sizeForQuery(q),
+              tasteProfile, undefined, sizeForQuery(q),
             )
             const filtered = slotCat ? results.filter(p => productMatchesSlot(p, slotCat)) : results
             return { oi, filtered, results }
@@ -2245,7 +2283,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
         const broad = await withDeadline(GlobalCatalogService.search(
           fallbackQ, undefined, [], countryCode, true, buildMandatoryConcepts(fallbackQ),
           'relevance', buyerCurrency, { fastFirstPage: true }, [],
-          memorySummary, question, sizeForQuery(fallbackQ),
+          tasteProfile, question, sizeForQuery(fallbackQ),
         ), requestDeadline, [] as any[])
         if (broad.length > 0) foundProducts = dedupeById(broad).slice(0, INITIAL_RESULT_CAP)
       } catch (e) { console.error('[stylist] fallback broad search failed:', e) }
@@ -2290,7 +2328,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
         try {
           send('outfit', 'Pulling the pieces', `catalog.multi(${keysToSurface.join(', ')})`)
           const groups = await withDeadline(multiCategorySearch(
-            surfaceQuery, undefined, countryCode, buyerCurrency, memorySummary, sizeForQuery, onSearchProgress, shopperGender,
+            surfaceQuery, undefined, countryCode, buyerCurrency, tasteProfile, sizeForQuery, onSearchProgress, shopperGender,
           ), requestDeadline, null)
           if (groups && groups.length > 0) {
             foundProductGroups = groups

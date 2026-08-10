@@ -161,11 +161,26 @@ function Img({ src, alt = '', className, ...rest }: React.ImgHTMLAttributes<HTML
   return <img ref={ref} src={src} alt={alt} className={className} onError={() => setFailedSrc(src)} {...rest} />
 }
 
-function Heart({ on, onClick, size = 34, ghost }: { on: boolean; onClick: (e: React.MouseEvent) => void; size?: number; ghost?: boolean }) {
+/** Bag it, or take it out again.
+ *
+ *  This was a heart, and a heart went to a private "saved" list that led
+ *  nowhere — a second collection to maintain, parallel to the bag, that no
+ *  shopper ever asked for and that could not be bought from. One list now: what
+ *  you tap here is in the bag in the sidebar, and the bag is the thing you check
+ *  out with.
+ *
+ *  `just` drives the confirmation. A control that changes state silently makes
+ *  people tap twice, and on a grid of forty tiles the tap is the only feedback
+ *  there is. */
+function BagBtn({ on, just, onClick, size = 34, ghost }: {
+  on: boolean; just?: boolean; onClick: (e: React.MouseEvent) => void; size?: number; ghost?: boolean
+}) {
   return (
-    <button type="button" aria-label={on ? 'Saved' : 'Save'} onClick={onClick}
-      className={`v2-heart ${ghost ? 'ghost' : ''}`} style={{ width: size, height: size }}>
-      <HeartIcon size={Math.round(size * .44)} filled={on} />
+    <button type="button" aria-label={on ? 'In your bag — remove' : 'Add to bag'} aria-pressed={on}
+      onClick={onClick} className={`v2-bagbtn ${on ? 'on' : ''} ${just ? 'just' : ''} ${ghost ? 'ghost' : ''}`}
+      style={{ width: size, height: size }}>
+      <BagIcon size={Math.round(size * .44)} />
+      {on && <i className="v2-bagbtn-dot" aria-hidden />}
     </button>
   )
 }
@@ -176,7 +191,7 @@ export default function DiscernV2({
   buyerCountry,
 }: {
   heroMedia?: string; heroPoster?: string
-  onQuery?: (q: string, history: V2Msg[], images: string[]) => Promise<{
+  onQuery?: (q: string, history: V2Msg[], images: string[], onProgress?: (phase: string) => void) => Promise<{
     sections: V2Section[]; look?: V2Product[]
     answer?: string; didSearch?: boolean; light?: boolean; failed?: boolean
   }>
@@ -199,6 +214,10 @@ export default function DiscernV2({
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadPhase, setLoadPhase] = useState(0)
+  /** What the backend says it is doing, when it says anything. The canned
+   *  sequence below is the fallback for the seconds before the first line
+   *  arrives — not the narration itself, which it used to be. */
+  const [livePhase, setLivePhase] = useState<string | null>(null)
   /** Something Fabrics said that had no products attached to it. Shown above
    *  the composer until the next question, because a stylist who answers you
    *  out loud and is never heard is indistinguishable from a broken app. */
@@ -211,16 +230,15 @@ export default function DiscernV2({
   const [look, setLook] = useState<V2Product[] | null>(null)
   const [lookOpen, setLookOpen] = useState(false)
   const [product, setProduct] = useState<V2Product | null>(null)
-  // Saved kept the ids only, so there was no way to render a saved list even
-  // though the hearts worked — the products themselves were thrown away. Keep
-  // the piece, not just its id.
-  const [saved, setSaved] = useState<Map<string, V2Product>>(new Map())
-  // …and it still forgot them on reload, which makes a saved list a lie. Kept
-  // in localStorage rather than on the account: saving is allowed before
-  // sign-in, so the store has to work without one. Hydrated in an effect, not
-  // in the initial state, so the server and first client render agree.
-  const savedFirstWrite = useRef(true)
-  const [savedOpen, setSavedOpen] = useState(false)
+  /** The piece that was just bagged, for the moment the control confirms it.
+   *  Cleared on a timer — see bagIt. */
+  const [justBagged, setJustBagged] = useState<string | null>(null)
+  /** How many pieces were in the bag when the drawer was last opened. The
+   *  drawer is shut when something is bagged, so the confirmation on the tile
+   *  is what the shopper sees at the time; this is what tells them, the next
+   *  time they open the drawer, where the piece went. */
+  const [bagSeen, setBagSeen] = useState(0)
+  const bagFirstWrite = useRef(true)
   const [histOpen, setHistOpen] = useState(false)
   const [asked, setAsked] = useState<string[]>([])
   /** Which recent is being renamed, by its current text. */
@@ -315,10 +333,14 @@ export default function DiscernV2({
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('discern.v2.saved')
+      // The bag outlives the visit — someone who bags a coat on the train and
+      // opens the app at home should still have the coat. Local rather than on
+      // the account, because bagging is allowed before sign-in and only
+      // checkout asks who you are.
+      const raw = localStorage.getItem('discern.v2.bag')
       if (raw) {
-        const list = JSON.parse(raw) as V2Product[]
-        if (Array.isArray(list)) setSaved(new Map(list.filter(p => p && p.id).map(p => [p.id, p])))
+        const list = JSON.parse(raw) as V2CartLine[]
+        if (Array.isArray(list)) setCart(list.filter(l => l?.product?.id))
       }
     } catch { /* private mode, quota, or a shape from an older build */ }
   }, [])
@@ -328,13 +350,16 @@ export default function DiscernV2({
     // would otherwise run with the empty initial Map — after the read above had
     // already happened but before its setSaved landed — and write the store
     // back as empty. Hydration re-renders, and that second pass persists.
-    if (savedFirstWrite.current) { savedFirstWrite.current = false; return }
+    if (bagFirstWrite.current) { bagFirstWrite.current = false; return }
     try {
-      localStorage.setItem('discern.v2.saved', JSON.stringify(Array.from(saved.values())))
-    } catch { /* nothing worth breaking a save over */ }
-  }, [saved])
+      localStorage.setItem('discern.v2.bag', JSON.stringify(cart))
+    } catch { /* nothing worth breaking a bag over */ }
+  }, [cart])
 
-  useEffect(() => { onSavedChange?.(Array.from(saved.values())) }, [saved, onSavedChange])
+  // What is in the bag is the strongest taste signal there is — stronger than
+  // the saved list this replaced, because it is what someone intends to pay
+  // for. It goes to the stylist with every question.
+  useEffect(() => { onSavedChange?.(cart.map(l => l.product)) }, [cart, onSavedChange])
 
   // ── The session survives a refresh ─────────────────────────────────────────
   // Everything a search produced lived in React state only, so a reload — or
@@ -389,19 +414,18 @@ export default function DiscernV2({
   // these did not. Order matches the z-index stack, so with two layers open
   // Escape peels the front one rather than the one underneath.
   useEffect(() => {
-    if (!(bagOpen || savedOpen || histOpen || menuOpen || lookOpen)) return
+    if (!(bagOpen || histOpen || menuOpen || lookOpen)) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.stopPropagation()
       if (bagOpen) setBagOpen(false)
-      else if (savedOpen) setSavedOpen(false)
       else if (histOpen) setHistOpen(false)
       else if (menuOpen) { setMenuOpen(false); setMenuView('nav') }
       else setLookOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [bagOpen, savedOpen, histOpen, menuOpen, lookOpen])
+  }, [bagOpen, histOpen, menuOpen, lookOpen])
 
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -431,17 +455,20 @@ export default function DiscernV2({
    *  someone's money goes and should not need a browser to verify. */
   const payLinks = useMemo(() => buildCartLinks(cart), [cart])
 
-  const checkout = useCallback(() => {
-    if (!cart.length) return
+  /** Hand off to the brands. Takes the lines explicitly so the product page can
+   *  check out one piece without the rest of the bag coming with it. */
+  const checkoutLines = useCallback((lines: V2CartLine[]) => {
+    if (!lines.length) return
     // An account before the handoff: past this point the order lives on the
     // brand's site, and without one there is no way to tell the shopper what
     // they bought or where it went. The sheet this raises cannot be dismissed —
     // see isMandatory in V2Auth — because a checkout you can wave away is just
     // a button that does nothing.
     if (!requireAccount('checkout')) return
-    if (!payLinks.length) { setBlockedStores([]); return }
+    const links = buildCartLinks(lines)
+    if (!links.length) { setBlockedStores([]); return }
     const blocked: string[] = []
-    payLinks.forEach((url, i) => {
+    links.forEach((url, i) => {
       // The first open rides the click gesture; later ones usually will not.
       // NOT 'noopener' in the feature string: with it, window.open returns null
       // by specification, so a perfectly successful tab is indistinguishable
@@ -454,7 +481,10 @@ export default function DiscernV2({
       if (i === 0) w.focus?.()
     })
     setBlockedStores(blocked)
-  }, [cart, payLinks, requireAccount])
+  }, [requireAccount])
+
+  /** The bag sheet's own button: everything in it. */
+  const checkout = useCallback(() => checkoutLines(cart), [cart, checkoutLines])
 
   // DETAILS reads as a short list of construction facts, one per line — split
   // whatever the catalog gives us on the separators it actually uses.
@@ -491,7 +521,10 @@ export default function DiscernV2({
   // cross-fade in order for as long as the work takes.
   useEffect(() => {
     if (!loading) return
-    const t = setInterval(() => setLoadPhase(n => (n + 1) % V2_LOADING.length), 2100)
+    // Advance and hold. It used to wrap with % length, so a long search went
+    // "Almost there" and then back to "Reading your request" — which is not
+    // slow, it is broken, and it is the first thing anyone notices.
+    const t = setInterval(() => setLoadPhase(n => Math.min(n + 1, V2_LOADING.length - 1)), 2100)
     return () => clearInterval(t)
   }, [loading])
 
@@ -574,19 +607,28 @@ export default function DiscernV2({
     return () => { live = false }
   }, [onFeatured])
 
-  // Takes the product, not an id — see the `saved` declaration.
-  //
-  // No account asked for. Saving writes to this device and always did, so
-  // demanding a sign-in first was gating a feature that then worked perfectly
-  // well without one. Checkout is the only thing that stops and asks.
-  const toggleSave = useCallback((p: V2Product) => {
-    const already = saved.has(p.id)
-    setSaved(prev => {
-      const n = new Map(prev)
-      if (already) n.delete(p.id); else n.set(p.id, p)
-      return n
-    })
-  }, [saved])
+  // No account asked for. The bag lives on this device until checkout, which is
+  // the only thing that stops and asks who you are.
+  /** Whether a piece is already in the bag. Used by every tile, so it is worth
+   *  not rebuilding a Set on each of forty renders. */
+  const bagIds = useMemo(() => new Set(cart.map(l => l.product.id)), [cart])
+  const inBag = useCallback((id: string) => bagIds.has(id), [bagIds])
+
+  const bagIt = useCallback((p: V2Product) => {
+    if (bagIds.has(p.id)) {
+      setCart(c => c.filter(l => l.product.id !== p.id))
+      setJustBagged(null)
+      return
+    }
+    // From a tile there is no colour or size chosen yet — that is what the
+    // product page is for. The line carries what is known, and checkout resolves
+    // the variant from it.
+    setCart(c => [...c, { product: p, color: p.colorName, qty: 1 }])
+    setJustBagged(p.id)
+    // Long enough to read "Bagged", short enough not to sit there as a second
+    // permanent state — the filled bag is what says it is in.
+    setTimeout(() => setJustBagged(cur => (cur === p.id ? null : cur)), 1400)
+  }, [bagIds])
 
   /** Attached photos are compressed to 768px JPEG data URLs, the same pipeline
    *  the chat UI used. They were object URLs before, which render fine in the
@@ -623,7 +665,7 @@ export default function DiscernV2({
     if (!q.trim() || loading) return
     setAsked(a => [q.trim(), ...a.filter(x => x !== q.trim())].slice(0, 12))
     taRef.current?.blur()
-    setLoadPhase(0)
+    setLoadPhase(0); setLivePhase(null)
     setLoading(true); setLookOpen(false)
     const question = q.trim()
     // The transcript so far, so a follow-up like "cheaper" has something to
@@ -640,7 +682,7 @@ export default function DiscernV2({
     let show = false
     try {
       const res = onQuery
-        ? await onQuery(question, history, sentPhotos)
+        ? await onQuery(question, history, sentPhotos, p => setLivePhase(p))
         : { sections: [], look: undefined, answer: undefined, didSearch: false, light: false }
       const sections = res.sections ?? []
 
@@ -655,12 +697,23 @@ export default function DiscernV2({
       // A failed request produces the same empty shape and is handled by the
       // flag rather than falling in here.
       if (!sections.length && !res.didSearch && !res.failed) {
-        setInput('')
-        setSaid(res.answer?.trim() || null)
-        setLoading(false)
-        return
+        const words = res.answer?.trim()
+        // No products AND no words is not an answer, it is a dropped request.
+        // Treated as one, so it lands on the results view with a way to try
+        // again instead of quietly restoring the home screen — which is
+        // indistinguishable from the app having done nothing.
+        if (!words) {
+          setTurns(prev => [{ id: `empty-${prev.length}`, question, didSearch: false, failed: true, sections: [] }, ...prev].slice(0, 12))
+          show = true
+        } else {
+          setInput('')
+          setSaid(words)
+          setLoading(false)
+          return
+        }
+      } else {
+        setSaid(null)
       }
-      setSaid(null)
 
       setTurns(prev => [{
         id: `${prev.length}-${question.slice(0, 24)}`,
@@ -714,10 +767,8 @@ export default function DiscernV2({
     // popped a toast instead, which said the same thing and then vanished.
     { label: 'Explore', icon: <SparkleIcon size={16} />, count: 0, soon: true, go: () => {} },
     { label: 'Brands',  icon: <TagIcon size={16} />,     count: 0, soon: true, go: () => {} },
-    { label: 'Saved', icon: <HeartIcon size={16} />, count: saved.size, soon: false,
-      go: () => setSavedOpen(true) },
     { label: 'Bag', icon: <BagIcon size={16} />, count: cartCount, soon: false,
-      go: () => setBagOpen(true) },
+      go: () => { setBagOpen(true); setBagSeen(cartCount) } },
     { label: 'History', icon: <HistoryIcon size={16} />, count: 0, soon: false,
       go: () => setHistOpen(true) },
   ]
@@ -742,13 +793,31 @@ export default function DiscernV2({
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
   }
 
-  const addToCart = () => {
+  /** Straight to the brand's checkout with this one piece, in the colour and
+   *  size chosen on this page.
+   *
+   *  It goes through the bag rather than around it: the line has to exist for
+   *  buildCartLinks to resolve a variant, and if the shopper comes back the
+   *  piece is where they would look for it. What is skipped is the step where
+   *  they are told to go and find the bag themselves. */
+  const buyNow = () => {
     if (!product || adding) return
     setAdding(true)
-    setTimeout(() => {
-      setCart(c => [...c, { product, color: pickedColor?.name ?? product.colorName, size: pickedSize ?? undefined, qty: 1 }])
-      setAdding(false); setColorMode(false); setSizeMode(false)
-    }, 850)
+    const line: V2CartLine = {
+      product, color: pickedColor?.name ?? product.colorName,
+      size: pickedSize ?? undefined, qty: 1,
+    }
+    setCart(c => {
+      const rest = c.filter(l => l.product.id !== product.id)
+      return [...rest, line]
+    })
+    setColorMode(false); setSizeMode(false)
+    // One frame for the cart state to land, since checkout reads payLinks off
+    // it. Kept as a paint-boundary rather than a guessed delay.
+    requestAnimationFrame(() => {
+      setAdding(false)
+      checkoutLines([line])
+    })
   }
 
   const setQty = (i: number, d: number) =>
@@ -785,6 +854,26 @@ export default function DiscernV2({
             colors: Array.isArray(d.colors) ? d.colors : [],
             byColor: d.byColor && typeof d.byColor === 'object' ? d.byColor : {},
           })
+          // Then, separately, ask which of them have a person in them.
+          // Stores publish in whatever order the merchandiser uploaded, which is
+          // very often a flat packshot first — a cropped rectangle of fabric,
+          // which is exactly the "zoomed cloth" that opens instead of the
+          // garment. /api/image-order classifies and puts the on-body shots
+          // first. It is a second request on purpose: the gallery is already on
+          // screen by the time this lands, so a slow or failed classifier costs
+          // a reorder, never the pictures.
+          fetch('/api/image-order', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ urls: d.images.slice(0, 12) }),
+          })
+            .then(r => (r.ok ? r.json() : null))
+            .then(o => {
+              if (cancelled || !Array.isArray(o?.order) || o.order.length === 0) return
+              const ordered = o.order.filter((u: unknown): u is string => typeof u === 'string')
+              const rest = d.images.filter((u: string) => !ordered.includes(u))
+              setGallery(g => (g ? { ...g, images: [...ordered, ...rest] } : g))
+            })
+            .catch(() => { /* publish order stands */ })
         }
       })
       .catch(() => { /* the thumbnails below still stand the page up */ })
@@ -948,7 +1037,7 @@ export default function DiscernV2({
                   {s.hero && (
                     <div className="v2-sec-hero">
                       <button className="v2-shot" onClick={() => openProduct(s.hero!)}><Img src={s.hero.image} alt={s.hero.title} /></button>
-                      <Heart on={saved.has(s.hero.id)} onClick={e => { e.stopPropagation(); toggleSave(s.hero!) }} />
+                      <BagBtn on={inBag(s.hero.id)} just={justBagged === s.hero.id} onClick={e => { e.stopPropagation(); bagIt(s.hero!) }} />
                     </div>
                   )}
                   {s.title && (
@@ -969,7 +1058,7 @@ export default function DiscernV2({
                       {s.products.map((p, i) => (
                         <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
                           <button className="v2-tile-btn" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} loading="lazy" /></button>
-                          <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p) }} />
+                          <BagBtn on={inBag(p.id)} just={justBagged === p.id} onClick={e => { e.stopPropagation(); bagIt(p) }} />
                           <span className="v2-tile-name">{p.title} <i aria-hidden>›</i></span>
                         </div>
                       ))}
@@ -991,7 +1080,7 @@ export default function DiscernV2({
               {look.map(p => (
                 <div key={p.id} className="v2-rail-item">
                   <button className="v2-shot" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} /></button>
-                  <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p) }} />
+                  <BagBtn on={inBag(p.id)} just={justBagged === p.id} onClick={e => { e.stopPropagation(); bagIt(p) }} />
                   <span className="v2-rail-name">{p.title} <i aria-hidden>›</i></span>
                 </div>
               ))}
@@ -1006,7 +1095,50 @@ export default function DiscernV2({
         {/* 3 · PRODUCT */}
         {view === 'product' && product && (
           <section className="v2-pdp" data-surface="light">
-            {pdpImages.map((src, i) => <Img key={i} className="v2-pdp-img" src={src} />)}
+            {/* One column, top to bottom, on every screen. It used to become a
+                horizontal filmstrip past 760px — a sideways scroll nobody
+                expects on a product page, and the reason a laptop showed the
+                pieces lying on their side. A wide screen gets a wider column
+                and more air, not a different gesture. */}
+            <div className="v2-pdp-col">
+              {/* Colourways up front, not behind a pill. If a piece comes in
+                  five colours that is the first thing to know about it, and
+                  choosing one swaps the whole gallery through byColor. */}
+              {(product.colors?.length ?? 0) > 1 && (
+                <div className="v2-pdp-colors" role="group" aria-label="Colours">
+                  {(product.colors ?? []).map(c => (
+                    <button key={c.name} title={c.name}
+                      aria-label={c.name} aria-pressed={pickedColor?.name === c.name}
+                      className={pickedColor?.name === c.name ? 'on' : ''}
+                      onClick={() => setPickedColor(c)}>
+                      <Img src={c.image} alt="" />
+                    </button>
+                  ))}
+                  <span className="v2-pdp-colorname">{pickedColor?.name ?? product.colorName ?? ''}</span>
+                </div>
+              )}
+
+              {pdpImages.map((src, i) => (
+                <Img key={src} className="v2-pdp-img" src={src}
+                  alt={i === 0 ? product.title : ''}
+                  // The first two carry the page; everything below the fold
+                  // waits until it is scrolled to. Without this a twelve-shot
+                  // gallery at 2048 fetches twelve full-size photographs before
+                  // the first one paints.
+                  loading={i < 2 ? 'eager' : 'lazy'}
+                  {...(i === 0 ? { fetchPriority: 'high' as const } : {})}
+                  decoding="async" />
+              ))}
+              {/* While the real gallery is still coming, hold its shape. The
+                  thumbnail is up, so the page is readable; these stop it
+                  jumping when eight more photographs land under it. */}
+              {!gallery && (product.images?.length ?? 0) < 2 && (
+                <>
+                  <span className="v2-pdp-img v2-img-ph" aria-hidden />
+                  <span className="v2-pdp-img v2-img-ph" aria-hidden />
+                </>
+              )}
+            </div>
 
             {/* After the photographs the page itself carries a dashed-outline
                 card with two independently collapsible rows — description and
@@ -1039,7 +1171,7 @@ export default function DiscernV2({
                   {styleWith.map(p => (
                     <div key={p.id} className="v2-rail-item">
                       <button className="v2-shot" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} /></button>
-                      <Heart on={saved.has(p.id)} onClick={e => { e.stopPropagation(); toggleSave(p) }} />
+                      <BagBtn on={inBag(p.id)} just={justBagged === p.id} onClick={e => { e.stopPropagation(); bagIt(p) }} />
                       <span className="v2-rail-name">{p.title} <i aria-hidden>›</i></span>
                     </div>
                   ))}
@@ -1134,16 +1266,20 @@ export default function DiscernV2({
                 {pickedSize ? ` | Size ${pickedSize}` : ''}
               </span>
             </div>
-            <Heart on={saved.has(product.id)} onClick={() => toggleSave(product)} />
+            <BagBtn on={inBag(product.id)} just={justBagged === product.id} onClick={() => bagIt(product)} />
           </>
         )}
         <div className="v2-cart-cta">
-          <button className={`v2-buy ${soldOut ? 'off' : ''}`} onClick={addToCart} disabled={adding || soldOut}>
-            {soldOut ? 'Unavailable' : adding ? <i className="v2-spin" /> : 'Add to cart'}
+          {/* Checkout, not "add to cart". Someone who opened a piece, chose a
+              colour and a size has decided; making them add it, find the bag
+              and press a second button is a step invented by supermarkets.
+              Bagging is still there — it is the control beside the price, for
+              when they want to keep looking. */}
+          <button className={`v2-buy ${soldOut ? 'off' : ''}`} onClick={buyNow} disabled={adding || soldOut}>
+            {soldOut ? 'Unavailable' : adding ? <i className="v2-spin" /> : 'Checkout'}
           </button>
-          {product.colors?.length ? (
-            <button className="v2-pill" onClick={() => { setColorMode(v => !v); setSizeMode(false) }}>See all colors</button>
-          ) : null}
+          {/* No "See all colors" — they are on the page, above the first
+              photograph, where a colourway belongs. */}
           <button className="v2-pill" onClick={() => { setSizeMode(v => !v); setColorMode(false) }}>
             {pickedSize ? `Size ${pickedSize}` : 'Select size'}
           </button>
@@ -1162,7 +1298,7 @@ export default function DiscernV2({
             {look.slice(0, 4).map(p => (
               <button key={p.id} className="v2-chip" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} /></button>
             ))}
-            <Heart on={look.every(p => saved.has(p.id))} ghost onClick={() => look.forEach(p => toggleSave(p))} />
+            <BagBtn on={look.every(p => inBag(p.id))} ghost onClick={() => look.forEach(p => bagIt(p))} />
           </div>}
           <div className="v2-tray-cta">
             <button className="v2-pill" onClick={() => { setView('look'); scrollRef.current?.scrollTo({ top: 0 }) }}>Discover the look</button>
@@ -1217,7 +1353,12 @@ export default function DiscernV2({
         <div className="v2-crafting" style={{ bottom: `calc(var(--bar) - var(--bar-air) + 8px + ${kb}px)` }}
           role="status" aria-live="polite">
           <Progress light />
-          <span>{V2_LOADING[loadPhase][0]}{V2_LOADING[loadPhase][1]}</span>
+          {/* Keyed on the text so React swaps the element and the crossfade
+              actually runs — without the key it is one node whose textContent
+              changes, and the animation never restarts. */}
+          <span key={livePhase ?? loadPhase} className="v2-crafting-line">
+            {livePhase ?? V2_LOADING[loadPhase][0] + V2_LOADING[loadPhase][1]}
+          </span>
         </div>
       )}
 
@@ -1316,7 +1457,9 @@ export default function DiscernV2({
                 onClick={() => { if (m.soon) return; setMenuOpen(false); m.go() }}>
                 {m.icon}
                 {m.label}
-                {m.soon ? <em className="soon">Soon</em> : m.count ? <em>{m.count}</em> : null}
+                {m.soon ? <em className="soon">Soon</em>
+                  : m.count ? <em className={m.label === 'Bag' && m.count > bagSeen ? 'count bump' : 'count'}>{m.count}</em>
+                  : null}
               </button>
             </li>
           ))}
@@ -1380,36 +1523,6 @@ export default function DiscernV2({
 
       {/* Saved — the hearts finally have somewhere to lead. Same sheet family as
           the bag, because both are "things you have set aside". */}
-      {savedOpen && (
-        <>
-        <div className="v2-bag-ov" onClick={() => setSavedOpen(false)} />
-        <div className="v2-bag">
-          <button className="v2-bag-x" aria-label="Close" onClick={() => setSavedOpen(false)}>
-            <CloseIcon size={15} />
-          </button>
-          <h2>Saved <em>({saved.size})</em></h2>
-          {saved.size === 0 ? (
-            <p className="v2-bag-empty">Nothing saved yet. Tap the heart on anything worth coming back to.</p>
-          ) : (
-            <div className="v2-saved-grid">
-              {Array.from(saved.values()).map(p => (
-                <div className="v2-saved-cell" key={p.id}>
-                  <button className="v2-shot" onClick={() => { setSavedOpen(false); openProduct(p) }}>
-                    <Img src={p.image} alt={p.title} />
-                  </button>
-                  <Heart on onClick={e => { e.stopPropagation(); toggleSave(p) }} />
-                  <span className="v2-saved-name">{p.title}</span>
-                  <span className="v2-saved-price">{money(p.price, p.currency)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        </>
-      )}
-
-      {/* History — this session's questions. The button existed with no handler;
-          the list is the natural thing behind it. */}
       {histOpen && (
         <>
         <div className="v2-ov on" onClick={() => setHistOpen(false)} />
@@ -1640,16 +1753,6 @@ export default function DiscernV2({
 
 
         /* Saved grid — two up, image-led, the name and price quiet beneath. */
-        .v2-saved-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 12px;}
-        .v2-saved-cell{position:relative;display:flex;flex-direction:column;}
-        .v2-saved-cell .v2-shot{width:100%;aspect-ratio:3/4;overflow:hidden;border:none;padding:0;
-          background:${V2.boneDeep};cursor:pointer;border-radius:12px;}
-        .v2-saved-cell .v2-shot img{width:100%;height:100%;object-fit:cover;display:block;}
-        .v2-saved-cell .v2-heart{position:absolute;top:6px;right:6px;}
-        .v2-saved-name{font-size:13px;margin:9px 0 2px;line-height:1.3;}
-        .v2-saved-price{font-size:12px;color:${V2.ink45};}
-        @media(min-width:760px){.v2-saved-grid{grid-template-columns:repeat(3,1fr);}}
-
         /* History — same panel language as the menu, anchored under its button. */
         .v2-hist{position:absolute;z-index:80;left:12px;right:12px;
           top:calc(env(safe-area-inset-top,0px) + 52px);max-width:340px;
@@ -1727,7 +1830,7 @@ export default function DiscernV2({
         .v2-sec-hero{position:relative;margin:0 auto;max-width:min(420px,88vw);}
         .v2-shot{display:block;width:100%;padding:0;border:none;background:${V2.boneDeep};cursor:pointer;}
         .v2-shot img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;}
-        .v2-sec-hero .v2-heart{position:absolute;right:12px;bottom:12px;}
+        .v2-sec-hero .v2-bagbtn{position:absolute;right:12px;bottom:12px;}
         .v2-discover{display:inline-flex;align-items:center;gap:7px;margin-top:15px;background:none;border:none;
           cursor:pointer;color:${V2.ink};font-size:14px;padding:6px 2px;}
         .v2-discover span{font-size:17px;line-height:1;}
@@ -1748,7 +1851,7 @@ export default function DiscernV2({
            a pair. The .tall class is kept as a no-op so nothing depends on it. */
         .v2-tile img,.v2-tile.tall img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;transition:transform .7s ${V2.ease};}
         @media(hover:hover){.v2-tile:hover img{transform:scale(1.035);}}
-        .v2-tile .v2-heart{position:absolute;right:9px;bottom:38px;}
+        .v2-tile .v2-bagbtn{position:absolute;right:9px;bottom:38px;}
         /* Two lines, always. A caption that ran to four lines pushed its
            neighbour's photograph down and the grid lost its rows — which is what
            made the tiles look like different sizes when every image is identical.
@@ -1762,7 +1865,7 @@ export default function DiscernV2({
         .v2-rail{display:flex;gap:12px;overflow-x:auto;padding:0 16px;scroll-snap-type:x mandatory;scrollbar-width:none;}
         .v2-rail::-webkit-scrollbar{display:none;}
         .v2-rail-item{position:relative;flex:0 0 auto;width:min(66vw,260px);scroll-snap-align:center;}
-        .v2-rail-item .v2-heart{position:absolute;right:10px;top:calc(100% - 78px);}
+        .v2-rail-item .v2-bagbtn{position:absolute;right:10px;top:calc(100% - 78px);}
         .v2-rail-name{display:block;padding:10px 2px 0;font-size:13px;}
         .v2-rail-name i{font-style:normal;color:${V2.ink45};}
         .v2-rail-nav{display:flex;gap:12px;justify-content:center;padding-top:22px;}
@@ -1776,7 +1879,26 @@ export default function DiscernV2({
            under it — the model's head behind the wordmark. The page starts below
            the bar instead, which is also what lets the whole image be seen. */
         .v2-pdp{padding-top:calc(env(safe-area-inset-top,0px) + 64px);padding-bottom:300px;}
-        .v2-pdp-img{width:100%;display:block;background:${V2.boneDeep};}
+        .v2-pdp-col{display:flex;flex-direction:column;gap:3px;}
+        /* 3/4 held before the file arrives, so a gallery landing under the fold
+           does not shove the page around while it is being read. object-fit
+           covers the difference for the rare square or 4/5 shot. */
+        .v2-pdp-img{width:100%;display:block;aspect-ratio:3/4;object-fit:cover;
+          background:${V2.boneDeep};}
+        /* Colourways */
+        /* Clears the floating Back button, which sits at 56px + the safe-area
+           inset and would otherwise land on top of the first swatch. */
+        .v2-pdp-colors{display:flex;align-items:center;flex-wrap:wrap;gap:8px;
+          padding:38px clamp(12px,3.6vw,18px) 14px;}
+        .v2-pdp-colors button{position:relative;width:34px;height:34px;padding:0;border-radius:50%;
+          overflow:hidden;cursor:pointer;background:${V2.boneDeep};
+          border:1px solid ${V2.hairline};transition:transform .15s ${V2.ease};}
+        .v2-pdp-colors button img{width:100%;height:100%;object-fit:cover;display:block;}
+        .v2-pdp-colors button.on{border-color:${V2.ink};transform:scale(1.06);}
+        /* 34px drawn, 44px reached. */
+        .v2-pdp-colors button::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
+          transform:translate(-50%,-50%);}
+        .v2-pdp-colorname{font-size:12px;color:${V2.ink45};margin-left:4px;}
         .v2-back{position:absolute;z-index:45;top:calc(env(safe-area-inset-top,0px) + 56px);left:14px;display:flex;
           align-items:center;gap:6px;padding:7px 14px 7px 11px;border:none;border-radius:999px;cursor:pointer;
           font-size:13px;color:${V2.ink};background:${V2.glassLight};
@@ -1816,10 +1938,11 @@ export default function DiscernV2({
         .v2-comp{display:block;margin-bottom:8px;font-size:12px;letter-spacing:.06em;}
 
         /* The quiet, in-place "still working" note for follow-up searches. */
-        .v2-crafting{position:absolute;z-index:45;left:clamp(12px,3.6vw,18px);display:flex;align-items:center;gap:9px;
+        .v2-crafting{position:absolute;z-index:45;left:clamp(12px,3.6vw,18px);max-width:calc(100% - 2*clamp(12px,3.6vw,18px));display:flex;align-items:center;gap:9px;
           padding:8px 15px;border-radius:999px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};font-size:13px;font-weight:400;white-space:nowrap;
+          overflow:hidden;text-overflow:ellipsis;
           animation:v2-fade .3s ${V2.ease};}
 
         /* The spoken answer. Same glass and same anchor as the status pill it
@@ -1866,20 +1989,38 @@ export default function DiscernV2({
         .v2-chip{flex:1;min-width:0;aspect-ratio:1/1;padding:0;border:none;border-radius:12px;overflow:hidden;
           background:rgba(255,255,255,.1);cursor:pointer;box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-chip img{width:100%;height:100%;object-fit:cover;display:block;}
-        .v2-tray-row .v2-heart.ghost{flex:1;height:auto;aspect-ratio:1/1;border-radius:12px;color:#fff;
+        .v2-tray-row .v2-bagbtn.ghost{flex:1;height:auto;aspect-ratio:1/1;border-radius:12px;color:#fff;
           background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
         .v2-tray-cta{display:flex;gap:7px;margin-top:8px;align-items:center;}
 
-        .v2-pill{flex:1 1 84px;min-width:0;padding:10px 12px;border:none;border-radius:999px;cursor:pointer;font-size:12px;
+        /* Grows to share the row, but only up to a size a pill should be —
+           with the colours moved onto the page there is one pill left here, and
+           an unbounded flex:1 stretched it into a slab half the bar wide. */
+        .v2-pill{flex:0 1 auto;max-width:220px;min-width:84px;padding:10px 16px;border:none;border-radius:999px;cursor:pointer;font-size:12px;
           color:#fff;background:rgba(255,255,255,.16);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
           transition:background .18s ${V2.ease};}
         .v2-pill:active{background:rgba(255,255,255,.26);}
         .v2-x{width:34px;height:34px;flex-shrink:0;border:none;border-radius:50%;cursor:pointer;display:flex;
           align-items:center;justify-content:center;color:#fff;background:rgba(255,255,255,.16);}
-        .v2-heart{border:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;
-          color:${V2.ink};background:rgba(255,255,255,.8);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-          box-shadow:0 2px 10px rgba(0,0,0,.13);transition:transform .16s ${V2.ease};}
-        .v2-heart:active{transform:scale(.88);}
+        /* Bag it. Ink-on-white at rest, inverted once it is in — the fill is
+           the state, so a glance at a grid says which pieces are already
+           yours without reading anything. */
+        .v2-bagbtn{position:relative;border:none;border-radius:50%;cursor:pointer;display:flex;
+          align-items:center;justify-content:center;
+          color:${V2.ink};background:rgba(255,255,255,.82);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+          box-shadow:0 2px 10px rgba(0,0,0,.13);
+          transition:transform .18s ${V2.ease},background .18s linear,color .18s linear;}
+        .v2-bagbtn:active{transform:scale(.86);}
+        .v2-bagbtn.on{background:${V2.ink};color:${V2.bone};}
+        /* The confirmation: one firm pulse, then it settles into the filled
+           state. Long enough to see, short enough not to be an animation you
+           have to wait out. */
+        .v2-bagbtn.just{animation:v2-bagged .52s ${V2.ease};}
+        @keyframes v2-bagged{
+          0%{transform:scale(1)} 34%{transform:scale(1.22)} 62%{transform:scale(.94)} 100%{transform:scale(1)}
+        }
+        .v2-bagbtn-dot{position:absolute;top:5px;right:5px;width:5px;height:5px;border-radius:50%;
+          background:currentColor;opacity:.9;}
 
         .v2-hint{position:absolute;z-index:41;left:50%;translate:-50% 0;margin-bottom:14px;display:inline-flex;align-items:center;gap:9px;
           padding:11px 20px;border:none;border-radius:999px;cursor:pointer;font-size:13px;color:#fff;
@@ -1935,13 +2076,28 @@ export default function DiscernV2({
           .v2-skel-head,.v2-skel-hero,.v2-skel-img,.v2-skel-line{animation:none;background:${V2.boneDeep};}
           .v2-skel-cell{animation:none}
         }
+        /* An indeterminate track. The travelling block used to be 40% of a
+           26px rail inside the status pill — ten pixels sliding back and forth,
+           which read as a glitch rather than as work happening. Wider rail,
+           slower travel, and it eases at both ends instead of snapping back. */
         .v2-prog{display:block;width:132px;height:2px;border-radius:2px;overflow:hidden;
-          background:rgba(26,26,28,.12);}
-        .v2-prog.light{width:26px;background:rgba(255,255,255,.24);}
-        .v2-prog i{display:block;width:40%;height:100%;border-radius:2px;background:${V2.ink};
-          animation:v2-sweep 1.15s ${V2.easeInOut} infinite;}
+          background:rgba(26,26,28,.12);flex-shrink:0;}
+        .v2-prog.light{width:46px;background:rgba(255,255,255,.22);}
+        .v2-prog i{display:block;width:45%;height:100%;border-radius:2px;background:${V2.ink};
+          animation:v2-travel 1.35s ${V2.easeInOut} infinite;}
         .v2-prog.light i{background:#fff;}
-        @keyframes v2-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+        @keyframes v2-travel{
+          0%{transform:translateX(-105%)} 55%{transform:translateX(125%)}
+          56%{transform:translateX(125%)} 100%{transform:translateX(-105%)}
+        }
+        @media(prefers-reduced-motion:reduce){
+          .v2-prog i{animation:v2-pulse 1.6s ease-in-out infinite;width:100%}
+          @keyframes v2-pulse{0%,100%{opacity:.3}50%{opacity:1}}
+        }
+        /* Each status line replaces the one before it rather than the text
+           mutating in place, so the pill reads as a sequence of steps. */
+        .v2-crafting-line{animation:v2-line .26s ${V2.ease};}
+        @keyframes v2-line{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 
         /* ── Drawer + scrim ────────────────────────────────────────────────
            A full-height panel that slides in from the left edge, which is what
@@ -1999,6 +2155,13 @@ export default function DiscernV2({
         ul.v2-menu-nav li button:hover{background:rgba(var(--srf-ink-rgb),.08);opacity:1;}
         ul.v2-menu-nav li button em{margin-left:auto;font-style:normal;font-size:11px;font-weight:500;
           background:rgba(var(--srf-ink-rgb),.14);border-radius:999px;padding:2px 8px;}
+        /* The count answers when something lands in it. The drawer is usually
+           shut when a piece is bagged, so this is not the confirmation — the
+           button on the tile is. It is what makes the connection between the
+           two obvious the first time someone opens the drawer after bagging. */
+        ul.v2-menu-nav li button em.bump{animation:v2-bump .5s ${V2.ease};
+          background:var(--srf-fill);color:var(--srf-fill-ink);}
+        @keyframes v2-bump{0%{transform:scale(1)}40%{transform:scale(1.3)}100%{transform:scale(1)}}
         /* Listed, not live. Dimmed so the row reads as an announcement rather
            than a control, and the tag says when. */
         ul.v2-menu-nav li button.soon{opacity:.45;cursor:default;}
@@ -2260,6 +2423,7 @@ export default function DiscernV2({
                 /* Add to cart, colours, size and close is four controls; on a narrow
            phone the third was being cut off at the edge. They wrap now. */
         .v2-cart-cta{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:2px;}
+        .v2-cart-cta .v2-x{margin-left:auto;}
         .v2-buy{flex-shrink:0;padding:11px 16px;border:none;border-radius:999px;cursor:pointer;background:#fff;
           color:${V2.ink};font-size:13px;min-width:92px;display:flex;align-items:center;justify-content:center;
           transition:transform .12s ${V2.ease};}
@@ -2295,7 +2459,7 @@ export default function DiscernV2({
            decides. Elements already absolutely positioned establish their own
            containing block and must not be reset. */
         .v2-discover,.v2-acc-pill,.v2-buy,.v2-pill,.v2-x,.v2-remove,.v2-qty button{position:relative;}
-        .v2-heart::before,.v2-back::before,.v2-x::before,.v2-bag-x::before,
+        .v2-bagbtn::before,.v2-back::before,.v2-x::before,.v2-bag-x::before,
         .v2-qty button::before,.v2f-x::before{content:'';position:absolute;left:50%;top:50%;
           width:44px;height:44px;transform:translate(-50%,-50%);}
         .v2-discover::before,.v2-acc-pill::before,.v2-remove::before{content:'';position:absolute;
@@ -2343,10 +2507,19 @@ export default function DiscernV2({
            it keeps the element's exact geometry so layout never shifts when the
            real image lands. A faint diagonal grain keeps it from looking like a
            rendering failure. */
-        .v2-img-ph{display:block;width:100%;height:100%;min-height:inherit;
+        /* A photograph that has not arrived yet. The sweep is what separates
+           "loading" from "broken" — a still grey rectangle reads as a picture
+           that failed, and this page can hold ten of them at once while the
+           2048s come down. */
+        .v2-img-ph{display:block;width:100%;height:100%;min-height:inherit;position:relative;overflow:hidden;
           background:
             repeating-linear-gradient(135deg,rgba(28,27,25,.028) 0 2px,transparent 2px 9px),
             linear-gradient(160deg,${V2.boneDeep} 0%,#DFDAD2 55%,${V2.boneDeep} 100%);}
+        .v2-img-ph::after{content:'';position:absolute;inset:0;
+          background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.55) 50%,transparent 80%);
+          transform:translateX(-100%);animation:v2-sweep 1.5s ${V2.ease} infinite;}
+        @keyframes v2-sweep{to{transform:translateX(100%)}}
+        @media(prefers-reduced-motion:reduce){.v2-img-ph::after{animation:none;opacity:.3}}
         .v2-hero-media .v2-img-ph{position:absolute;inset:0;
           background:
             repeating-linear-gradient(135deg,rgba(255,255,255,.03) 0 2px,transparent 2px 10px),
@@ -2368,8 +2541,11 @@ export default function DiscernV2({
         @media(min-width:760px){
           :root{--bar:104px;}
           .v2-tray{left:50%;translate:-50% 0;width:min(560px,92vw);}
-          .v2-dock{left:50%;right:auto;translate:-50% 0;width:min(560px,92vw);}
-          .v2-back{left:50%;margin-left:min(-280px,-46vw);}
+          /* The controls sit under the photographs and share their width, so
+             the page reads as one column instead of a panel floating across the
+             corner of the first shot. Same expression as .v2-pdp-col. */
+          .v2-dock{left:50%;right:auto;translate:-50% 0;width:min(620px,58vw);}
+          .v2-back{left:50%;margin-left:min(-310px,-29vw);}
           .v2-sugs{max-width:560px;margin:0 auto;}
           /* On a wide screen the sheet hugs its contents and centres, instead
              of stretching into a tall column of empty white. */
@@ -2403,7 +2579,7 @@ export default function DiscernV2({
           .v2-sec{padding-top:clamp(80px,7vw,120px);}
           .v2-sec h2{font-size:clamp(34px,3.1vw,46px);}
           .v2-mosaic{gap:30px 20px;padding:40px 0 0;}
-          .v2-tile .v2-heart{bottom:44px;right:11px;}
+          .v2-tile .v2-bagbtn{bottom:44px;right:11px;}
           .v2-tile-name{padding:11px 3px 0;font-size:13px;}
 
           /* The section's lead image was as tall as the window with nothing
@@ -2417,11 +2593,13 @@ export default function DiscernV2({
              underneath the wordmark here while being clear of it there.
              border-box keeps the strip one screen tall with the inset inside
              it, so the pictures still fit without scrolling vertically. */
-          .v2-pdp{display:flex;height:100svh;box-sizing:border-box;overflow-x:auto;overflow-y:hidden;
-            padding:calc(env(safe-area-inset-top,0px) + 78px) 0 0;
-            scroll-snap-type:x proximity;scrollbar-width:none;}
-          .v2-pdp::-webkit-scrollbar{display:none;}
-          .v2-pdp-img{width:auto;height:100%;flex:0 0 auto;object-fit:cover;scroll-snap-align:center;}
+          /* The same page, wider. A measured column rather than the full
+             window: a photograph stretched to 1600px is a worse photograph, and
+             a product page that scrolls sideways is a filmstrip, which is what
+             this was. */
+          .v2-pdp{padding:calc(env(safe-area-inset-top,0px) + 92px) 0 340px;}
+          .v2-pdp-col{width:min(620px,58vw);margin:0 auto;gap:6px;}
+          .v2-pdp-colors{padding:0 0 18px;gap:10px;}
 
           /* Controls sit left-of-centre over that imagery, larger */
           .v2-acc-pill{font-size:12px;padding:9px 15px;}
@@ -2434,7 +2612,7 @@ export default function DiscernV2({
             border-left:1px dashed ${V2.hairline};padding-left:26px;}
           .v2-back{left:26px;margin-left:0;top:76px;}
 
-          .v2-cart{left:26px;right:auto;translate:none;width:min(430px,36vw);padding:15px;}
+          .v2-cart{padding:15px;}
           .v2-cart-thumb{width:64px;height:82px;}
           .v2-cart-name{font-size:18px;}
           .v2-buy{padding:14px 30px;font-size:15px;}

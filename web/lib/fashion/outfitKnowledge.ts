@@ -237,6 +237,20 @@ export function coherence(pieces: Array<{ text: string; formality?: Formality }>
 
 // ── The plan ─────────────────────────────────────────────────────────────────
 
+/** Who this is for, out of whatever the caller happened to have.
+ *
+ *  Some callers hold a clean 'Women' / 'Men'; the ranker holds the shopper's
+ *  whole taste line ("women · tops M · bag: …"). Both have to work, and a naive
+ *  first-letter test on the second reads 'w' from "women" but also matches any
+ *  sentence starting with w. `\bmen\b` cannot fire inside "women" — the word
+ *  boundary fails against the preceding o — so this order is safe. */
+export function readGender(input?: string | null): 'Women' | 'Men' | null {
+  const s = input || ''
+  if (/\b(women|womens|women's|female|ladies)\b/i.test(s)) return 'Women'
+  if (/\b(men|mens|men's|male)\b/i.test(s)) return 'Men'
+  return null
+}
+
 export type OutfitPlan = {
   occasion: string
   formality: Formality
@@ -256,12 +270,11 @@ export function outfitPlan(query: string, gender?: string | null): OutfitPlan | 
   if (!occasion) return null
 
   const season = readSeason(query)
-  const g = (gender || '').toLowerCase()
   // 'Both' and 'Non-binary' are real answers on the profile and neither of them
   // means "no preference between two lists". Menswear slots are the safer
   // default: every slot in them exists in both wardrobes, which is not true the
   // other way round (a gown is not a neutral suggestion).
-  const slots = g.startsWith('w') ? occasion.slots.women : occasion.slots.men
+  const slots = readGender(gender) === 'Women' ? occasion.slots.women : occasion.slots.men
 
   return {
     occasion: occasion.key,
@@ -312,12 +325,11 @@ export function intentKey(query: string, gender?: string | null): string {
   const occasion = readOccasion(query)
   const season = readSeason(query)
   const family = colorFamily(query)
-  const g = (gender || '').toLowerCase().slice(0, 1)
   return [
     occasion?.key ?? '-',
     season ?? '-',
     family ?? '-',
-    g || '-',
+    readGender(gender) ?? '-',
   ].join('|')
 }
 
