@@ -8,6 +8,7 @@ import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/store
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
 import { outfitPlan } from '@/lib/fashion/outfitKnowledge'
+import { wantsProducts, routeReason } from '@/lib/fashion/intentRouter'
 import { cerebrasChat, cerebrasVisionChat, CEREBRAS_VISION_CONFIGURED } from '@/lib/cerebras'
 import { nvidiaChat, nvidiaVisionChat, NVIDIA_CONFIGURED } from '@/lib/nvidia'
 import { ConvexHttpClient } from 'convex/browser'
@@ -384,21 +385,16 @@ function isBareGreeting(question: string): boolean {
 }
 
 function isHeavyQuery(question: string): boolean {
-  const q = question.toLowerCase()
   // Any recognized garment is a shopping intent — use the real vocabulary
   // (robust plurals / synonyms / Indian wear) so "shirts", "overshirts",
   // "kurta" route to the path that can actually SEARCH, not the chat path.
-  if (decomposeQuery(q).garmentKeys.length > 0) return true
-  return (
-    /\bfind\b|\bshow\b|\blook for\b|\blooking for\b|\brecommend\b|\bsuggest\b|\bsearch\b|\bwhere can i\b|\bneed\b|\bwant\b|\bget me\b|\bbuy\b|\bshop\b/.test(q) ||
-    /\boutfit\b|\bbuild.{0,10}look|\bcomplete.{0,10}look|\bwhat.{0,10}wear\b/.test(q) ||
-    /\blinen\b|\bcotton\b|\bwool\b|\bcashmere\b|\bsilk\b|\bleather\b|\bsuede\b|\bfabric\b|\bmaterial\b/.test(q) ||
-    /\bwedding\b|\bwork\b|\boffice\b|\bdate night\b|\bformal\b|\bdinner\b|\bparty\b|\bevent\b|\boccasion\b/.test(q) ||
-    /\bcolou?r\b|\bmatch\b|\bpair\b|\bwear with\b|\bgo with\b/.test(q) ||
-    /\bcompar|\bvs\b|\bbetter\b|\bdifference\b|\bprefer\b/.test(q) ||
-    /\bprice\b|\bcost\b|\bbudget\b|\bworth\b/.test(q) ||
-    /\bstyle\b|\blook\b|\baesthetic\b|\bvibes?\b/.test(q)
-  )
+  if (decomposeQuery(question.toLowerCase()).garmentKeys.length > 0) return true
+  // Everything else that is not plainly small talk. This used to be a
+  // whitelist of shopping words and is now a denylist of the few things that
+  // are not requests — see lib/fashion/intentRouter.ts for why the default had
+  // to invert. "I have an interview on Friday" contains no word the old list
+  // knew and could never search; that is the bug this fixes.
+  return wantsProducts(question)
 }
 
 // A reaction to what was just shown — "I like it", "this is better than before",
@@ -1875,6 +1871,9 @@ Use concrete garment, colour, and material words only, never a brand or product 
       // path (unless the shopper pinned products, which is always a real ask).
       const feedbackOnly = products.length === 0 && isReactionOnly(question)
       const heavy = !feedbackOnly && (products.length > 0 || isHeavyQuery(question) || isActionFollowThrough(question, lastAssistant) || isShoppingContinuation(question, lastAssistant))
+      // Loggable, because a mis-route is invisible in the answer: it looks like
+      // the model simply had nothing to say. This line is how you find it.
+      console.log(`[stylist] route ${heavy ? 'heavy(can search)' : 'light(chat only)'} — ${routeReason(question)} — "${question.slice(0, 60)}"`)
       // Deep expert knowledge, injected on-demand: the heavy path pulls in only
       // the modules this query actually needs (decision, color, fit, fabric,
       // occasion, agentic) plus the shopper's regional style intelligence, so
@@ -2276,10 +2275,20 @@ Use concrete garment, colour, and material words only, never a brand or product 
       // regardless of how the question was phrased — a reply naming a shirt,
       // trousers and shoes clearly wants those pieces on screen.
       const replyGarmentKeys = Array.from(new Set(decomposeQuery(reply2).garmentKeys)).slice(0, 5)
-      if (replyGarmentKeys.length >= 2) {
-        const surfaceQuery = applyGenderDefault(replyGarmentKeys.map(k => GARMENT_VOCAB[k]?.query[0] || k).join(' '))
+      // Failing that, the question's own occasion. Everything above depends on
+      // the model choosing to emit a search token or to name garments in its
+      // prose, and neither is guaranteed — when it just answers warmly, the
+      // shopper who asked what to wear to an interview gets a paragraph and no
+      // clothes. The occasion is known deterministically from the question, so
+      // this needs no model at all: whatever was said, an interview still means
+      // a jacket, a shirt, trousers and shoes.
+      const planned = replyGarmentKeys.length >= 2
+        ? [] : (outfitPlan(question, shopperGender)?.slots ?? [])
+      const keysToSurface = replyGarmentKeys.length >= 2 ? replyGarmentKeys : planned
+      if (keysToSurface.length >= 2) {
+        const surfaceQuery = applyGenderDefault(keysToSurface.map(k => GARMENT_VOCAB[k]?.query[0] || k).join(' '))
         try {
-          send('outfit', 'Pulling the pieces', `catalog.multi(${replyGarmentKeys.join(', ')})`)
+          send('outfit', 'Pulling the pieces', `catalog.multi(${keysToSurface.join(', ')})`)
           const groups = await withDeadline(multiCategorySearch(
             surfaceQuery, undefined, countryCode, buyerCurrency, memorySummary, sizeForQuery, onSearchProgress, shopperGender,
           ), requestDeadline, null)

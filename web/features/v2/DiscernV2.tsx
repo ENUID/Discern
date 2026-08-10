@@ -199,6 +199,10 @@ export default function DiscernV2({
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadPhase, setLoadPhase] = useState(0)
+  /** Something Fabrics said that had no products attached to it. Shown above
+   *  the composer until the next question, because a stylist who answers you
+   *  out loud and is never heard is indistinguishable from a broken app. */
+  const [said, setSaid] = useState<string | null>(null)
   // Turns, not sections. Each query used to replace the results wholesale, so
   // the previous answer and its products were destroyed on every follow-up.
   const [turns, setTurns] = useState<V2Turn[]>([])
@@ -331,6 +335,53 @@ export default function DiscernV2({
   }, [saved])
 
   useEffect(() => { onSavedChange?.(Array.from(saved.values())) }, [saved, onSavedChange])
+
+  // ── The session survives a refresh ─────────────────────────────────────────
+  // Everything a search produced lived in React state only, so a reload — or
+  // iOS quietly discarding a backgrounded tab, which happens constantly on a
+  // phone — threw away the answer, the question, and the whole history. The
+  // shopper's only route back was the drawer's recents, which re-ran the search
+  // from scratch and cost another model call for an answer we already had.
+  //
+  // sessionStorage rather than local: this is one visit's conversation, and a
+  // browser reopened next week should not resume mid-sentence. Recents (`asked`)
+  // are the long-lived record and stay where they are.
+  const RESTORE_KEY = 'discern.v2.session'
+  const restored = useRef(false)
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(RESTORE_KEY)
+      if (!raw) { restored.current = true; return }
+      const s = JSON.parse(raw) as { turns?: V2Turn[]; view?: View; said?: string | null }
+      if (Array.isArray(s.turns) && s.turns.length) {
+        setTurns(s.turns)
+        // Only back to the results page. A restored product page would be a
+        // page the shopper never navigated to in this session, and the piece
+        // may not even be in stock any more.
+        if (s.view === 'results' || s.view === 'product' || s.view === 'look') setView('results')
+      }
+      if (typeof s.said === 'string') setSaid(s.said)
+    } catch { /* private mode, quota, or a shape from an older build */ }
+    restored.current = true
+  }, [])
+
+  useEffect(() => {
+    // Wait for the read above, or the first commit writes the empty initial
+    // state over the very thing we are about to restore.
+    if (!restored.current) return
+    try {
+      // Two turns, not twelve. Each one carries whole product objects with
+      // image URLs and variants, and sessionStorage throws past a few MB —
+      // silently losing the write, which is worse than storing less.
+      const slim = turns.slice(0, 2)
+      sessionStorage.setItem(RESTORE_KEY, JSON.stringify({ turns: slim, view, said }))
+    } catch {
+      // Over quota: keep the most recent turn alone rather than nothing.
+      try {
+        sessionStorage.setItem(RESTORE_KEY, JSON.stringify({ turns: turns.slice(0, 1), view, said }))
+      } catch { /* give up quietly; the session is still fine in memory */ }
+    }
+  }, [turns, view, said])
 
   // Escape closes the topmost open layer. Every one of these inerts the rest of
   // the page while it is up, so without this the only way out is finding the
@@ -593,20 +644,23 @@ export default function DiscernV2({
         : { sections: [], look: undefined, answer: undefined, didSearch: false, light: false }
       const sections = res.sections ?? []
 
-      // Nothing to show, and nothing was searched — a greeting, an aside. The
-      // reference boutique answers every query with a selection or with
-      // nothing; it never writes a sentence on the page. So this leaves the
-      // shopper exactly where they were rather than inventing a surface to put
-      // prose on.
-      // A request that broke looks identical to this from here — no sections,
-      // no search — so without the flag it took the same exit, and a failed
-      // search silently put the shopper back on the home page with the question
-      // wiped. Now it lands on the results view and says what happened.
+      // Nothing found and nothing searched — a greeting, an aside, or a
+      // question Fabrics answered in words. The page stays where it is, which
+      // is right; what was NOT right is that the answer went in the bin. The
+      // comment that used to sit here said replies "surface briefly at the
+      // composer", and no such surface was ever built, so every conversational
+      // turn looked from the outside like the app doing nothing at all: you
+      // typed a sentence, watched it load, and got the home screen back.
+      //
+      // A failed request produces the same empty shape and is handled by the
+      // flag rather than falling in here.
       if (!sections.length && !res.didSearch && !res.failed) {
         setInput('')
+        setSaid(res.answer?.trim() || null)
         setLoading(false)
         return
       }
+      setSaid(null)
 
       setTurns(prev => [{
         id: `${prev.length}-${question.slice(0, 24)}`,
@@ -674,7 +728,7 @@ export default function DiscernV2({
   /** Back to a blank page, as the chat UI's New chat did. */
   const newSearch = useCallback(() => {
     setTurns([]); setLook(null); setLookOpen(false); setProduct(null)
-    setInput(''); setPhotos([]); setView('home')
+    setInput(''); setPhotos([]); setView('home'); setSaid(null)
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
   }, [])
 
@@ -1164,6 +1218,22 @@ export default function DiscernV2({
           role="status" aria-live="polite">
           <Progress light />
           <span>{V2_LOADING[loadPhase][0]}{V2_LOADING[loadPhase][1]}</span>
+        </div>
+      )}
+
+      {/* What Fabrics said when it had no pieces to show for it. This is the
+          surface the old comment promised and never built. It sits where the
+          status pill sits, so an answer arrives exactly where the shopper was
+          already looking, and it stays until the next question rather than
+          flashing past — the answer to "does navy go with olive" is the whole
+          reply, not a glimpse of it. */}
+      {said && !loading && (
+        <div className="v2-said" style={{ bottom: `calc(var(--bar) - var(--bar-air) + 8px + ${kb}px)` }}
+          role="status" aria-live="polite">
+          <p>{said}</p>
+          <button className="v2-said-x" aria-label="Dismiss" onClick={() => setSaid(null)}>
+            <CloseIcon size={13} />
+          </button>
         </div>
       )}
 
@@ -1751,6 +1821,25 @@ export default function DiscernV2({
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};font-size:13px;font-weight:400;white-space:nowrap;
           animation:v2-fade .3s ${V2.ease};}
+
+        /* The spoken answer. Same glass and same anchor as the status pill it
+           replaces — one arrives as the other leaves, in the same place — but
+           it wraps, because a sentence is not a status. Capped at a third of
+           the screen so a long answer scrolls inside itself rather than pushing
+           the boutique off the page. */
+        .v2-said{position:absolute;z-index:45;display:flex;align-items:flex-start;gap:10px;
+          left:clamp(12px,3.6vw,18px);right:clamp(12px,3.6vw,18px);max-width:640px;
+          padding:13px 15px;border-radius:18px;color:#fff;background:${V2.glassDark};
+          backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+          box-shadow:inset 0 0 0 1px ${V2.glassEdge},0 10px 34px rgba(0,0,0,.26);
+          max-height:34svh;overflow-y:auto;overscroll-behavior:contain;
+          animation:v2-fade .3s ${V2.ease};}
+        .v2-said p{margin:0;font-size:14px;line-height:1.55;font-weight:400;}
+        .v2-said-x{position:relative;flex-shrink:0;width:22px;height:22px;margin:-1px -3px 0 0;
+          display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
+          background:rgba(255,255,255,.12);color:#fff;cursor:pointer;}
+        .v2-said-x::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
+          transform:translate(-50%,-50%);}
 
         /* In-flow dashed card at the foot of the product page. */
         .v2-doc{margin:34px 16px 0;padding:2px 18px 6px;border-top:1px solid ${V2.hairline};border-bottom:1px solid ${V2.hairline};}
