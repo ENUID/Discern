@@ -75,6 +75,8 @@ export type V2Turn = {
    *  because "nothing fits that" and "that never got through" are different
    *  facts, and only one of them is worth offering to try again. */
   failed?: boolean
+  /** Failed because of load rather than a break. Different sentence, same page. */
+  busy?: boolean
   sections: V2Section[]
 }
 /** Transcript entry sent back to the stylist so follow-ups have context. */
@@ -138,6 +140,53 @@ function Progress({ light }: { light?: boolean }) {
   )
 }
 
+/** The opening film, kept running.
+ *
+ *  autoPlay + loop + muted + playsInline is the correct declaration and is not
+ *  sufficient on a phone. iOS pauses a video when the tab is backgrounded, when
+ *  the browser is switched away from, and under Low Power Mode, and it does not
+ *  resume on its own — so the hero was a still frame for anyone who had left
+ *  the tab and come back, which is most people. Nothing in the interface offers
+ *  a play button, so a paused video simply looks like a broken one.
+ *
+ *  So the element is asked to resume on every event that can have stopped it,
+ *  and on any pause it did not ask for. play() rejects when the browser refuses
+ *  (Low Power Mode does refuse); the poster stays up in that case, which is the
+ *  correct degraded state and not worth reporting.
+ */
+function HeroVideo({ src, poster }: { src: string; poster?: string }) {
+  const ref = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const resume = () => {
+      if (document.hidden) return
+      const p = el.play()
+      if (p && typeof p.catch === 'function') p.catch(() => { /* refused; poster stands */ })
+    }
+    resume()
+    const onPause = () => { if (!el.ended) resume() }
+    el.addEventListener('pause', onPause)
+    el.addEventListener('stalled', resume)
+    el.addEventListener('loadeddata', resume)
+    for (const ev of ['visibilitychange', 'pageshow', 'focus'] as const) {
+      (ev === 'visibilitychange' ? document : window).addEventListener(ev, resume)
+    }
+    return () => {
+      el.removeEventListener('pause', onPause)
+      el.removeEventListener('stalled', resume)
+      el.removeEventListener('loadeddata', resume)
+      document.removeEventListener('visibilitychange', resume)
+      window.removeEventListener('pageshow', resume)
+      window.removeEventListener('focus', resume)
+    }
+  }, [src])
+  return (
+    <video ref={ref} src={src} poster={poster} autoPlay muted loop playsInline
+      preload="auto" disableRemotePlayback aria-hidden />
+  )
+}
+
 /** Images fail quietly and look deliberate. A missing hero or card must read as
  *  an unphotographed surface, never as a broken tile — so the element keeps its
  *  geometry and drops to a warm paper wash instead of showing the browser's
@@ -193,7 +242,7 @@ export default function DiscernV2({
   heroMedia?: string; heroPoster?: string
   onQuery?: (q: string, history: V2Msg[], images: string[], onProgress?: (phase: string) => void) => Promise<{
     sections: V2Section[]; look?: V2Product[]
-    answer?: string; didSearch?: boolean; light?: boolean; failed?: boolean
+    answer?: string; didSearch?: boolean; light?: boolean; failed?: boolean; busy?: boolean
   }>
   /** Real catalogue imagery for the three hero cards. Supplying this is what
    *  keeps the opening screen from depending on hand-placed jpgs. */
@@ -703,7 +752,7 @@ export default function DiscernV2({
         // again instead of quietly restoring the home screen — which is
         // indistinguishable from the app having done nothing.
         if (!words) {
-          setTurns(prev => [{ id: `empty-${prev.length}`, question, didSearch: false, failed: true, sections: [] }, ...prev].slice(0, 12))
+          setTurns(prev => [{ id: `empty-${prev.length}`, question, didSearch: false, failed: true, busy: res.busy === true, sections: [] }, ...prev].slice(0, 12))
           show = true
         } else {
           setInput('')
@@ -718,7 +767,7 @@ export default function DiscernV2({
       setTurns(prev => [{
         id: `${prev.length}-${question.slice(0, 24)}`,
         question, answer: res.answer, didSearch: res.didSearch === true,
-        failed: res.failed === true, sections,
+        failed: res.failed === true, busy: res.busy === true, sections,
       }, ...prev].slice(0, 12))
       if (res.look?.length) { setLook(res.look); setLookOpen(true) }
       show = true
@@ -959,7 +1008,7 @@ export default function DiscernV2({
           <>
             <section className="v2-hero" data-surface="dark">
               <div className="v2-hero-media">
-                {heroIsVideo ? <video src={heroMedia} poster={heroPoster} autoPlay muted loop playsInline /> : <Img src={heroMedia} />}
+                {heroIsVideo ? <HeroVideo src={heroMedia} poster={heroPoster} /> : <Img src={heroMedia} />}
                 <div className="v2-veil" />
               </div>
               {/* The card trio that used to sit here is gone. Its art came from
@@ -1033,8 +1082,10 @@ export default function DiscernV2({
                   instead of a silent return to the home screen. */}
               {turn.failed && (
                 <div className="v2-empty">
-                  <h2>That didn’t get through</h2>
-                  <p>Nothing reached the catalogue, so there is nothing to show yet.</p>
+                  <h2>{turn.busy ? 'Busy right now' : 'That didn’t get through'}</h2>
+                  <p>{turn.busy
+                    ? 'A lot of people are asking at once. Give it a few seconds and ask again.'
+                    : 'Nothing reached the catalogue, so there is nothing to show yet.'}</p>
                   <button className="v2-retry" onClick={() => run(turn.question)}>
                     Ask again
                   </button>
@@ -1365,22 +1416,6 @@ export default function DiscernV2({
         </div>
       )}
 
-      {/* What Fabrics said when it had no pieces to show for it. This is the
-          surface the old comment promised and never built. It sits where the
-          status pill sits, so an answer arrives exactly where the shopper was
-          already looking, and it stays until the next question rather than
-          flashing past — the answer to "does navy go with olive" is the whole
-          reply, not a glimpse of it. */}
-      {said && !loading && (
-        <div className="v2-said" style={{ bottom: `calc(var(--bar) - var(--bar-air) + 8px + ${kb}px)` }}
-          role="status" aria-live="polite">
-          <p>{said}</p>
-          <button className="v2-said-x" aria-label="Dismiss" onClick={() => setSaid(null)}>
-            <CloseIcon size={13} />
-          </button>
-        </div>
-      )}
-
       {/* Menu */}
       <div className={`v2-ov ${menuOpen ? 'on' : ''}`} onClick={() => setMenuOpen(false)} />
       <nav className={`v2-menu ${menuOpen ? 'on' : ''}`} aria-hidden={!menuOpen}>
@@ -1633,6 +1668,21 @@ export default function DiscernV2({
                       </button>
                     </span>
                   ))}
+                </div>
+              )}
+              {/* What Fabrics said when it had nothing to show for it.
+                  This was a second slab floating above the composer, so a reply
+                  arrived as a new bar stacked on the bar — two things where the
+                  shopper is used to one. It belongs inside: the composer is
+                  already the place you talk to it, so an answer appears in the
+                  same pane the question was typed into and clears with the next
+                  one. */}
+              {said && !loading && (
+                <div className="v2-bar-said" role="status" aria-live="polite">
+                  <p>{said}</p>
+                  <button className="v2-bar-said-x" aria-label="Dismiss" onClick={() => setSaid(null)}>
+                    <CloseIcon size={12} />
+                  </button>
                 </div>
               )}
               <div className="v2-bar-top">
@@ -1977,23 +2027,29 @@ export default function DiscernV2({
           overflow:hidden;text-overflow:ellipsis;
           animation:v2-fade .3s ${V2.ease};}
 
-        /* The spoken answer. Same glass and same anchor as the status pill it
-           replaces — one arrives as the other leaves, in the same place — but
-           it wraps, because a sentence is not a status. Capped at a third of
-           the screen so a long answer scrolls inside itself rather than pushing
-           the boutique off the page. */
-        .v2-said{position:absolute;z-index:45;display:flex;align-items:flex-start;gap:10px;
-          left:var(--col-l);right:auto;width:var(--col-w);box-sizing:border-box;
-          padding:13px 15px;border-radius:18px;color:#fff;background:${V2.glassDark};
-          backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
-          box-shadow:inset 0 0 0 1px ${V2.glassEdge},0 10px 34px rgba(0,0,0,.26);
-          max-height:34svh;overflow-y:auto;overscroll-behavior:contain;
-          animation:v2-fade .3s ${V2.ease};}
-        .v2-said p{margin:0;font-size:14px;line-height:1.55;font-weight:400;}
-        .v2-said-x{position:relative;flex-shrink:0;width:22px;height:22px;margin:-1px -3px 0 0;
+        /* The answer, inside the bar. It takes the bar's own colours through
+           currentColor, so it inverts with it over paper and never needs a
+           second palette. Capped and scrollable: a long answer must not push
+           the field it was typed into off the screen. */
+        .v2-bar-said{display:flex;align-items:flex-start;gap:10px;
+          margin:0 2px 4px;padding:0 0 11px;
+          /* Both stated: the fallback holds where color-mix is not available,
+             and it has to be a tint of currentColor so the rule survives the
+             bar inverting over paper. */
+          border-bottom:1px solid rgba(255,255,255,.16);
+          border-bottom-color:color-mix(in srgb, currentColor 18%, transparent);
+          max-height:30svh;overflow-y:auto;overscroll-behavior:contain;
+          animation:v2-fade .26s ${V2.ease};}
+        .v2-bar-said p{margin:0;font-size:14px;line-height:1.55;font-weight:400;opacity:.9;}
+        .v2-bar-said-x{position:relative;flex-shrink:0;width:22px;height:22px;margin-top:1px;
           display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
-          background:rgba(255,255,255,.12);color:#fff;cursor:pointer;}
-        .v2-said-x::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
+          color:inherit;cursor:pointer;opacity:.55;transition:opacity .14s;
+          background:rgba(255,255,255,.16);
+          background:color-mix(in srgb, currentColor 16%, transparent);}
+        .v2-bar-said-x:hover{opacity:.85;}
+        .v2-bar-said-x::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
+          transform:translate(-50%,-50%);}
+        .v2-bar-said-x::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
           transform:translate(-50%,-50%);}
 
         /* In-flow dashed card at the foot of the product page. */

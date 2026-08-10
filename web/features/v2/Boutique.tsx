@@ -297,8 +297,12 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       // outfit turn took the conversational exit.
       didSearch: (typeof data?.searchQuery === 'string' && data.searchQuery.length > 0)
         || sections.length > 0,
-      failed: data?.failed === true,
+      // A busy or degraded answer with nothing to show is a failure from the
+      // shopper's side, whatever it is called on the wire — it belongs on the
+      // page with a way to try again, not as a sentence in the composer.
+      failed: data?.failed === true || ((data?.busy === true || data?.retryable === true) && sections.length === 0),
       light: data?.light === true,
+      busy: data?.busy === true,
     }
   }, [context])
 

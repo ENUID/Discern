@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { groqChat, wardrobeVisionChat, stripThinkTags, stripAiDashes, stripSafetyLabels, looksLikeLeakedReasoning, CHAT_MODEL, FAST_MODEL } from '@/lib/groq'
 import { geminiChat } from '@/lib/gemini'
 import { GlobalCatalogService, type CatalogProgress } from '@/lib/services/GlobalCatalogService'
-import { buildMandatoryConcepts, classifyQuerySlot, productMatchesSlot, productMatchesGarmentKey, slotLabelFor, decomposeQuery, GARMENT_VOCAB, GARMENT_CATEGORY, type SlotCategory } from '@/lib/queryParser'
+import { normalizeFashionTypos, buildMandatoryConcepts, classifyQuerySlot, productMatchesSlot, productMatchesGarmentKey, slotLabelFor, decomposeQuery, GARMENT_VOCAB, GARMENT_CATEGORY, type SlotCategory } from '@/lib/queryParser'
 import { matchStyles, vocabPromptBlock } from '@/lib/styleVocabulary'
 import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/stores'
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
@@ -1324,6 +1324,14 @@ async function runStylistRequest(
     const products: StylistProduct[] = Array.isArray(body?.products) ? body.products.slice(0, 8) : []
     const rawHistory: StylistMessage[] = Array.isArray(body?.messages) ? body.messages.slice(-20) : []
     const question: string = typeof body?.question === 'string' ? body.question.trim().slice(0, 500) : ''
+    /** The same question with fashion and occasion words spell-corrected.
+     *
+     *  The model reads typos fine; the regex layers in this file do not, and
+     *  they are the ones deciding whether a message can search at all and
+     *  whether it names an occasion. "an intervew on friday" recognised nothing
+     *  and quietly became a worse answer. The shopper's own wording still goes
+     *  to the model — this copy exists only for the matchers. */
+    const questionRead: string = normalizeFashionTypos(question)
     const images: string[] = Array.isArray(body?.images)
       ? (body.images as unknown[]).filter((x): x is string => typeof x === 'string' && x.startsWith('data:image/') && x.length <= 6_000_000).slice(0, 8)
       : []
@@ -1415,6 +1423,93 @@ async function runStylistRequest(
       memorySummary || '',
       countryCode ? `shopping from ${countryCode}` : '',
     ].filter(Boolean).join(' · ') || undefined
+
+    /** The catalogue does not need the model.
+     *
+     *  Every failure path in this file used to end the same way: an apology and
+     *  no products. Provider quota, a cold model, a timeout, a thrown
+     *  exception — whatever the cause, the shopper got "Something went wrong on
+     *  my end" and an empty screen, which is the app not working rather than
+     *  the model not working. They are not the same thing and should not look
+     *  the same.
+     *
+     *  Everything needed to search is deterministic and already here: the
+     *  intent compiler, the occasion planner, the concept builder. So when the
+     *  model layer fails, this runs the search the shopper asked for anyway.
+     *  It is a worse answer than a styled one — no reasoning, no ranking prose —
+     *  and it is enormously better than nothing.
+     *
+     *  Returns null only when the catalogue itself came back empty, which is
+     *  the one case where an apology is the honest reply.
+     */
+    const rescueSearch = async (): Promise<Record<string, unknown> | null> => {
+      const q = applyGenderDefault(questionRead.trim())
+      try {
+        // 1. An occasion implies a whole outfit and is the richest thing we can
+        //    do without a model — four slots, retrieved separately.
+        const plan = outfitPlan(q, shopperGender)
+        if (plan && plan.slots.length >= 2) {
+          const groups = await withDeadline(multiCategorySearch(
+            q, undefined, countryCode, buyerCurrency, tasteProfile, sizeForQuery,
+            onSearchProgress, shopperGender,
+          ), requestDeadline, null)
+          if (groups && groups.length) {
+            return {
+              foundProducts: dedupeById(groups.flatMap(g => g.products)),
+              foundProductGroups: groups,
+              searchQuery: q,
+            }
+          }
+        }
+
+        // 2. A compilable request — a garment with modifiers — needs no model
+        //    either. This is the same path a plain "navy linen shirt" takes on
+        //    a good day.
+        const compiled = compileIntent(q, buyerCurrency)
+        const searchArgs = compiled?.args
+        const term = searchArgs?.searchQuery || q
+        const found = await withDeadline(GlobalCatalogService.search(
+          term, searchArgs?.budgetMax, [], countryCode, true,
+          searchArgs?.mandatoryConcepts || buildMandatoryConcepts(term),
+          searchArgs?.sort || 'relevance', searchArgs?.budgetCurrency || buyerCurrency,
+          { fastFirstPage: true, onProgress: onSearchProgress }, [],
+          tasteProfile, question, sizeForQuery(term),
+        ), requestDeadline, [] as any[])
+        if (found && found.length) {
+          return {
+            foundProducts: dedupeById(found).slice(0, INITIAL_RESULT_CAP),
+            searchQuery: term,
+          }
+        }
+      } catch (e) {
+        console.error('[stylist] rescue search failed:', e)
+      }
+      return null
+    }
+
+    /** What to send when the model is unavailable. Products if we can get them,
+     *  and a reply that says what actually happened rather than a shrug.
+     *  `busy` is the honest word for a rate limit: it is not broken, there are
+     *  simply more people asking than the quota allows this minute. */
+    const withoutTheModel = async (kind: 'busy' | 'error') => {
+      const rescued = await rescueSearch()
+      if (rescued) {
+        console.log(`[stylist] model unavailable (${kind}) — served from the catalogue directly`)
+        return finish({
+          reply: kind === 'busy'
+            ? 'A lot of people are asking at once, so I went straight to the catalogue for this one. Ask again in a moment and I will style it properly.'
+            : 'I could not think this one through, so here is what the catalogue has for it. Ask again and I will do it properly.',
+          comparison: null, busy: kind === 'busy', degraded: true,
+          ...rescued,
+        })
+      }
+      return finish({
+        reply: kind === 'busy'
+          ? 'A lot of people are using this right now and I could not get to your question. Give it a few seconds and ask again.'
+          : 'That did not get through. Ask me again.',
+        busy: kind === 'busy', retryable: true, comparison: null,
+      })
+    }
 
     // Maps the catalog search's real internal boundaries (the parallel store
     // fetch, an optional broaden pass, the LLM relevance judge) into live status
@@ -1908,10 +2003,10 @@ Use concrete garment, colour, and material words only, never a brand or product 
       // Pure feedback/reactions never trigger a rebuild — force the short chat
       // path (unless the shopper pinned products, which is always a real ask).
       const feedbackOnly = products.length === 0 && isReactionOnly(question)
-      const heavy = !feedbackOnly && (products.length > 0 || isHeavyQuery(question) || isActionFollowThrough(question, lastAssistant) || isShoppingContinuation(question, lastAssistant))
+      const heavy = !feedbackOnly && (products.length > 0 || isHeavyQuery(questionRead) || isActionFollowThrough(question, lastAssistant) || isShoppingContinuation(question, lastAssistant))
       // Loggable, because a mis-route is invisible in the answer: it looks like
       // the model simply had nothing to say. This line is how you find it.
-      console.log(`[stylist] route ${heavy ? 'heavy(can search)' : 'light(chat only)'} — ${routeReason(question)} — "${question.slice(0, 60)}"`)
+      console.log(`[stylist] route ${heavy ? 'heavy(can search)' : 'light(chat only)'} — ${routeReason(questionRead)} — "${question.slice(0, 60)}"`)
       // Deep expert knowledge, injected on-demand: the heavy path pulls in only
       // the modules this query actually needs (decision, color, fit, fabric,
       // occasion, agentic) plus the shopper's regional style intelligence, so
@@ -1968,18 +2063,15 @@ Use concrete garment, colour, and material words only, never a brand or product 
           // costs nothing and will very likely succeed (the slow provider is now
           // on cooldown and gets skipped). The client retries once silently, so
           // the shopper never sees this and never has to resend by hand.
-          return finish({ reply: "That one took me too long to think through. Give it another go?", retryable: true, comparison: null })
+          return withoutTheModel('error')
         }
         raw = (msg?.content ?? '').trim()
         logAiUsage({ path: heavy ? 'llm-heavy' : 'llm-light', provider: msg.provider, estPromptTokens: estimateTokens(promptTextForEstimate), estCompletionTokensCap: replyMaxTokens, ok: !!raw })
       } catch (err) {
         logAiUsage({ path: heavy ? 'llm-heavy' : 'llm-light', provider: 'openrouter-or-groq', estPromptTokens: estimateTokens(promptTextForEstimate), estCompletionTokensCap: replyMaxTokens, ok: false })
         console.error('[stylist] model call failed:', err)
-        if (isRateLimited(err)) {
-          return finish({ reply: BUSY_REPLY, busy: true, retryable: true, comparison: null })
-        }
         console.error('[stylist] all models failed:', (err as Error).message)
-        return finish({ reply: "Something went wrong. Please try again.", retryable: true, comparison: null })
+        return withoutTheModel(isRateLimited(err) ? 'busy' : 'error')
       }
 
       // Self-heal: the #1 failure mode is the model describing an outfit/item in
@@ -2321,7 +2413,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
       // this needs no model at all: whatever was said, an interview still means
       // a jacket, a shirt, trousers and shoes.
       const planned = replyGarmentKeys.length >= 2
-        ? [] : (outfitPlan(question, shopperGender)?.slots ?? [])
+        ? [] : (outfitPlan(questionRead, shopperGender)?.slots ?? [])
       const keysToSurface = replyGarmentKeys.length >= 2 ? replyGarmentKeys : planned
       if (keysToSurface.length >= 2) {
         const surfaceQuery = applyGenderDefault(keysToSurface.map(k => GARMENT_VOCAB[k]?.query[0] || k).join(' '))
@@ -2370,9 +2462,14 @@ Use concrete garment, colour, and material words only, never a brand or product 
     return finish({ reply: reply2, comparison: comparison ?? null, foundProducts, foundProductGroups, outfitSlots, outfitGroups, searchQuery: searchQuery || undefined })
   } catch (e) {
     console.error('[stylist] error:', e)
-    if (isRateLimited(e)) {
-      return finish({ reply: BUSY_REPLY, busy: true, retryable: true, comparison: null })
-    }
-    return finish({ reply: "Something went wrong on my end. Give it another go?", retryable: true, comparison: null })
+    // Not reachable for anything the model did — those are handled above with a
+    // catalogue fallback. This is a genuine bug in this handler, and the one
+    // case where there is nothing honest to show.
+    return finish({
+      reply: isRateLimited(e)
+        ? 'A lot of people are using this right now. Give it a few seconds and ask again.'
+        : 'That did not get through. Ask me again.',
+      busy: isRateLimited(e), retryable: true, comparison: null,
+    })
   }
 }

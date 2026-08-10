@@ -542,10 +542,26 @@ function levenshtein(a: string, b: string): number {
 }
 
 // Canonical single-word fashion terms to correct toward.
+// Occasions and seasons belong in here too. They are not garments, so they
+// were not in the vocabulary the fuzzy corrector checks against — which meant
+// "weddin", "intervew" and "wnter" passed through uncorrected and the occasion
+// planner, which decides whether a question becomes four strips or one, simply
+// did not recognise them. A typo should cost nothing.
+const OCCASION_VOCAB = [
+  'wedding', 'weddings', 'interview', 'interviews', 'funeral', 'cocktail', 'reception',
+  'graduation', 'anniversary', 'birthday', 'holiday', 'vacation', 'honeymoon',
+  'office', 'business', 'meeting', 'presentation', 'dinner', 'restaurant', 'brunch',
+  'travel', 'flight', 'airport', 'festival', 'party', 'beach', 'poolside',
+  'winter', 'summer', 'autumn', 'spring', 'monsoon', 'january', 'february', 'march',
+  'april', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+  'formal', 'casual', 'smart', 'evening', 'daytime', 'outfit', 'outfits', 'wardrobe',
+]
+
 const CORRECTION_VOCAB: string[] = Array.from(new Set([
   ...Array.from(GARMENT_PRODUCT_TERMS),
   ...Object.values(MATERIAL_VOCAB).flat(),
   ...Object.values(COLOR_VOCAB).flat(),
+  ...OCCASION_VOCAB,
 ].map(w => w.toLowerCase()).filter(w => /^[a-z]{4,}$/.test(w))))
 const CORRECTION_SET = new Set(CORRECTION_VOCAB)
 
