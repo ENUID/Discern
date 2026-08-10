@@ -215,10 +215,41 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       }
     }
 
-    // An outfit becomes the floating "look" tray — one piece per slot.
+    // ── An outfit ────────────────────────────────────────────────────────────
+    // The backend has always built these: "build me a look for a wedding"
+    // emits [OUTFIT: q1 | q2 | q3], each slot is searched, and the pieces come
+    // back in outfitSlots. They were mapped ONLY to the floating tray — which
+    // renders on the results view — while sections stayed empty. An outfit
+    // reply also carries no searchQuery, so the interface read the turn as
+    // "nothing found, nothing searched", took the conversational exit, and the
+    // shopper was left on the home screen with a sentence about a look they
+    // could not see. The outfit builder was working the whole time; nothing
+    // drew it.
+    //
+    // Each slot is its own section, the same shape a multi-garment search
+    // produces, so the look reads down the page as Jacket / Shirt / Trousers /
+    // Shoes. The tray stays as well: it is the one-of-each summary.
+    const slotLabel = (s: any): string => {
+      const raw = String(s?.slotCategory || s?.query || '').trim()
+      if (!raw) return ''
+      // "men navy wool blazer" → "Navy wool blazer". The gender is already
+      // known; repeating it in four headings is noise.
+      const cleaned = raw.replace(/^(men'?s?|women'?s?|unisex)\s+/i, '')
+      return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+    }
     if (Array.isArray(data?.outfitSlots) && data.outfitSlots.length > 0) {
+      for (const s of data.outfitSlots) {
+        const products = (s?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
+        if (!products.length) continue
+        sections.push({ title: slotLabel(s), hero: products[0], products: products.slice(1) })
+      }
       look = data.outfitSlots.map((s: any) => toProduct(s?.products?.[0])).filter((p: V2Product) => p.image)
     } else if (Array.isArray(data?.outfitGroups) && data.outfitGroups.length > 0) {
+      for (const g of data.outfitGroups) {
+        const products = (g?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
+        if (!products.length) continue
+        sections.push({ title: heading(g?.label), hero: products[0], products: products.slice(1) })
+      }
       look = (data.outfitGroups[0]?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
     }
 
@@ -260,7 +291,12 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       sections,
       look,
       answer: typeof data?.reply === 'string' ? data.reply : undefined,
-      didSearch: typeof data?.searchQuery === 'string' && data.searchQuery.length > 0,
+      // An outfit is a search — four of them, in fact. It carries no
+      // searchQuery (that field belongs to [SEARCH:], not [OUTFIT:]), so
+      // keying off it alone told the interface no search had run and every
+      // outfit turn took the conversational exit.
+      didSearch: (typeof data?.searchQuery === 'string' && data.searchQuery.length > 0)
+        || sections.length > 0,
       failed: data?.failed === true,
       light: data?.light === true,
     }

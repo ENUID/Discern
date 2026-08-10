@@ -213,11 +213,26 @@ const JUDGE_SILHOUETTE = `CUT — volume goes up or down, never both: a fitted t
 
 const JUDGE_OCCASION = `OCCASION — formality is a floor, not a flavour. Black tie and cocktail exclude sneakers and casual cotton outright. Business casual is a blazer or fine knit over a collar. Smart casual is elevated basics, not a suit and not a hoodie. Heat changes the fabric at the same formality — a linen suit, never no suit. Overdressed recovers, underdressed does not, so when the ask is ambiguous the sharper piece is the safer answer. Beach and garden events exclude black; weddings exclude anything that competes with the couple.`
 
+
+// ── Added because the judge could tell a navy shirt from a green one and could
+// not tell a good one from a bad one. Every block below is a scoring
+// instruction with checkable facts in it — a grade, a weight, a construction
+// term — because "high quality" in a prompt buys nothing.
+
+const JUDGE_QUALITY = `QUALITY — price is not the signal; the spec is. CASHMERE: grade A is 14–15.5 micron and 34–36mm staple and holds its shape; grade C is short, coarse and pills within a season, and both are sold as "100% cashmere". 2-ply beats 1-ply. Under about 300 GSM in a knit is a base layer being sold as a sweater. WOOL: Super numbers describe fineness, not durability — Super 120s is the practical ceiling for a suit worn often; Super 180s is fragile. Merino under 19.5 micron does not itch. Mongolian and Inner Mongolian cashmere, Scottish spun, Biella and Loro Piana mills, Harris tweed are real provenance; "imported fabric" is not. COTTON: long-staple (Supima, Giza, Sea Island) resists pilling; Oxford 140-160 GSM for shirts, poplin 110-130. LEATHER: full-grain over top-grain over "genuine leather", which is the lowest grade despite the name. Vegetable-tanned patinas; chrome-tanned does not. CONSTRUCTION: full or half canvas beats fused; Goodyear welt and Blake stitch can be resoled and cemented cannot; French seams, pattern-matched plaids, horn or corozo buttons, YKK Excella or Riri zips, a functioning surgeon's cuff. SCORE DOWN: a named fibre with no grade at a designer price, a 5% cashmere blend named for the cashmere, "premium"/"luxury"/"finest" with no fibre or weight given, a fused jacket over 400, viscose lining in outerwear.`
+
+const JUDGE_PERSON = `THE PERSON — a piece is right for someone, not in the abstract. UNDERTONE decides which version of a colour flatters: cool undertones take true white, navy, charcoal, emerald, cool grey, blue-reds and silver; warm undertones take cream, camel, olive, rust, coral, warm reds and gold; neutral takes both and reads best in soft jewel tones. Deeper skin carries saturated colour and true white with more authority than pastels do; very fair skin is overwhelmed by black at the collar and lifted by navy or charcoal instead. This applies at the FACE — a colour that fights someone's undertone in a trouser costs almost nothing. PROPORTION, not size: a long rise and a straight leg lengthen; a cropped jacket raises the waist; a wide leg needs the top tucked or shortened or the whole line is lost. Volume up or down, never both. FIT FAILURES that no fabric rescues: a shoulder seam past the shoulder bone, a jacket sleeve hiding the shirt cuff, a trouser break that puddles, a knit that pulls across the chest. When the shopper has stated a size, a piece that does not come in it is not a candidate however well it answers.`
+
+const JUDGE_PAIRING = `WHAT COMPLETES WHAT — an outfit is a set, and a piece is only as good as what it can sit beside. LAYERING ORDER: collar, then knit, then jacket, then coat — each layer needs the one under it to be slimmer and shorter, and a coat that cannot close over a chunky knit is the wrong coat for the season it is sold in. SHOE TO TROUSER: a sleek leather shoe wants a clean hem and no more than a slight break; a chunky boot or a sneaker wants a wider or cuffed leg. Loafers and derbies dress a trouser up, sneakers dress it down, and the gap between them is the whole difference between smart casual and casual. LEATHER AGREES WITH LEATHER: belt to shoe within a shade; mixing black shoes with a brown belt is one of the few visible errors in menswear. METALS: keep hardware, buckle and jewellery in one family — warm with gold, cool with silver. TEXTURE: a smooth piece needs a textured one to stop the outfit reading flat — flannel against poplin, suede against denim, ribbed knit against a clean trouser. FORMALITY SPREAD: the pieces in one outfit should sit within one step of each other on a five-point scale; a blazer over athletic wear fails not on colour but on that spread. Score a piece higher when it obviously completes something rather than competing with it.`
+
 const JUDGE_TRIGGERS: { text: string; words: string[] }[] = [
   { text: JUDGE_COLOR, words: ['colour', 'color', 'palette', 'tone', 'shade', 'match', 'goes with', 'pair', 'combination', 'contrast', 'neutral', 'bright', 'pastel', 'monochrome'] },
   { text: JUDGE_FABRIC, words: ['fabric', 'material', 'linen', 'cotton', 'wool', 'cashmere', 'silk', 'leather', 'denim', 'knit', 'breathable', 'warm', 'winter', 'summer', 'monsoon', 'humid', 'quality', 'lasts'] },
   { text: JUDGE_SILHOUETTE, words: ['fit', 'oversized', 'slim', 'relaxed', 'baggy', 'tapered', 'straight', 'wide', 'cropped', 'longline', 'silhouette', 'shape', 'proportion', 'layer'] },
   { text: JUDGE_OCCASION, words: ['wedding', 'party', 'interview', 'office', 'work', 'formal', 'casual', 'date', 'dinner', 'beach', 'travel', 'festival', 'diwali', 'eid', 'sangeet', 'mehendi', 'cocktail', 'black tie', 'occasion', 'event'] },
+  { text: JUDGE_QUALITY, words: ['quality', 'best', 'good', 'worth', 'investment', 'lasts', 'durable', 'cashmere', 'merino', 'wool', 'leather', 'designer', 'luxury', 'premium', 'expensive', 'cheap', 'value', 'grade', 'gsm', 'ply', 'canvas', 'welt', 'mill', 'brand', 'brands'] },
+  { text: JUDGE_PERSON, words: ['skin', 'tone', 'complexion', 'undertone', 'suits me', 'flatter', 'flattering', 'body', 'shape', 'tall', 'short', 'petite', 'plus', 'curvy', 'broad', 'slim', 'size', 'fit me', 'my size', 'proportion'] },
+  { text: JUDGE_PAIRING, words: ['goes with', 'go with', 'pair', 'pairs', 'match', 'matches', 'combination', 'combine', 'complete', 'completes', 'outfit', 'look', 'style with', 'wear with', 'layer', 'layering', 'shoes with', 'belt'] },
 ]
 
 /**
@@ -235,6 +250,6 @@ export function judgeKnowledge(query: string): string {
     .map(t => t.text)
   // Nothing named: an open ask still has to be judged as fashion, and colour
   // and occasion are what separate a considered answer from a keyword match.
-  if (!picked.length) return `${JUDGE_COLOR}\n${JUDGE_OCCASION}`
-  return picked.slice(0, 3).join('\n')
+  if (!picked.length) return `${JUDGE_COLOR}\n${JUDGE_OCCASION}\n${JUDGE_PAIRING}`
+  return picked.slice(0, 4).join('\n')
 }

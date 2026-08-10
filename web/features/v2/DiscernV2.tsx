@@ -886,8 +886,19 @@ export default function DiscernV2({
     // of byColor — and only falls back to the swatch's single image.
     const forColor = pickedColor?.name ? gallery?.byColor?.[pickedColor.name] : undefined
     if (forColor?.length) return forColor
-    if (gallery?.images.length) return gallery.images
-    if (pickedColor?.image) return [pickedColor.image, ...(product.images ?? []).slice(1)]
+
+    if (gallery?.images.length) {
+      // No byColor map from this store — plenty publish variants without one.
+      // Choosing a colour then changed nothing on screen, which makes the
+      // picker look broken even though the variant really was selected. The
+      // colourway's own shot leads instead, so the page always answers the tap.
+      const lead = pickedColor?.image
+      if (!lead) return gallery.images
+      const rest = gallery.images.filter(u => u !== lead)
+      return [lead, ...rest]
+    }
+
+    if (pickedColor?.image) return [pickedColor.image, ...(product.images ?? []).filter(u => u !== pickedColor.image)]
     return product.images?.length ? product.images : [product.image]
   }, [product, pickedColor, gallery])
   const soldOut = pickedColor ? pickedColor.available === false : false
@@ -1101,23 +1112,6 @@ export default function DiscernV2({
                 pieces lying on their side. A wide screen gets a wider column
                 and more air, not a different gesture. */}
             <div className="v2-pdp-col">
-              {/* Colourways up front, not behind a pill. If a piece comes in
-                  five colours that is the first thing to know about it, and
-                  choosing one swaps the whole gallery through byColor. */}
-              {(product.colors?.length ?? 0) > 1 && (
-                <div className="v2-pdp-colors" role="group" aria-label="Colours">
-                  {(product.colors ?? []).map(c => (
-                    <button key={c.name} title={c.name}
-                      aria-label={c.name} aria-pressed={pickedColor?.name === c.name}
-                      className={pickedColor?.name === c.name ? 'on' : ''}
-                      onClick={() => setPickedColor(c)}>
-                      <Img src={c.image} alt="" />
-                    </button>
-                  ))}
-                  <span className="v2-pdp-colorname">{pickedColor?.name ?? product.colorName ?? ''}</span>
-                </div>
-              )}
-
               {pdpImages.map((src, i) => (
                 <Img key={src} className="v2-pdp-img" src={src}
                   alt={i === 0 ? product.title : ''}
@@ -1242,12 +1236,18 @@ export default function DiscernV2({
           </div>
         )}
         {colorMode && (
-          <div className="v2-swatches">
+          <div className="v2-picker">
+            <span className="v2-picker-t">{pickedColor?.name ?? 'Choose a colour'}</span>
+            <div className="v2-swatches">
             {(product.colors ?? []).map(c => (
-              <button key={c.name} className={pickedColor?.name === c.name ? 'on' : ''} onClick={() => setPickedColor(c)}>
-                <Img src={c.image} alt={c.name} />
+              <button key={c.name} title={c.name} aria-label={c.name}
+                aria-pressed={pickedColor?.name === c.name}
+                className={pickedColor?.name === c.name ? 'on' : ''}
+                onClick={() => { setPickedColor(c); setColorMode(false) }}>
+                <Img src={c.image} alt="" />
               </button>
             ))}
+            </div>
           </div>
         )}
         {!colorMode && !sizeMode && (
@@ -1278,8 +1278,11 @@ export default function DiscernV2({
           <button className={`v2-buy ${soldOut ? 'off' : ''}`} onClick={buyNow} disabled={adding || soldOut}>
             {soldOut ? 'Unavailable' : adding ? <i className="v2-spin" /> : 'Checkout'}
           </button>
-          {/* No "See all colors" — they are on the page, above the first
-              photograph, where a colourway belongs. */}
+          {(product.colors?.length ?? 0) > 1 ? (
+            <button className="v2-pill" onClick={() => { setColorMode(v => !v); setSizeMode(false) }}>
+              {pickedColor?.name ?? product.colorName ?? 'Colour'}
+            </button>
+          ) : null}
           <button className="v2-pill" onClick={() => { setSizeMode(v => !v); setColorMode(false) }}>
             {pickedSize ? `Size ${pickedSize}` : 'Select size'}
           </button>
@@ -1683,6 +1686,23 @@ export default function DiscernV2({
            is why the two are named: a gap can be stated against the bar's real
            top edge instead of guessed at. */
         :root{--bar:96px;--bar-air:14px;}
+        /* ── The column ──────────────────────────────────────────────────────
+           The composer is the one element on screen at every moment, so it
+           defines where the middle is. Everything that floats — the status
+           pill, a spoken answer, the look tray — is positioned against these
+           rather than against the window, because "18px from the left edge" is
+           the phone's answer and on a laptop it puts the pill a third of a
+           screen away from the bar it belongs to.
+
+           --gut is the wrapper's own padding; --col-w is exactly what .v2-bar
+           resolves to (min(820px, the space inside the gutters)); --col-l is
+           that column's left edge. On a phone --col-l collapses to --gut, which
+           is the behaviour these rules already had. */
+        .v2-root{
+          --gut:clamp(12px,3.6vw,18px);
+          --col-w:min(820px,calc(100% - 2 * var(--gut)));
+          --col-l:max(var(--gut),calc((100% - var(--col-w)) / 2));
+        }
         .v2-root{position:fixed;inset:0;background:${V2.bone};color:${V2.ink};font-family:${V2.sans};overflow:hidden;}
 
         /* Above the menu scrim (70): the trigger doubles as the close control,
@@ -1828,6 +1848,20 @@ export default function DiscernV2({
         .v2-sec h2{font-family:${V2.display};font-weight:600;letter-spacing:-.03em;font-size:clamp(27px,7.4vw,38px);line-height:1.1;margin:0 0 8px;}
         .v2-sec p{font-size:14px;font-weight:400;color:${V2.ink70};margin:0 0 28px;}
         .v2-sec-hero{position:relative;margin:0 auto;max-width:min(420px,88vw);}
+        /* From the first multi-column layout onward the hero is two grid
+           columns wide, so its edges sit on the tiles' edges. The phone keeps
+           its own centred composition — at two columns "two columns" is the
+           whole width, which is not the same picture. */
+        @media(min-width:760px){
+          .v2-sec{padding-left:var(--grid-pad);padding-right:var(--grid-pad);}
+          .v2-sec-hero{max-width:calc(
+            (100% - (var(--grid-cols) - 1) * var(--grid-gap)) / var(--grid-cols) * 2 + var(--grid-gap));}
+          /* Two columns wide at 3:4 is taller than a laptop window, and a lead
+             image nobody can see past is not a lead image. Capped in height and
+             cropped rather than narrowed, so the width — which is what carries
+             the alignment — is untouched. */
+          .v2-sec-hero .v2-shot img{aspect-ratio:auto;height:min(58vh,660px);}
+        }
         .v2-shot{display:block;width:100%;padding:0;border:none;background:${V2.boneDeep};cursor:pointer;}
         .v2-shot img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;}
         .v2-sec-hero .v2-bagbtn{position:absolute;right:12px;bottom:12px;}
@@ -1838,9 +1872,20 @@ export default function DiscernV2({
         /* Gutters, and air at the edges. The tiles were 3px apart and flush to
            the screen, so the grid read as one sheet of photographs rather than
            as separate pieces. */
-        .v2-mosaic{display:grid;grid-template-columns:1fr 1fr;gap:22px 12px;padding:32px 12px 0;}
-        @media(min-width:760px){.v2-mosaic{grid-template-columns:repeat(3,1fr);}}
-        @media(min-width:1180px){.v2-mosaic{grid-template-columns:repeat(4,1fr);}}
+        /* One grid, declared once, so the lead image and the tiles under it
+           can be made to share edges. The hero was a fixed 340px sitting over a
+           1154px grid on a laptop — centred, but visibly unrelated to
+           everything below it, which is what reads as misaligned. */
+        .v2-results{--grid-gap:12px;--grid-cols:2;--grid-pad:12px;}
+        /* Four from the first multi-column layout up, not three then four. An
+           odd column count cannot hold a centred hero that is a whole number of
+           columns wide — two columns centred over three straddles the middle
+           one, which is exactly what reads as misjudged. Four columns and a
+           two-column hero land on each other at every width. */
+        @media(min-width:760px){.v2-results{--grid-cols:4;--grid-pad:0px;}}
+        @media(min-width:1024px){.v2-results{--grid-gap:20px;}}
+        .v2-mosaic{display:grid;grid-template-columns:repeat(var(--grid-cols),1fr);
+          gap:22px var(--grid-gap);padding:32px var(--grid-pad) 0;}
         /* The grey was the tile's own background showing through under the
            caption. Only the image needs a plate to load against. */
         .v2-tile{position:relative;display:flex;flex-direction:column;}
@@ -1886,19 +1931,6 @@ export default function DiscernV2({
         .v2-pdp-img{width:100%;display:block;aspect-ratio:3/4;object-fit:cover;
           background:${V2.boneDeep};}
         /* Colourways */
-        /* Clears the floating Back button, which sits at 56px + the safe-area
-           inset and would otherwise land on top of the first swatch. */
-        .v2-pdp-colors{display:flex;align-items:center;flex-wrap:wrap;gap:8px;
-          padding:38px clamp(12px,3.6vw,18px) 14px;}
-        .v2-pdp-colors button{position:relative;width:34px;height:34px;padding:0;border-radius:50%;
-          overflow:hidden;cursor:pointer;background:${V2.boneDeep};
-          border:1px solid ${V2.hairline};transition:transform .15s ${V2.ease};}
-        .v2-pdp-colors button img{width:100%;height:100%;object-fit:cover;display:block;}
-        .v2-pdp-colors button.on{border-color:${V2.ink};transform:scale(1.06);}
-        /* 34px drawn, 44px reached. */
-        .v2-pdp-colors button::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
-          transform:translate(-50%,-50%);}
-        .v2-pdp-colorname{font-size:12px;color:${V2.ink45};margin-left:4px;}
         .v2-back{position:absolute;z-index:45;top:calc(env(safe-area-inset-top,0px) + 56px);left:14px;display:flex;
           align-items:center;gap:6px;padding:7px 14px 7px 11px;border:none;border-radius:999px;cursor:pointer;
           font-size:13px;color:${V2.ink};background:${V2.glassLight};
@@ -1938,7 +1970,7 @@ export default function DiscernV2({
         .v2-comp{display:block;margin-bottom:8px;font-size:12px;letter-spacing:.06em;}
 
         /* The quiet, in-place "still working" note for follow-up searches. */
-        .v2-crafting{position:absolute;z-index:45;left:clamp(12px,3.6vw,18px);max-width:calc(100% - 2*clamp(12px,3.6vw,18px));display:flex;align-items:center;gap:9px;
+        .v2-crafting{position:absolute;z-index:45;left:var(--col-l);max-width:var(--col-w);display:flex;align-items:center;gap:9px;
           padding:8px 15px;border-radius:999px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};font-size:13px;font-weight:400;white-space:nowrap;
@@ -1951,7 +1983,7 @@ export default function DiscernV2({
            the screen so a long answer scrolls inside itself rather than pushing
            the boutique off the page. */
         .v2-said{position:absolute;z-index:45;display:flex;align-items:flex-start;gap:10px;
-          left:clamp(12px,3.6vw,18px);right:clamp(12px,3.6vw,18px);max-width:640px;
+          left:var(--col-l);right:auto;width:var(--col-w);box-sizing:border-box;
           padding:13px 15px;border-radius:18px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge},0 10px 34px rgba(0,0,0,.26);
@@ -1982,7 +2014,7 @@ export default function DiscernV2({
         .v2-nested-body{margin-top:10px !important;font-size:13px !important;}
 
         /* Trays */
-        .v2-tray{position:absolute;z-index:42;left:12px;right:12px;padding:9px;border-radius:24px;color:#fff;
+        .v2-tray{position:absolute;z-index:42;left:var(--col-l);right:auto;width:var(--col-w);box-sizing:border-box;padding:9px;border-radius:24px;color:#fff;
           background:${V2.glassDark};backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
           box-shadow:0 14px 44px rgba(0,0,0,.3);animation:v2-rise .4s ${V2.ease};}
         .v2-tray-row{display:flex;gap:8px;}
@@ -2436,9 +2468,19 @@ export default function DiscernV2({
                 /* Swatches are chips, not plates. flex:1 with a 3/4 ratio meant a
            product with a single colourway filled the dock with one enormous
            picture. */
-        .v2-swatches{display:flex;flex-wrap:wrap;gap:9px;padding:2px;}
-        .v2-swatches button{flex:0 0 auto;width:64px;aspect-ratio:3/4;padding:0;border:none;border-radius:12px;overflow:hidden;
-          cursor:pointer;background:rgba(255,255,255,.08);box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
+        /* The same row as .v2-sizes, because it is the same kind of choice —
+           one control in the same place answering "which one". It used to be a
+           wrapping grid of 64px cards, which read as a different feature living
+           in the same drawer. Scrolls rather than wraps so eight colourways
+           cannot make the dock twice as tall, and 'safe center' keeps the first
+           swatch reachable when it does overflow. */
+        .v2-swatches{display:flex;gap:10px;overflow-x:auto;scrollbar-width:none;padding:0 4px 4px;
+          justify-content:flex-start;justify-content:safe center;scroll-snap-type:x proximity;}
+        .v2-swatches::-webkit-scrollbar{display:none;}
+        .v2-swatches button{flex:0 0 auto;scroll-snap-align:center;width:44px;height:44px;padding:0;
+          border:none;border-radius:50%;overflow:hidden;cursor:pointer;
+          background:rgba(255,255,255,.1);box-shadow:inset 0 0 0 1px ${V2.glassEdge};
+          transition:box-shadow .16s ${V2.ease};}
         .v2-swatches button.on{box-shadow:0 0 0 2px #fff;}
         .v2-swatches img{width:100%;height:100%;object-fit:cover;display:block;}
         .v2-picker{position:relative;padding:4px 2px 2px;text-align:center;}
@@ -2540,11 +2582,13 @@ export default function DiscernV2({
 
         @media(min-width:760px){
           :root{--bar:104px;}
-          .v2-tray{left:50%;translate:-50% 0;width:min(560px,92vw);}
+          .v2-tray{left:var(--col-l);right:auto;translate:none;width:var(--col-w);}
           /* The controls sit under the photographs and share their width, so
              the page reads as one column instead of a panel floating across the
              corner of the first shot. Same expression as .v2-pdp-col. */
           .v2-dock{left:50%;right:auto;translate:-50% 0;width:min(620px,58vw);}
+          /* Only the product page narrows to a photo column; every other
+             floating surface shares the composer's. */
           .v2-back{left:50%;margin-left:min(-310px,-29vw);}
           .v2-sugs{max-width:560px;margin:0 auto;}
           /* On a wide screen the sheet hugs its contents and centres, instead
@@ -2576,16 +2620,17 @@ export default function DiscernV2({
              margins on a desktop the way it does on a phone. */
           .v2-results{max-width:1240px;margin:0 auto;padding-left:clamp(20px,3vw,44px);
             padding-right:clamp(20px,3vw,44px);}
-          .v2-sec{padding-top:clamp(80px,7vw,120px);}
+          .v2-sec{padding:clamp(80px,7vw,120px) var(--grid-pad) 0;}
           .v2-sec h2{font-size:clamp(34px,3.1vw,46px);}
-          .v2-mosaic{gap:30px 20px;padding:40px 0 0;}
+          .v2-mosaic{row-gap:30px;padding-top:40px;}
           .v2-tile .v2-bagbtn{bottom:44px;right:11px;}
           .v2-tile-name{padding:11px 3px 0;font-size:13px;}
 
-          /* The section's lead image was as tall as the window with nothing
-             beside it. Bounded so the heading, the picture and the grid read as
-             one column. */
-          .v2-sec-hero{max-width:min(340px,26vw);}
+          /* Exactly two grid columns and the gap between them, so the lead
+             image's edges land on the tiles' edges rather than near them. It
+             stays the biggest thing on the page without floating free of it. */
+          .v2-sec-hero{max-width:calc(
+            (100% - (var(--grid-cols) - 1) * var(--grid-gap)) / var(--grid-cols) * 2 + var(--grid-gap));}
 
           /* Product page: imagery scrolls sideways, one screen tall. The top
              inset is not decoration — the phone layout already cleared the
@@ -2599,7 +2644,6 @@ export default function DiscernV2({
              this was. */
           .v2-pdp{padding:calc(env(safe-area-inset-top,0px) + 92px) 0 340px;}
           .v2-pdp-col{width:min(620px,58vw);margin:0 auto;gap:6px;}
-          .v2-pdp-colors{padding:0 0 18px;gap:10px;}
 
           /* Controls sit left-of-centre over that imagery, larger */
           .v2-acc-pill{font-size:12px;padding:9px 15px;}
