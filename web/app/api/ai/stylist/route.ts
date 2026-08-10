@@ -2087,13 +2087,18 @@ Use concrete garment, colour, and material words only, never a brand or product 
       // the model simply had nothing to say. This line is how you find it.
       console.log(`[stylist] route ${heavy ? 'heavy(can search)' : 'light(chat only)'} — ${routeReason(questionRead)} — "${question.slice(0, 60)}"`)
 
-      // A shopping request means the catalogue is going to be searched one way
-      // or another, so start now and let it run beside the model. If the model
-      // answers well this is thrown away; if it does not, the pieces are
-      // already here.
-      if (heavy) beginSpeculativeSearch()
+      // The speculative catalogue search does NOT start here any more.
+      //
+      // Running it beside the model meant every shopping request fanned out to
+      // the brand stores twice — the real search and the rescue, competing for
+      // the same endpoints and the same per-store timeouts. The rescue is
+      // supposed to be insurance; paying for it on every request made the
+      // answer it was insuring against more likely, and the results thinner.
+      // withoutTheModel starts it on demand, which is when it is actually
+      // needed, and the breaker below covers the case where the model is known
+      // to be down.
 
-      // And if the model has just failed for everyone else, do not spend this
+      // If the model has just failed for everyone else, do not spend this
       // shopper's minute rediscovering that.
       if (heavy && modelLooksDown()) {
         console.warn('[stylist] breaker open — skipping the model')

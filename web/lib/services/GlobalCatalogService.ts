@@ -957,12 +957,22 @@ export class GlobalCatalogService {
      *  (tops/bottoms/shoes) — a soft reorder signal only, see applySizePreference. */
     preferredSize?: string | null,
   ): Promise<UcpProduct[]> {
-    // The shopper's own gender, read off the taste line the route builds. It is
-    // the fallback the filter uses when the query names none, which is most of
-    // the time — "a linen shirt" has no gender in it and used to return both.
+    // The shopper's own gender — read from the FIRST segment of the taste line,
+    // which is where the route puts it, and nowhere else.
+    //
+    // This scanned the whole line, and the line also carries recent searches and
+    // the brands in the bag. A man who had once searched "women white shirt" was
+    // therefore filtered to womenswear on every subsequent request, from his own
+    // history. A stated fact and a remembered phrase are not the same thing and
+    // must not be read from the same string.
+    // Only the leading segment, and only when it looks like a gender statement
+    // rather than a brand list that happens to contain the word.
+    const firstSegment = String(_tasteProfile || '').split('·')[0].trim()
+    const genderSegment = firstSegment.length <= 60 && !/^(bag|recently|usual|shopping)\b/i.test(firstSegment)
+      ? firstSegment : ''
     const preferGender: 'men' | 'women' | null =
-      /\b(women|womens|women's|female|ladies)\b/i.test(_tasteProfile || '') ? 'women'
-      : /\b(men|mens|men's|male)\b/i.test(_tasteProfile || '') ? 'men'
+      /\b(women|womens|women's|female|ladies)\b/i.test(genderSegment) ? 'women'
+      : /\b(men|mens|men's|male)\b/i.test(genderSegment) ? 'men'
       : null
 
     const rawQuery = query.trim()

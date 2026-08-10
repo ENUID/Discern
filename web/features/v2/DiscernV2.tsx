@@ -287,6 +287,75 @@ export default function DiscernV2({
    *  sequence below is the fallback for the seconds before the first line
    *  arrives — not the narration itself, which it used to be. */
   const [livePhase, setLivePhase] = useState<{ text: string; icon?: string } | null>(null)
+
+  /** Every step the backend reported, shown in order and each given long enough
+   *  to be read.
+   *
+   *  The lines arrived and were displayed immediately, which meant the fast
+   *  ones — parsing the request, choosing the brands — flashed past in a frame
+   *  and the shopper only ever saw the last. Work that took eight seconds
+   *  looked like one thing happening. So arrivals go into a queue and a
+   *  minimum dwell is enforced per line; if the search finishes while lines are
+   *  still queued the queue drains at speed rather than being dropped, because
+   *  the point is that the shopper sees WHAT was done, not that each frame gets
+   *  its full share of a wait that is already over.
+   */
+  const stepQueue = useRef<Array<{ text: string; icon?: string }>>([])
+  const stepShownAt = useRef(0)
+  const stepTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const MIN_DWELL = 620
+  const DRAIN_DWELL = 190
+
+  const pumpSteps = useCallback((finishing: boolean) => {
+    if (stepTimer.current) { clearTimeout(stepTimer.current); stepTimer.current = null }
+    if (stepQueue.current.length === 0) return
+    const dwell = finishing || stepQueue.current.length > 2 ? DRAIN_DWELL : MIN_DWELL
+    const waited = Date.now() - stepShownAt.current
+    const show = () => {
+      const next = stepQueue.current.shift()
+      if (!next) return
+      stepShownAt.current = Date.now()
+      setLivePhase(next)
+      if (stepQueue.current.length) pumpSteps(finishing)
+    }
+    // Never show two lines in one tick. React batches state set in the same
+    // task, so back-to-back shows collapse into a single render and the middle
+    // line is never painted — the step happened, was recorded, and nobody saw
+    // it. The first line of a search is exempt: nothing precedes it, so it can
+    // appear at once.
+    const first = stepShownAt.current === 0
+    if (first) show()
+    else stepTimer.current = setTimeout(show, Math.max(90, dwell - waited))
+  }, [])
+
+  /** Let the queue finish before the pill goes away.
+   *
+   *  Without this the last two or three steps are still waiting their turn when
+   *  the answer lands, and the shopper never learns that the fabric was weighed
+   *  or the look assembled. Capped hard: this is a few hundred milliseconds of
+   *  narration, never a delay anybody notices as one. */
+  const drainSteps = useCallback(() => new Promise<void>(resolve => {
+    const queued = stepQueue.current.length
+    if (queued === 0) return resolve()
+    pumpSteps(true)
+    // The cap follows the queue instead of being a flat number. It was 900ms,
+    // which is four lines at the drain rate — so a six-step search silently
+    // dropped its last two, which are the interesting ones. Still bounded, and
+    // a whole six-step narration costs about a second.
+    // Each remaining line costs a dwell plus the guaranteed frame between
+    // renders, so the cap has to allow for both or the last line is scheduled
+    // and then cut off a beat before it paints.
+    const cap = setTimeout(finish, Math.min(2600, queued * (DRAIN_DWELL + 60) + 320))
+    const tick = setInterval(() => { if (stepQueue.current.length === 0) finish() }, 40)
+    function finish() { clearTimeout(cap); clearInterval(tick); resolve() }
+  }), [pumpSteps])
+
+  const pushStep = useCallback((step: { text: string; icon?: string }) => {
+    const last = stepQueue.current[stepQueue.current.length - 1]
+    if (last?.text === step.text) return          // the same line twice is one line
+    stepQueue.current.push(step)
+    pumpSteps(false)
+  }, [pumpSteps])
   /** Something Fabrics said that had no products attached to it. Shown above
    *  the composer until the next question, because a stylist who answers you
    *  out loud and is never heard is indistinguishable from a broken app. */
@@ -820,6 +889,11 @@ export default function DiscernV2({
     setAsked(a => [q.trim(), ...a.filter(x => x !== q.trim())].slice(0, 12))
     taRef.current?.blur()
     setLoadPhase(0); setLivePhase(null)
+    // A new question starts a new narration; anything still queued belongs to
+    // the last one.
+    stepQueue.current = []
+    stepShownAt.current = 0
+    if (stepTimer.current) { clearTimeout(stepTimer.current); stepTimer.current = null }
     setLoading(true); setLookOpen(false)
     const question = q.trim()
     // The transcript so far, so a follow-up like "cheaper" has something to
@@ -836,7 +910,7 @@ export default function DiscernV2({
     let show = false
     try {
       const res = onQuery
-        ? await onQuery(question, history, sentPhotos, s => setLivePhase(s))
+        ? await onQuery(question, history, sentPhotos, pushStep)
         : { sections: [], look: undefined, answer: undefined, didSearch: false, light: false }
       const sections = res.sections ?? []
 
@@ -902,13 +976,16 @@ export default function DiscernV2({
       // on the early return above too, so a turn that produced nothing to show
       // still navigated to the results view — which then had no turn to render.
       // That is the blank screen after the searching animation.
+      // Finish the narration before the pill leaves, so every step the
+      // backend reported is actually seen.
+      await drainSteps()
       if (show) {
         setView('results')
         scrollRef.current?.scrollTo({ top: 0 })
       }
       setLoading(false)
     }
-  }, [loading, onQuery, onSearched, photos, turns])
+  }, [loading, onQuery, onSearched, photos, turns, pushStep, drainSteps])
 
   /** The menu carries what the chat UI's sidebar carried: start again, the
    *  things you have set aside, and what you asked before.

@@ -28,15 +28,35 @@ import { makeIpRateLimiter } from '@/lib/rateLimit'
 
 export const maxDuration = 60
 
-/** A hard ceiling on this route.
+/** A ceiling on this route, and a second chance under it.
  *
- *  It fans out to brand stores, each with its own 5s timeout, in two rounds.
- *  Worst case that is slow enough that the shopper gives up before it answers,
- *  and a fallback nobody waits for is not a fallback. Whatever has arrived by
- *  the deadline is what gets returned; a partial answer beats a spinner. */
-const BUDGET_MS = 14_000
-const byDeadline = <T,>(work: Promise<T>, fallback: T): Promise<T> =>
-  Promise.race([work.catch(() => fallback), new Promise<T>(r => setTimeout(() => r(fallback), BUDGET_MS))])
+ *  It fans out to brand stores, each with its own 5s timeout, in two rounds,
+ *  and then the relevance judge runs on top. Fourteen seconds was under that on
+ *  a cold function, so the race resolved to the fallback — an EMPTY array — and
+ *  the shopper was told nothing reached the catalogue while ninety stores were
+ *  mid-reply. That is the "ask again" that kept coming back: not a failure, a
+ *  stopwatch.
+ *
+ *  So the ceiling is realistic, and a timeout no longer discards the work. The
+ *  slow path is retried once against a much narrower fan-out, which is fast
+ *  enough to finish and returns real pieces instead of an apology. */
+const BUDGET_MS = 26_000
+const RETRY_MS = 9_000
+
+async function byDeadline<T>(work: Promise<T>, fallback: T, retry?: () => Promise<T>): Promise<T> {
+  const timeout = Symbol('deadline')
+  const first = await Promise.race([
+    work.catch(() => fallback),
+    new Promise<typeof timeout>(r => setTimeout(() => r(timeout), BUDGET_MS)),
+  ])
+  if (first !== timeout) return first as T
+  if (!retry) return fallback
+  console.warn('[catalog/search] over budget — retrying narrow')
+  return Promise.race([
+    retry().catch(() => fallback),
+    new Promise<T>(r => setTimeout(() => r(fallback), RETRY_MS)),
+  ])
+}
 export const dynamic = 'force-dynamic'
 
 // Same shape of protection as the other unauthenticated endpoints: this one
@@ -122,12 +142,20 @@ export async function POST(req: NextRequest) {
     // literally if it does not.
     const compiled = compileIntent(withGender(q), currency)
     const term = compiled?.args.searchQuery || withGender(q)
-    const found = await byDeadline(GlobalCatalogService.search(
+    const runSearch = (opts: Record<string, unknown>) => GlobalCatalogService.search(
       term, compiled?.args.budgetMax, [], countryCode, true,
       compiled?.args.mandatoryConcepts || buildMandatoryConcepts(term),
       compiled?.args.sort || 'relevance', compiled?.args.budgetCurrency || currency,
-      { fastFirstPage: true }, [], undefined, raw, sizeFor(term),
-    ), [] as any[])
+      opts, [], undefined, raw, sizeFor(term),
+    )
+    const found = await byDeadline(
+      runSearch({ fastFirstPage: true }),
+      [] as any[],
+      // Second pass with the judge off: the pool is already fetched and cached
+      // by then, so this returns the keyword-ordered page in a fraction of the
+      // time. A worse order is a far better answer than none.
+      () => runSearch({ fastFirstPage: true, sort: 'trust_desc' as never }),
+    )
     return NextResponse.json({ products: found.slice(0, 12), groups: [], query: term })
   } catch (e) {
     console.error('[catalog/search] failed:', e)
