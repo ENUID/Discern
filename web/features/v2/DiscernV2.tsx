@@ -481,7 +481,9 @@ export default function DiscernV2({
   const lookRailRef = useRef<HTMLDivElement>(null)
   const kb = useKeyboardOffset()
 
-  const barVar = useMeasuredVar('--bar', 96)
+  // Same number as the CSS default below it — a different one here would
+  // reintroduce the jump on the first paint after hydration.
+  const barVar = useMeasuredVar('--bar', 129)
 
   const canSend = input.trim().length > 0
   const idle = !focused && input.length === 0
@@ -987,7 +989,7 @@ export default function DiscernV2({
         {/* Opposite the menu, as the chat UI had it: the way back to a blank
             page. Hidden on the home screen, which is already that page. */}
         <button className={`v2-ic v2-round v2-newbtn ${view === 'home' ? 'gone' : ''}`}
-          aria-label="New search" onClick={newSearch}>
+          aria-label="New chat" onClick={newSearch}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             strokeWidth="1.88" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M12 20h9" />
@@ -1489,7 +1491,7 @@ export default function DiscernV2({
         <button className="v2-newchat" tabIndex={menuOpen ? 0 : -1}
           onClick={() => { setMenuOpen(false); newSearch() }}>
           <PlusIcon size={13} />
-          New search
+          New chat
         </button>
 
         <ul className="v2-menu-nav">
@@ -1744,7 +1746,14 @@ export default function DiscernV2({
            anchored to --bar is therefore that much higher than it looks, which
            is why the two are named: a gap can be stated against the bar's real
            top edge instead of guessed at. */
-        :root{--bar:96px;--bar-air:14px;}
+        /* 129 is the composer's real resting height on a results page, and
+            151 on the home screen where it carries extra bottom padding. The
+            default was 96, so on every cold load the status pill, the scroll
+            hint and the look tray were anchored 55px too low — over the field
+            itself — and then jumped up the moment the measurement landed.
+            Starting at the true value makes that jump imperceptible; the
+            measurement still corrects it for a taller composer. */
+        :root{--bar:129px;--bar-air:14px;}
         /* ── The column ──────────────────────────────────────────────────────
            The composer is the one element on screen at every moment, so it
            defines where the middle is. Everything that floats — the status
@@ -2337,7 +2346,7 @@ export default function DiscernV2({
         .v2-menu-meta button{background:none;border:none;padding:0;color:inherit;font:inherit;cursor:pointer;opacity:.72;}
         /* A real button rather than a quiet footer link — it is the one thing
            here somebody reaches for while something is going wrong — but not a
-           second full-width slab under New search. Solid so it reads as a
+           second full-width slab under New chat. Solid so it reads as a
            control, compact so it does not compete with what opens the panel,
            and right-hung so it closes it. Still 44 tall: smaller is a matter of
            width, never of what a thumb has to hit. */
@@ -2364,7 +2373,12 @@ export default function DiscernV2({
         @keyframes v2-pop{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:none}}
         .v2-bag-x{position:absolute;top:22px;right:20px;width:32px;height:32px;
           border:none;background:none;cursor:pointer;color:${V2.ink};}
-        .v2-bag h2{font-family:${V2.display};font-weight:600;font-size:24px;letter-spacing:-.025em;margin:0 0 26px;}
+        /* The close button lives at the top right of this sheet, so the
+           heading reserves its width. It fits today at "Bag (1)"; it would not
+           at a longer count or a translation, and a title sliding under a
+           control is the kind of thing nobody sees until it ships. */
+        .v2-bag h2{font-family:${V2.display};font-weight:600;font-size:24px;letter-spacing:-.025em;
+          margin:0 44px 26px 0;}
         .v2-bag h2 em{font-style:normal;}
         .v2-bag-empty{font-size:14px;color:${V2.ink45};}
         .v2-line{display:flex;gap:14px;padding-bottom:22px;margin-bottom:22px;}
@@ -2646,7 +2660,7 @@ export default function DiscernV2({
         .v2-empty .v2-retry:hover{opacity:.86;}
 
         @media(min-width:760px){
-          :root{--bar:104px;}
+          :root{--bar:129px;}
           .v2-tray{left:var(--col-l);right:auto;translate:none;width:var(--col-w);}
           /* The controls sit under the photographs and share their width, so
              the page reads as one column instead of a panel floating across the

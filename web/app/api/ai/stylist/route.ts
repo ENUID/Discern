@@ -1296,6 +1296,42 @@ export async function POST(req: NextRequest) {
 // returning the best-effort reply (and whatever products we gathered) instead
 // of getting force-killed mid-stream.
 const REQUEST_BUDGET_MS = 52_000
+
+// ── The model breaker ────────────────────────────────────────────────────────
+// When a provider is down or a key has expired, every request rediscovers that
+// from scratch: five providers, each with its own timeout, before anything is
+// shown. The shopper waits the better part of a minute to be told nothing, and
+// asking again waits the same again — which is what "I asked twice and it did
+// not work" looks like from the outside.
+//
+// After a few consecutive failures the model is skipped entirely for a short
+// window and the request goes straight to the catalogue. It costs a styled
+// answer for a minute; it saves every shopper in that minute from a 50-second
+// wait for an apology. One success closes it immediately.
+const BREAKER_TRIP_AT = 3
+const BREAKER_COOLDOWN_MS = 60_000
+let modelFailures = 0
+let breakerOpenedAt = 0
+function modelLooksDown(): boolean {
+  if (modelFailures < BREAKER_TRIP_AT) return false
+  if (Date.now() - breakerOpenedAt > BREAKER_COOLDOWN_MS) {
+    // Cooldown elapsed — let one request through to find out if it recovered.
+    modelFailures = 0
+    return false
+  }
+  return true
+}
+function noteModelFailure() {
+  modelFailures++
+  if (modelFailures === BREAKER_TRIP_AT) {
+    breakerOpenedAt = Date.now()
+    console.warn('[stylist] model breaker OPEN — serving the catalogue directly for 60s')
+  }
+}
+function noteModelSuccess() {
+  if (modelFailures > 0) console.log('[stylist] model breaker closed')
+  modelFailures = 0
+}
 // Race any awaited work against the remaining budget. On timeout it resolves to
 // `fallback` (never rejects) and the outer flow proceeds to finish() with what
 // it has; the orphaned promise settles harmlessly after the stream is closed.
@@ -1491,8 +1527,19 @@ async function runStylistRequest(
      *  and a reply that says what actually happened rather than a shrug.
      *  `busy` is the honest word for a rate limit: it is not broken, there are
      *  simply more people asking than the quota allows this minute. */
+    /** Started as soon as we know this is a shopping request, so it is already
+     *  running — or finished — by the time the model gives up. It used to begin
+     *  only after every provider had timed out, which added its own fetch to an
+     *  already long wait. Nothing awaits it unless it is needed, and if the
+     *  model answers well it is simply discarded. */
+    let speculative: Promise<Record<string, unknown> | null> | null = null
+    const beginSpeculativeSearch = () => {
+      if (!speculative) speculative = rescueSearch().catch(() => null)
+    }
+
     const withoutTheModel = async (kind: 'busy' | 'error') => {
-      const rescued = await rescueSearch()
+      beginSpeculativeSearch()
+      const rescued = await speculative
       if (rescued) {
         console.log(`[stylist] model unavailable (${kind}) — served from the catalogue directly`)
         return finish({
@@ -2007,6 +2054,19 @@ Use concrete garment, colour, and material words only, never a brand or product 
       // Loggable, because a mis-route is invisible in the answer: it looks like
       // the model simply had nothing to say. This line is how you find it.
       console.log(`[stylist] route ${heavy ? 'heavy(can search)' : 'light(chat only)'} — ${routeReason(questionRead)} — "${question.slice(0, 60)}"`)
+
+      // A shopping request means the catalogue is going to be searched one way
+      // or another, so start now and let it run beside the model. If the model
+      // answers well this is thrown away; if it does not, the pieces are
+      // already here.
+      if (heavy) beginSpeculativeSearch()
+
+      // And if the model has just failed for everyone else, do not spend this
+      // shopper's minute rediscovering that.
+      if (heavy && modelLooksDown()) {
+        console.warn('[stylist] breaker open — skipping the model')
+        return withoutTheModel('error')
+      }
       // Deep expert knowledge, injected on-demand: the heavy path pulls in only
       // the modules this query actually needs (decision, color, fit, fabric,
       // occasion, agentic) plus the shopper's regional style intelligence, so
@@ -2059,6 +2119,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
         const msg = await withDeadline(stylistChat(messages, combinedSystem, { max_tokens: replyMaxTokens, temperature: 0.4 }, heavy), chatDeadline, null)
         if (!msg) {
           console.error('[stylist] model call timed out within budget')
+          noteModelFailure()
           // `retryable` tells the client this produced NO answer, so re-sending
           // costs nothing and will very likely succeed (the slow provider is now
           // on cooldown and gets skipped). The client retries once silently, so
@@ -2066,11 +2127,13 @@ Use concrete garment, colour, and material words only, never a brand or product 
           return withoutTheModel('error')
         }
         raw = (msg?.content ?? '').trim()
+        noteModelSuccess()
         logAiUsage({ path: heavy ? 'llm-heavy' : 'llm-light', provider: msg.provider, estPromptTokens: estimateTokens(promptTextForEstimate), estCompletionTokensCap: replyMaxTokens, ok: !!raw })
       } catch (err) {
         logAiUsage({ path: heavy ? 'llm-heavy' : 'llm-light', provider: 'openrouter-or-groq', estPromptTokens: estimateTokens(promptTextForEstimate), estCompletionTokensCap: replyMaxTokens, ok: false })
         console.error('[stylist] model call failed:', err)
         console.error('[stylist] all models failed:', (err as Error).message)
+        noteModelFailure()
         return withoutTheModel(isRateLimited(err) ? 'busy' : 'error')
       }
 

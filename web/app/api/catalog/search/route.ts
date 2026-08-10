@@ -27,6 +27,16 @@ import { makeIpRateLimiter } from '@/lib/rateLimit'
  */
 
 export const maxDuration = 60
+
+/** A hard ceiling on this route.
+ *
+ *  It fans out to brand stores, each with its own 5s timeout, in two rounds.
+ *  Worst case that is slow enough that the shopper gives up before it answers,
+ *  and a fallback nobody waits for is not a fallback. Whatever has arrived by
+ *  the deadline is what gets returned; a partial answer beats a spinner. */
+const BUDGET_MS = 14_000
+const byDeadline = <T,>(work: Promise<T>, fallback: T): Promise<T> =>
+  Promise.race([work.catch(() => fallback), new Promise<T>(r => setTimeout(() => r(fallback), BUDGET_MS))])
 export const dynamic = 'force-dynamic'
 
 // Same shape of protection as the other unauthenticated endpoints: this one
@@ -72,10 +82,16 @@ export async function POST(req: NextRequest) {
   try {
     // An occasion is a whole outfit — retrieve each slot on its own, which is
     // the same shape the stylist's multi-category search produces.
-    const plan = outfitPlan(q, gender)
+    // Naming a garment beats naming an occasion: "shoes for work" is a request
+    // for shoes, and answering it with a blazer, a shirt and trousers is
+    // answering a question nobody asked. The stylist route makes the same
+    // check; this one has to agree with it or the two paths give different
+    // answers to the same sentence.
+    const namedGarments = decomposeQuery(q).garmentKeys.length
+    const plan = namedGarments > 0 ? null : outfitPlan(q, gender)
     if (plan && plan.slots.length >= 2) {
       const fabric = plan.fabrics[0] ?? ''
-      const groups = (await Promise.all(plan.slots.slice(0, 4).map(async (slot) => {
+      const groups = (await byDeadline(Promise.all(plan.slots.slice(0, 4).map(async (slot) => {
         const term = GARMENT_VOCAB[slot]?.query[0] || slot
         const sub = withGender([fabric, term].filter(Boolean).join(' '))
         try {
@@ -88,7 +104,7 @@ export async function POST(req: NextRequest) {
         } catch {
           return { label: term, query: sub, products: [] } as Group
         }
-      }))).filter(gr => gr.products.length > 0)
+      })), [] as Group[])).filter(gr => gr.products.length > 0)
 
       if (groups.length) {
         const seen = new Set<string>()
@@ -106,12 +122,12 @@ export async function POST(req: NextRequest) {
     // literally if it does not.
     const compiled = compileIntent(withGender(q), currency)
     const term = compiled?.args.searchQuery || withGender(q)
-    const found = await GlobalCatalogService.search(
+    const found = await byDeadline(GlobalCatalogService.search(
       term, compiled?.args.budgetMax, [], countryCode, true,
       compiled?.args.mandatoryConcepts || buildMandatoryConcepts(term),
       compiled?.args.sort || 'relevance', compiled?.args.budgetCurrency || currency,
       { fastFirstPage: true }, [], undefined, raw, sizeFor(term),
-    )
+    ), [] as any[])
     return NextResponse.json({ products: found.slice(0, 12), groups: [], query: term })
   } catch (e) {
     console.error('[catalog/search] failed:', e)
