@@ -1692,7 +1692,11 @@ export default function DiscernV2({
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
                     aria-label="Ask the boutique" />
                   {input.length === 0 && (
-                    idle
+                    // The drifting prompts are for an empty screen with nothing
+                    // said yet. Running them underneath a reply puts two lines
+                    // of unrelated text in one pane, and the marquee's half-cut
+                    // words read as a layout fault rather than as motion.
+                    idle && !said
                       ? <div className="v2-marquee" aria-hidden><div>{[...V2_PROMPTS, ...V2_PROMPTS].map((p, i) => <span key={i}>{p}</span>)}</div></div>
                       : <span className="v2-ph">Ask anything…</span>
                   )}
