@@ -627,10 +627,14 @@ async function journey(browser, screen) {
     allOn: [...document.querySelectorAll('.v2-line-pick input')].every(i => i.checked),
     sums: [...document.querySelectorAll('.v2-bag-sum div')].map(d => d.textContent.replace(/\s+/g, ' ').trim()),
     pays: [...document.querySelectorAll('.v2-pay')].map(b => b.textContent.replace(/\s+/g, ' ').trim()),
+    note: document.querySelector('.v2-bag-note')?.textContent?.trim() ?? null,
   }))
   check(bag.lines > 0, 'the bag has what was put in it', { lines: bag.lines })
   check(bag.ticks === bag.lines, 'every line can be taken out of the checkout', bag)
   check(bag.allOn, 'and they all start in it, so one brand is still one tap')
+  check(bag.pays.length === 1, 'there is exactly one Checkout button, never a stack of them', bag.pays)
+  check(bag.note === 'Checkout happens on the brand\u2019s own store.',
+    'and one sentence under it', { note: bag.note })
 
   // The money. Every stubbed piece is priced in INR, so nothing may say $.
   const sums = bag.sums.join(' | ')
@@ -659,7 +663,11 @@ async function journey(browser, screen) {
     note: document.querySelector('.v2-bag-note')?.textContent?.trim() ?? null,
   }))
   check(none.disabled === true, 'with nothing ticked, Checkout is inert', none)
-  check(/Tick what/i.test(none.note || ''), 'and it says what to do', { note: none.note })
+  // One sentence, always the same one. It used to count brands and explain
+  // that they were separate checkouts — the interface describing its own
+  // problem to somebody trying to buy something.
+  check(none.note === 'Checkout happens on the brand\u2019s own store.',
+    'and the note is the one sentence it should always be', { note: none.note })
 
   // Put them back, and check out — one tab, and it stops at the account gate.
   await page.evaluate(() => [...document.querySelectorAll('.v2-line-pick input')]

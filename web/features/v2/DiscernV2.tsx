@@ -780,8 +780,45 @@ export default function DiscernV2({
    *  case that was broken — several pieces, and no way to say which of them
    *  you meant. */
   const [dropped, setDropped] = useState<Set<string>>(new Set())
+  /** Which brand this checkout is for. One at a time, always.
+   *
+   *  A bag of seven pieces from five brands drew five Checkout buttons, which
+   *  is a menu of decisions where there should be one action. The reason it
+   *  did that is real — a browser allows one new tab per tap, so five brands
+   *  genuinely cannot be opened at once — but the answer is to check out one
+   *  brand at a time, not to put the problem on screen. So the selection is
+   *  scoped to a brand: ticking a piece from another brand moves the whole
+   *  selection there, and there is one Checkout button that always knows
+   *  exactly where it is going. */
+  const [selectedHost, setSelectedHost] = useState<string | null>(null)
   const lineKey = (l: V2CartLine) => `${l.product.id}|${l.color ?? ''}|${l.size ?? ''}`
-  const picked = useMemo(() => cart.filter(l => !dropped.has(lineKey(l))), [cart, dropped])
+  const hostOfLine = (l: V2CartLine) => hostOf(l.product.storeUrl || '')
+  /** The brand in focus — the chosen one while it is still in the bag, and
+   *  otherwise whatever the bag starts with, so it is never stale or empty. */
+  const activeHost = useMemo(() => {
+    if (selectedHost && cart.some(l => hostOfLine(l) === selectedHost)) return selectedHost
+    return cart.length ? hostOfLine(cart[0]) : null
+  }, [selectedHost, cart])
+  const picked = useMemo(
+    () => cart.filter(l => hostOfLine(l) === activeHost && !dropped.has(lineKey(l))),
+    [cart, dropped, activeHost],
+  )
+  /** Ticking a piece. Within the brand in focus it is an ordinary toggle;
+   *  outside it, it moves the focus and brings that brand in whole. */
+  const togglePick = useCallback((l: V2CartLine) => {
+    const key = lineKey(l)
+    const h = hostOfLine(l)
+    if (h !== activeHost) {
+      setSelectedHost(h)
+      setDropped(d => { const n = new Set(d); n.delete(key); return n })
+      return
+    }
+    setDropped(d => {
+      const n = new Set(d)
+      if (n.has(key)) n.delete(key); else n.add(key)
+      return n
+    })
+  }, [activeHost])
 
   /** Live rates, fetched the first time the bag is opened rather than on every
    *  page load — nothing before this point needs them. */
@@ -827,22 +864,7 @@ export default function DiscernV2({
     return totals.reduce((n, t) => n + (t.amount / rates[t.currency]) * rates[target], 0)
   }, [totals, rates, target])
 
-  /** One group per brand, because one tap can open one tab.
-   *
-   *  A bag spanning three stores used to fire three window.open calls off a
-   *  single click: the browser allows the first and blocks the rest, so the
-   *  shopper reached one brand and was told the others were blocked. Three
-   *  brands is three checkouts; the interface says so and hands over one at a
-   *  time. */
-  const brands = useMemo(() => {
-    const m = new Map<string, { host: string; lines: V2CartLine[] }>()
-    for (const l of picked) {
-      const h = hostOf(l.product.storeUrl || '')
-      const g = m.get(h) ?? { host: h, lines: [] }
-      g.lines.push(l); m.set(h, g)
-    }
-    return Array.from(m.values())
-  }, [picked])
+
 
   // ── Checkout ───────────────────────────────────────────────────────────────
   // Discern never takes payment: every line hands off to the brand that sells
@@ -2134,18 +2156,14 @@ export default function DiscernV2({
             {cart.length === 0 && <p className="v2-bag-empty">Nothing here yet.</p>}
             {cart.map((l, i) => {
               const key = lineKey(l)
-              const on = !dropped.has(key)
+              const on = hostOfLine(l) === activeHost && !dropped.has(key)
               return (
               <div className={`v2-line ${on ? '' : 'off'}`} key={key}>
                 {/* Which pieces this checkout is for. A tick rather than a
                     separate screen: the bag is already the list, and the only
                     thing missing was a way to say "not that one". */}
                 <label className="v2-line-pick">
-                  <input type="checkbox" checked={on} onChange={() => setDropped(d => {
-                    const next = new Set(d)
-                    if (on) next.add(key); else next.delete(key)
-                    return next
-                  })} />
+                  <input type="checkbox" checked={on} onChange={() => togglePick(l)} />
                   <span aria-hidden />
                   <em>{on ? `${l.product.title} is in this checkout` : `${l.product.title} is not in this checkout`}</em>
                 </label>
@@ -2155,6 +2173,7 @@ export default function DiscernV2({
                   <span className="v2-line-price">{money(l.product.price, l.product.currency)}</span>
                   {l.color && <span className="v2-line-meta">Color: {l.color}</span>}
                   {l.size && <span className="v2-line-meta">Size: {l.size}</span>}
+                  <span className="v2-line-meta">{l.product.vendor || hostOfLine(l)}</span>
                   {l.product.sku && <span className="v2-line-sku">SKU: {l.product.sku}</span>}
                   <div className="v2-qty">
                     Quantity: <button onClick={() => setQty(i, -1)} aria-label="Decrease">−</button>
@@ -2189,32 +2208,17 @@ export default function DiscernV2({
               ))
             )}
           </div>
-          {brands.length > 1 ? (
-            // One button per brand. Browsers allow one new tab per tap, so
-            // three brands is three taps — said out loud instead of opening
-            // one and reporting the rest as blocked.
-            <div className="v2-pays">
-              {brands.map(b => (
-                <button key={b.host} className="v2-pay" onClick={() => checkoutLines(b.lines)}>
-                  <span>Checkout at {b.host}</span>
-                  <em>{b.lines.length} {b.lines.length === 1 ? 'piece' : 'pieces'}</em>
-                  <span aria-hidden>↗</span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <button className="v2-pay" onClick={() => checkoutLines(picked)} disabled={!picked.length}>
-              Checkout <span aria-hidden>↗</span>
-            </button>
-          )}
+          <button className="v2-pay" onClick={() => checkoutLines(picked)} disabled={!picked.length}>
+            Checkout <span aria-hidden>↗</span>
+          </button>
           <p className="v2-bag-note">
+            {/* One sentence, always the same one. What used to be here counted
+                brands and warned about separate checkouts — an explanation of
+                the interface's own problem, printed where a shopper is trying
+                to buy something. The problem is gone; so is the sentence. */}
             {blockedStores.length
               ? 'Your browser blocked the new tab. Open the brand directly:'
-              : !picked.length
-                ? 'Tick what you want to check out.'
-                : brands.length > 1
-                  ? `These ${picked.length} pieces come from ${brands.length} brands, so they are ${brands.length} separate checkouts.`
-                  : 'Checkout happens on the brand’s own store.'}
+              : 'Checkout happens on the brand’s own store.'}
           </p>
           {blockedStores.length > 0 && (
             <div className="v2-bag-fallback">
@@ -3066,9 +3070,6 @@ export default function DiscernV2({
           margin:2px auto 0;border:solid #fff;border-width:0 1.6px 1.6px 0;transform:rotate(45deg);}
         .v2-line-pick input:focus-visible + span{outline:2px solid ${V2.ink};outline-offset:2px;}
         .v2-bag-fx{color:${V2.ink45};font-size:12px !important;}
-        .v2-pays{display:flex;flex-direction:column;gap:9px;}
-        .v2-pays .v2-pay{justify-content:space-between;padding:15px 18px;}
-        .v2-pays .v2-pay em{font-style:normal;opacity:.55;font-size:12px;margin-left:auto;margin-right:10px;}
         .v2-bag-sum{border-top:1px solid ${V2.hairline};padding-top:16px;display:flex;flex-direction:column;gap:9px;margin-bottom:22px;}
         .v2-bag-sum div{display:flex;justify-content:space-between;font-size:13px;}
         .v2-pay{width:100%;padding:16px;border:none;border-radius:12px;background:${V2.ink};color:#fff;cursor:pointer;
