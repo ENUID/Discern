@@ -186,6 +186,9 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
     // line. The endpoint has always streamed these at its real boundaries; the
     // interface simply never asked for them.
     onProgress?: (step: { text: string; icon?: string }) => void,
+    // Pieces the question is about. Present means "these ARE the answer"
+    // server-side, so it describes them rather than searching for them again.
+    pinned?: V2Product[],
   ) => {
     // askStylist rethrows on the last attempt when the request never
     // completed — a dead connection, DNS, a killed function. That throw used to
@@ -200,6 +203,13 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
         images,
         context,
         onProgress,
+        products: pinned && pinned.length
+          ? pinned.map(p => ({
+              id: p.id, title: p.title, vendor: p.vendor, price: p.price,
+              currency: p.currency, material: p.materials, description: p.description,
+              url: p.storeUrl,
+            }))
+          : undefined,
       })
     } catch (e) {
       console.error('[boutique] stylist unreachable:', e)
@@ -419,6 +429,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       // page with a way to try again, not as a sentence in the composer.
       failed: data?.failed === true || ((data?.busy === true || data?.retryable === true) && sections.length === 0),
       light: data?.light === true,
+      comparison: data?.comparison ?? undefined,
       busy: data?.busy === true,
     }
   }, [context])

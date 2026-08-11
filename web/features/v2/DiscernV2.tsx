@@ -79,6 +79,8 @@ export type V2Turn = {
   failed?: boolean
   /** Failed because of load rather than a break. Different sentence, same page. */
   busy?: boolean
+  /** A side-by-side, when the answer was "which of these". */
+  comparison?: { rows: { label: string; values: string[] }[]; pick?: { index: number; reason: string } }
   sections: V2Section[]
 }
 /** Transcript entry sent back to the stylist so follow-ups have context. */
@@ -266,9 +268,10 @@ export default function DiscernV2({
   buyerCountry,
 }: {
   heroMedia?: string; heroPoster?: string
-  onQuery?: (q: string, history: V2Msg[], images: string[], onProgress?: (step: { text: string; icon?: string }) => void) => Promise<{
+  onQuery?: (q: string, history: V2Msg[], images: string[], onProgress?: (step: { text: string; icon?: string }) => void, pinned?: V2Product[]) => Promise<{
     sections: V2Section[]; look?: V2Product[]
     answer?: string; didSearch?: boolean; light?: boolean; failed?: boolean; busy?: boolean
+    comparison?: { rows: { label: string; values: string[] }[]; pick?: { index: number; reason: string } }
   }>
   /** The next page of one strip: the query, and everything already shown. */
   onLoadMore?: (query: string, excludeIds: string[]) => Promise<V2Product[]>
@@ -368,6 +371,18 @@ export default function DiscernV2({
    *  the composer until the next question, because a stylist who answers you
    *  out loud and is never heard is indistinguishable from a broken app. */
   const [said, setSaid] = useState<string | null>(null)
+  /** The piece the next question is about.
+   *
+   *  v1 let a shopper pin pieces and ask about them, and the endpoint still has
+   *  that whole path — pinned products ARE the answer server-side, so it
+   *  describes them rather than searching again. v2 never sent the field, so it
+   *  was unreachable.
+   *
+   *  Here it pins itself: open a piece, ask a question, and the question is
+   *  about that piece. The chip in the composer means it is never invisible — a
+   *  question that silently carries context you cannot see is worse than one
+   *  that carries none. */
+  const [pinned, setPinned] = useState<V2Product | null>(null)
   // Turns, not sections. Each query used to replace the results wholesale, so
   // the previous answer and its products were destroyed on every follow-up.
   const [turns, setTurns] = useState<V2Turn[]>([])
@@ -913,12 +928,15 @@ export default function DiscernV2({
     // Captured before the await so a photo added mid-flight belongs to the next
     // turn, not this one — and so the strip can clear on completion regardless.
     const sentPhotos = photos
+    // Captured with the photos and cleared in the same place: a pin belongs to
+    // the question asked while it was showing, not to the next one.
+    const sentPinned = pinned ? [pinned] : undefined
     onSearched?.(question)
     /** Whether this turn produced something worth showing a page for. */
     let show = false
     try {
       const res = onQuery
-        ? await onQuery(question, history, sentPhotos, pushStep)
+        ? await onQuery(question, history, sentPhotos, pushStep, sentPinned)
         : { sections: [], look: undefined, answer: undefined, didSearch: false, light: false }
       const sections = res.sections ?? []
 
@@ -932,7 +950,7 @@ export default function DiscernV2({
       //
       // A failed request produces the same empty shape and is handled by the
       // flag rather than falling in here.
-      if (!sections.length && !res.didSearch && !res.failed) {
+      if (!sections.length && !res.didSearch && !res.failed && !res.comparison) {
         const words = res.answer?.trim()
         // No products AND no words is not an answer, it is a dropped request.
         // Treated as one, so it lands on the results view with a way to try
@@ -959,7 +977,8 @@ export default function DiscernV2({
       setTurns(prev => [{
         id: `${prev.length}-${question.slice(0, 24)}`,
         question, answer: res.answer, didSearch: res.didSearch === true,
-        failed: res.failed === true, busy: res.busy === true, sections,
+        failed: res.failed === true, busy: res.busy === true,
+        comparison: res.comparison, sections,
       }, ...prev].slice(0, 12))
       if (res.look?.length) { setLook(res.look); setLookOpen(true) }
       show = true
@@ -980,6 +999,7 @@ export default function DiscernV2({
       // The attached photos belonged to this question; leaving them in the bar
       // silently re-sent them with every follow-up.
       if (sentPhotos.length) setPhotos(p => p.filter(u => !sentPhotos.includes(u)))
+      if (sentPinned) setPinned(null)
       // Only leave the page when there is a page to leave for. `finally` runs
       // on the early return above too, so a turn that produced nothing to show
       // still navigated to the results view — which then had no turn to render.
@@ -1024,13 +1044,13 @@ export default function DiscernV2({
   /** Back to the opening screen, keeping everything. Distinct from New chat,
    *  which deliberately throws the turn away. */
   const goHome = useCallback(() => {
-    setProduct(null); setLookOpen(false); setView('home'); setSaid(null)
+    setProduct(null); setLookOpen(false); setView('home'); setSaid(null); setPinned(null)
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
   }, [])
 
   const newSearch = useCallback(() => {
     setTurns([]); setLook(null); setLookOpen(false); setProduct(null)
-    setInput(''); setPhotos([]); setView('home'); setSaid(null)
+    setInput(''); setPhotos([]); setView('home'); setSaid(null); setPinned(null)
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
   }, [])
 
@@ -1073,6 +1093,7 @@ export default function DiscernV2({
 
   const openProduct = (p: V2Product) => {
     setProduct(p); setAcc(null); setDetailsOpen(false)
+    setPinned(p)
     setColorMode(false); setSizeMode(false)
     setPickedColor(p.colors?.[0] ?? null); setPickedSize(null)
     setView('product')
@@ -1312,6 +1333,28 @@ export default function DiscernV2({
               {/* "No match" is only honest when a search actually ran. It used
                   to fire for every conversational turn, so asking "does navy go
                   with olive" was answered by blaming the catalogue. */}
+              {/* A side-by-side. The endpoint has always been able to build one
+                  — "which of these two" returns rows of attributes and usually a
+                  pick — and nothing here read the field, so a comparison came
+                  back as prose with nothing to look at. */}
+              {turn.comparison && turn.comparison.rows.length > 0 && (
+                <div className="v2-cmp">
+                  <div className="v2-cmp-grid" style={{
+                    gridTemplateColumns: `auto repeat(${turn.comparison.rows[0].values.length}, minmax(0,1fr))`,
+                  }}>
+                    {turn.comparison.rows.map((row, ri) => (
+                      <React.Fragment key={row.label + ri}>
+                        <span className="v2-cmp-label">{row.label}</span>
+                        {row.values.map((v, vi) => (
+                          <span key={vi} className={`v2-cmp-cell ${turn.comparison?.pick?.index === vi ? 'won' : ''}`}>{v}</span>
+                        ))}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  {turn.comparison.pick && <p className="v2-cmp-pick">{turn.comparison.pick.reason}</p>}
+                </div>
+              )}
+
               {turn.sections.length === 0 && turn.didSearch && !turn.failed && (
                 <div className="v2-empty">
                   <h2>No match</h2>
@@ -1926,6 +1969,15 @@ export default function DiscernV2({
                 e.preventDefault()
                 taRef.current?.focus()
               }}>
+              {pinned && (
+                <div className="v2-pinned">
+                  <img src={pinned.image} alt="" />
+                  <span>About <b>{pinned.title}</b></span>
+                  <button aria-label="Ask about something else" onClick={() => setPinned(null)}>
+                    <CloseIcon size={10} />
+                  </button>
+                </div>
+              )}
               {photos.length > 0 && (
                 <div className="v2-shots" aria-label="Attached photos">
                   {photos.map(u => (
@@ -2338,6 +2390,25 @@ export default function DiscernV2({
           max-height:30svh;overflow-y:auto;overscroll-behavior:contain;
           animation:v2-fade .26s ${V2.ease};}
         .v2-bar-said p{margin:0;font-size:14px;line-height:1.55;font-weight:400;opacity:.9;}
+        /* What the next question is about. Inside the bar, above the field, in
+           the bar's own colours — the same place an attached photo appears,
+           because they are the same kind of thing: something travelling with
+           the message. */
+        .v2-pinned{display:flex;align-items:center;gap:9px;margin:0 2px 8px;padding:6px 8px 6px 6px;
+          border-radius:12px;background:rgba(255,255,255,.1);
+          background:color-mix(in srgb, currentColor 10%, transparent);
+          animation:v2-fade .24s ${V2.ease};}
+        .v2-pinned img{width:28px;height:34px;object-fit:cover;border-radius:7px;flex-shrink:0;display:block;}
+        .v2-pinned span{flex:1;min-width:0;font-size:12px;opacity:.8;white-space:nowrap;
+          overflow:hidden;text-overflow:ellipsis;}
+        .v2-pinned b{font-weight:500;opacity:1;}
+        .v2-pinned button{position:relative;flex-shrink:0;width:20px;height:20px;display:flex;
+          align-items:center;justify-content:center;border:none;border-radius:50%;cursor:pointer;
+          color:inherit;opacity:.6;background:rgba(255,255,255,.16);
+          background:color-mix(in srgb, currentColor 16%, transparent);}
+        .v2-pinned button:hover{opacity:.95;}
+        .v2-pinned button::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
+          transform:translate(-50%,-50%);}
         .v2-bar-said-x{position:relative;flex-shrink:0;width:22px;height:22px;margin-top:1px;
           display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
           color:inherit;cursor:pointer;opacity:.55;transition:opacity .14s;
@@ -2951,6 +3022,18 @@ export default function DiscernV2({
           flex-direction:column;align-items:center;gap:20px;}
         .v2-empty h2{font-family:${V2.display};font-weight:600;letter-spacing:-.025em;font-size:clamp(26px,6.6vw,34px);margin:0;}
         .v2-empty p{font-size:14px;font-weight:400;color:${V2.ink70};margin:0;max-width:30ch;line-height:1.6;}
+        /* A comparison is read across, so it is a grid with hairlines and no
+           card around it — the page is already the card. The chosen column is
+           marked by weight, not colour: "best" here is a judgement, not a
+           status. */
+        .v2-cmp{max-width:min(680px,92vw);margin:0 auto;padding:clamp(52px,12vw,88px) var(--grid-pad) 0;text-align:left;}
+        .v2-cmp-grid{display:grid;gap:0;font-size:13px;line-height:1.5;}
+        .v2-cmp-label{padding:12px 14px 12px 0;color:${V2.ink45};font-size:11px;letter-spacing:.04em;
+          text-transform:uppercase;border-top:1px solid ${V2.hairline};white-space:nowrap;}
+        .v2-cmp-cell{padding:12px 14px 12px 0;border-top:1px solid ${V2.hairline};color:${V2.ink70};}
+        .v2-cmp-cell.won{color:${V2.ink};font-weight:500;}
+        .v2-cmp-pick{margin:18px 0 0;font-size:14px;line-height:1.6;color:${V2.ink};}
+        @media(min-width:760px){.v2-cmp-grid{font-size:14px;}}
         .v2-empty .v2-retry{min-height:44px;padding:0 20px;border-radius:12px;border:none;cursor:pointer;
           background:${V2.ink};color:${V2.bone};font-family:${V2.sans};font-size:14px;font-weight:500;
           transition:opacity .15s;}
