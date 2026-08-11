@@ -2178,7 +2178,17 @@ export default function DiscernV2({
                 <Img src={l.product.image} />
                 <div>
                   <span className="v2-line-name">{l.product.title}</span>
-                  <span className="v2-line-price">{money(l.product.price, l.product.currency)}</span>
+                  {/* What this line costs, not what one of it costs. The
+                      subtotal has always multiplied by the quantity; the line
+                      above it did not, so three pairs of the same sneaker read
+                      ₹4,299.00 and the two numbers disagreed on the same
+                      screen. The unit price stays visible beside it, because
+                      once a line is multiplied you have to be able to see what
+                      it was multiplied from. */}
+                  <span className="v2-line-price">
+                    {money((l.product.price ?? 0) * l.qty, l.product.currency)}
+                    {l.qty > 1 && <em>{l.qty} × {money(l.product.price, l.product.currency)}</em>}
+                  </span>
                   {l.color && <span className="v2-line-meta">Color: {l.color}</span>}
                   {l.size && <span className="v2-line-meta">Size: {l.size}</span>}
                   <span className="v2-line-meta">{l.product.vendor || hostOfLine(l)}</span>
@@ -3057,7 +3067,8 @@ export default function DiscernV2({
         .v2-line>img{width:74px;height:98px;object-fit:cover;flex-shrink:0;background:${V2.boneDeep};}
         .v2-line>div{display:flex;flex-direction:column;gap:3px;min-width:0;}
         .v2-line-name{font-size:14px;}
-        .v2-line-price{font-size:14px;margin-bottom:6px;}
+        .v2-line-price{font-size:14px;margin-bottom:6px;display:flex;align-items:baseline;gap:8px;}
+        .v2-line-price em{font-style:normal;font-size:12px;color:${V2.ink45};}
         .v2-line-meta{font-size:13px;color:${V2.ink70};}
         .v2-line-sku{font-size:11px;color:${V2.ink45};}
         .v2-qty{display:flex;align-items:center;gap:7px;margin-top:8px;font-size:13px;color:${V2.ink70};}

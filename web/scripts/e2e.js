@@ -676,6 +676,44 @@ async function journey(browser, screen) {
     { before: qtyBefore, after: qtyAfter.qty })
   check(qtyAfter.checked === 'false', 'and pressing it does not flip the line it sits in', qtyAfter)
 
+  // Three of a thing costs three times as much, on the line as well as in the
+  // total. The subtotal always multiplied; the line did not, so the two
+  // numbers disagreed on the same screen.
+  await page.evaluate(() => [...document.querySelectorAll('.v2-line')]
+    .filter(l => l.getAttribute('aria-checked') !== 'true').forEach(l => l.click()))
+  await sleep(600)
+  const money1 = await page.evaluate(() => ({
+    line: document.querySelector('.v2-line .v2-line-price')?.firstChild?.textContent?.trim() ?? null,
+    total: document.querySelector('.v2-bag-sum div:last-child span:last-child')?.textContent ?? null,
+  }))
+  await page.evaluate(() => {
+    const plus = [...document.querySelectorAll('.v2-line .v2-qty button')]
+      .find(b => b.getAttribute('aria-label') === 'Increase')
+    plus?.click(); plus?.click()
+  })
+  await sleep(700)
+  const money2 = await page.evaluate(() => {
+    const p = document.querySelector('.v2-line .v2-line-price')
+    return {
+      line: p?.firstChild?.textContent?.trim() ?? null,
+      unit: p?.querySelector('em')?.textContent?.trim() ?? null,
+      qty: document.querySelector('.v2-line .v2-qty b')?.textContent ?? null,
+      total: document.querySelector('.v2-bag-sum div:last-child span:last-child')?.textContent ?? null,
+    }
+  })
+  const num = (t) => Number(String(t || '').replace(/[^0-9.]/g, ''))
+  // Against the unit price the line itself prints, not against whatever it
+  // read before — the quantity was already above one by this point, so the
+  // earlier figure was a line total too.
+  const unitPrice = num((money2.unit || '').split('\u00d7')[1])
+  check(unitPrice > 0 && num(money2.line) === unitPrice * num(money2.qty),
+    'the line price is the unit price times the quantity',
+    { line: money2.line, unit: unitPrice, qty: money2.qty })
+  check(!!money2.unit && /×/.test(money2.unit),
+    'and it still says what one costs', { unit: money2.unit })
+  check(num(money2.total) > num(money1.total), 'the total follows it too',
+    { was: money1.total, now: money2.total })
+
   // Take everything out: Checkout must not be live with nothing selected.
   await page.evaluate(() => [...document.querySelectorAll('.v2-line')]
     .filter(l => l.getAttribute('aria-checked') === 'true').forEach(l => l.click()))
