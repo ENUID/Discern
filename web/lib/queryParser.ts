@@ -8,6 +8,8 @@
 
 // Whole-word match — prevents "men" matching inside "women", "shirt" matching
 // inside "t-shirt" (at the start of a word boundary), etc.
+import { taxonomyGarmentKey, taxonomySlot } from './fashion/taxonomy'
+
 function hasWord(text: string, word: string): boolean {
   return new RegExp(
     `(?:^|[^a-z])${word.replace(/[-\s]+/g, '[\\s-]+')}(?:[^a-z]|$)`,
@@ -839,9 +841,13 @@ export function classifyQuerySlot(query: string): SlotCategory | null {
 // vocabulary against the product's own text (title + tags + description). A
 // product can legitimately hit more than one (e.g. an overshirt reads as a top),
 // so we return the full set and let the caller test membership.
-export function productSlotCategories(p: { title?: string; tags?: string[]; description?: string }): Set<SlotCategory> {
+export function productSlotCategories(p: { title?: string; tags?: string[]; description?: string; categories?: string[] }): Set<SlotCategory> {
   const text = `${p.title || ''} ${(p.tags || []).join(' ')} ${p.description || ''}`.toLowerCase()
   const cats = new Set<SlotCategory>()
+  // Shopify's own label first, where the store bothered to set one. It is the
+  // only signal that survives a title like "X Lows CHESTNUT".
+  const fromTaxonomy = taxonomySlot(p.categories)
+  if (fromTaxonomy) cats.add(fromTaxonomy)
   for (const [key, entry] of Object.entries(GARMENT_VOCAB)) {
     const cat = GARMENT_CATEGORY[key]
     if (!cat) continue
@@ -851,7 +857,7 @@ export function productSlotCategories(p: { title?: string; tags?: string[]; desc
 }
 
 // Does this product actually satisfy the slot the query asked for?
-export function productMatchesSlot(p: { title?: string; tags?: string[]; description?: string }, cat: SlotCategory): boolean {
+export function productMatchesSlot(p: { title?: string; tags?: string[]; description?: string; categories?: string[] }, cat: SlotCategory): boolean {
   return productSlotCategories(p).has(cat)
 }
 
@@ -862,11 +868,15 @@ export function productMatchesSlot(p: { title?: string; tags?: string[]; descrip
 // term, so it fails the tshirt check) AND no disqualifying look-alike (a real
 // t-shirt fails the shirt check via GARMENT_EXCLUSIONS). Use this instead of
 // productMatchesSlot wherever the query names one specific garment.
-export function productMatchesGarmentKey(p: { title?: string; tags?: string[]; description?: string }, key: string): boolean {
+export function productMatchesGarmentKey(p: { title?: string; tags?: string[]; description?: string; categories?: string[] }, key: string): boolean {
   const entry = GARMENT_VOCAB[key]
   if (!entry) return false
   const text = `${p.title || ''} ${(p.tags || []).join(' ')} ${p.description || ''}`.toLowerCase()
-  if (!entry.product.some(term => hasWord(text, term))) return false
+  // Shopify naming this exact garment counts as the product naming it. This is
+  // additive only — a product whose words match still matches, and one with no
+  // category is judged exactly as before.
+  const namedByShopify = taxonomyGarmentKey(p.categories) === key
+  if (!namedByShopify && !entry.product.some(term => hasWord(text, term))) return false
   if (matchesGarmentExclusion(text, entry.product)) return false
   return true
 }

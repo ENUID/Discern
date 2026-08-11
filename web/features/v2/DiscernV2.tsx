@@ -1396,7 +1396,11 @@ export default function DiscernV2({
     const url = product?.storeUrl
     if (!url) return
     let cancelled = false
-    fetch(`/api/product-images?url=${encodeURIComponent(url)}`)
+    // The id goes with the url: it is the UCP product id, and it is what lets
+    // the gallery come from the protocol rather than from scraping the store's
+    // own JSON.
+    fetch(`/api/product-images?url=${encodeURIComponent(url)}`
+      + (product?.id ? `&id=${encodeURIComponent(product.id)}` : ''))
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
         if (cancelled || !d) return

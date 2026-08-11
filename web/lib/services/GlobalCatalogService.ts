@@ -51,6 +51,8 @@ export type UcpProduct = {
   relevance_score?: number
   relevance_reason?: string
   product_type?: string
+  /** Shopify standard taxonomy ids, e.g. 'gid://shopify/TaxonomyCategory/aa-8-8'. */
+  categories?: string[]
 }
 
 export type CatalogSearchDebug = {
@@ -638,7 +640,51 @@ function extractProducts(data: any): any[] {
 }
 
 /** Query one brand's own Shopify catalog via its MCP endpoint. */
-async function fetchStore(domain: string, query: string, countryCode: string | null): Promise<any[]> {
+/** How much of a store's catalogue to ask for in one call.
+ *
+ *  UCP's ceiling is 250 and raising it looked like free depth. It is not, and
+ *  the numbers are worth keeping so nobody raises it again on the same
+ *  reasoning.
+ *
+ *  Per store, a 250-product reply is 1.5-2.5 MB and takes 3.0-3.4s; ninety of
+ *  those is ~180 MB a search against a 5s per-store timeout several were
+ *  already brushing, and a store that misses the timeout returns NOTHING. So
+ *  250 trades "40 from every store" for "250 from some and zero from others".
+ *
+ *  120 measured worse end to end than 40 — "sneakers" went from 12 results in
+ *  5.3s to 6 results in 33s, because forty-five parallel stores at 120 apiece
+ *  is a different amount of data to move and parse. Even 60, which is well
+ *  inside every per-store timeout, doubled the wall clock ("white shirt" 5.9s
+ *  to 11.9s) and returned the same twelve pieces.
+ *
+ *  That last part is the whole answer: the page is capped at twelve either
+ *  way, so a deeper pool can only change WHICH twelve, and nothing here can
+ *  yet detect that it changed them for the better. Paying six seconds for an
+ *  unmeasurable difference is a bad trade, and it is the wrong direction after
+ *  a complaint about speed. Revisit it when there is an evaluation set that
+ *  can see a quality gain — with a measurement, never with the spec's
+ *  maximum. */
+const STORE_PAGE_LIMIT = 40
+const STORE_BROWSE_LIMIT = 60
+
+type StoreFetchContext = {
+  /** Passed to the store's own relevance engine — UCP documents `intent` as
+   *  "background context describing the buyer's intent", and we were sending
+   *  none of it. The shopper's actual sentence, not our stripped-down keyword
+   *  query, is what that field is for. */
+  intent?: string | null
+  currency?: string | null
+  language?: string | null
+  /** Filtered at the store rather than thrown away here. Minor units. */
+  priceMaxMinor?: number | null
+}
+
+async function fetchStore(
+  domain: string,
+  query: string,
+  countryCode: string | null,
+  ctx: StoreFetchContext = {},
+): Promise<any[]> {
   const profile = UCP_REGISTRY.find(s => s.domain.toLowerCase().trim() === domain)
   const langs = profile?.languages || ['en']
 
@@ -657,8 +703,27 @@ async function fetchStore(domain: string, query: string, countryCode: string | n
     // Reach deeper into each brand's catalog: more matches per brand for search,
     // and a wider sample for browse/Explore. (Shopify's MCP caps the page here —
     // true full-catalog depth needs cursor pagination via products.json.)
-    const catalogArgs: Record<string, any> = { filters: { available: true }, pagination: { limit: q ? 40 : 50 } }
+    const catalogArgs: Record<string, any> = {
+      pagination: { limit: q ? STORE_PAGE_LIMIT : STORE_BROWSE_LIMIT },
+    }
     if (q) catalogArgs.query = q
+
+    // `filters` accepts categories and price and nothing else — `available:
+    // true` was not in the schema and was being ignored, so it bought nothing
+    // and misdescribed what we were asking for.
+    if (typeof ctx.priceMaxMinor === 'number' && ctx.priceMaxMinor > 0) {
+      catalogArgs.filters = { price: { max: Math.round(ctx.priceMaxMinor) } }
+    }
+
+    // Buyer signals. The store localises its own prices and availability from
+    // these, which is better than us quoting one currency and converting into
+    // another afterwards.
+    const context: Record<string, string> = {}
+    if (countryCode) context.address_country = countryCode
+    if (ctx.currency) context.currency = ctx.currency
+    if (ctx.language) context.language = ctx.language
+    if (ctx.intent && ctx.intent.trim()) context.intent = ctx.intent.trim().slice(0, 300)
+    if (Object.keys(context).length) catalogArgs.context = context
     const payload = {
       jsonrpc: '2.0',
       method: 'tools/call',
@@ -818,6 +883,12 @@ function parseProduct(raw: any, sourceDomain?: string): UcpProduct | null {
       image_url,
       in_stock: inStock,
       tags: raw.tags ?? [],
+      // Shopify's own taxonomy, kept rather than dropped. It is what tells us
+      // a product with no garment word in it is still a sneaker.
+      categories: Array.isArray(raw.categories)
+        ? raw.categories.map((c: any) => (typeof c === 'string' ? c : c?.value))
+            .filter((v: unknown): v is string => typeof v === 'string')
+        : undefined,
       description,
       description_html:
         typeof raw.description?.html === 'string' && raw.description.html.trim()
@@ -984,6 +1055,17 @@ export class GlobalCatalogService {
     const limit = isLoadMore ? LOAD_MORE_LIMIT : INITIAL_LIMIT
     const cc = countryCode?.trim().toUpperCase() || null
     const bcur = normalizeCurrency(budgetCurrency)
+    /** What every store call tells the shop about the buyer. `rerankQuery` is
+     *  the shopper's own sentence — the fetch query is a stripped keyword
+     *  string, and intent is the field that wants the sentence. The budget is
+     *  in minor units because that is what UCP asks for. */
+    const storeCtx: StoreFetchContext = {
+      intent: (rerankQuery || '').trim() || null,
+      currency: bcur || null,
+      language: 'en',
+      priceMaxMinor: typeof budgetMax === 'number' && budgetMax > 0
+        ? Math.round(budgetMax * 100) : null,
+    }
     const rates = await getExchangeRates().catch(() => ({} as Record<string, number>))
 
     // Which brands? Explicit brandDomains → else detect a named brand → else category subset.
@@ -1078,7 +1160,7 @@ export class GlobalCatalogService {
     while (!enough() && entry.pending.length > 0 && rounds < MAX_ROUNDS_PER_CALL) {
       rounds++
       const batch = entry.pending.splice(0, BATCH_SIZE)
-      const batchRaw = await Promise.all(batch.map(d => fetchStore(d, storeQuery, cc)))
+      const batchRaw = await Promise.all(batch.map(d => fetchStore(d, storeQuery, cc, storeCtx)))
       for (const d of batch) entry.queried.add(d)
       ingest(batchRaw)
     }
@@ -1138,7 +1220,10 @@ export class GlobalCatalogService {
           const domainCap = queries.length <= 1 ? 20 : 16
           const retryDomains = Array.from(entry.queried).slice(0, domainCap)
           const retryRaw = await Promise.all(
-            retryDomains.flatMap(d => queries.map(q => fetchStore(d, q, cc))),
+            // The broadening pass deliberately drops the price filter: it runs
+            // because the pool was thin, and narrowing it again is the opposite
+            // of recall.
+            retryDomains.flatMap(d => queries.map(q => fetchStore(d, q, cc, { ...storeCtx, priceMaxMinor: null }))),
           )
           ingest(retryRaw)
           console.log(`[Catalog] recall "${storeQuery}" → [${queries.join(', ')}] (+${entry.products.length} pool)`)

@@ -2,6 +2,38 @@ import { NextRequest, NextResponse } from 'next/server'
 import { BoundedCache } from '@/lib/boundedCache'
 import { safeParseStoreUrl } from '@/lib/ssrfGuard'
 
+/**
+ * Every photograph a store publishes for one product.
+ *
+ * UCP FIRST, AND ALMOST ALWAYS ONLY UCP. `search_catalog` returns a single
+ * image per product — that is the whole reason pieces showed one photograph —
+ * but `get_product_details` returns the lot. Measured across five stores it
+ * returned 5 to 10 images each, including Todd Snyder, whose
+ * /products/<handle>.json answers 403 and which was the store that forced the
+ * scraping fallback in the first place. So the protocol covers the case the
+ * scrape was invented for.
+ *
+ * The scrape stays underneath as a last resort and nothing more: it is reached
+ * only when there is no UCP product id to ask with, which happens for pieces
+ * restored from an older cache written before ids were carried. When that
+ * stops appearing in logs it should be deleted outright.
+ */
+
+/** A UCP tool call against a store's own MCP endpoint. */
+async function ucp(domain: string, name: string, args: Record<string, unknown>) {
+  const res = await fetch(`https://${domain}/api/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', id: 1, params: { name, arguments: args } }),
+    signal: AbortSignal.timeout(8000),
+  })
+  if (!res.ok) return null
+  const data = await res.json()
+  const text = data?.result?.content?.[0]?.text
+  if (typeof text !== 'string') return data?.result?.structuredContent ?? null
+  try { return JSON.parse(text) } catch { return null }
+}
+
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 
 type Gallery = {
@@ -31,12 +63,42 @@ function toGalleryUrl(src: string): string {
 
 export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get('url')
+  const productId = (req.nextUrl.searchParams.get('id') || '').trim()
   if (!raw) return NextResponse.json({ images: [], colors: [], byColor: {} })
 
   const parsed = safeParseStoreUrl(raw)
   if (!parsed) return NextResponse.json({ images: [], colors: [], byColor: {} })
 
   if (cache.has(raw)) return NextResponse.json(cache.get(raw))
+
+  // ── The protocol ────────────────────────────────────────────────────────
+  if (productId.startsWith('gid://shopify/Product/')) {
+    try {
+      const d = await ucp(parsed.hostname, 'get_product_details', { product_id: productId })
+      const prod: any = d?.product ?? d
+      const seen = new Set<string>()
+      const images: string[] = []
+      for (const m of [...(prod?.images ?? []), ...(prod?.media ?? [])]) {
+        const src = typeof m === 'string' ? m : (m?.url ?? m?.src ?? m?.preview_image?.src)
+        if (typeof src !== 'string' || !src) continue
+        const url = toGalleryUrl(src)
+        if (!seen.has(url)) { seen.add(url); images.push(url) }
+      }
+      if (images.length > 0) {
+        const colourOpt = (prod?.options ?? []).find((o: any) => /colou?r/i.test(o?.name ?? ''))
+        const colors: string[] = (colourOpt?.values ?? [])
+          .filter((v: unknown): v is string => typeof v === 'string' && v.trim().length > 0)
+        // byColor is left empty on purpose. UCP can answer it — pass `options`
+        // to get_product_details and it returns that colourway — but that is
+        // one call per colour, and the page already leads with the picked
+        // colour's own shot when the map is absent. Worth doing lazily on a
+        // tap, not eagerly for colours nobody looks at.
+        const gallery: Gallery = { images, colors, byColor: {} }
+        cache.set(raw, gallery)
+        return NextResponse.json(gallery)
+      }
+    } catch { /* falls through to the last resort below */ }
+  }
 
   // Extract the product handle from the URL
   const handleMatch = raw.match(/\/products\/([^/?#]+)/)
