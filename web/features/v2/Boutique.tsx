@@ -320,7 +320,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       for (const g of data.foundProductGroups) {
         const products = (g?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
         if (!products.length) continue
-        sections.push({ title: titleFor(products, g?.label), hero: products[0], products: products.slice(1) })
+        sections.push({ title: titleFor(products, g?.label), hero: products[0], products: products.slice(1), query: g?.query || data?.searchQuery || q })
       }
     }
 
@@ -328,7 +328,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
     if (!sections.length && Array.isArray(data?.foundProducts) && data.foundProducts.length > 0) {
       const products = data.foundProducts.map(toProduct).filter((p: V2Product) => p.image)
       if (products.length) {
-        sections.push({ title: titleFor(products), hero: products[0], products: products.slice(1) })
+        sections.push({ title: titleFor(products), hero: products[0], products: products.slice(1), query: data?.searchQuery || q })
       }
     }
 
@@ -358,14 +358,14 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       for (const s of data.outfitSlots) {
         const products = (s?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
         if (!products.length) continue
-        sections.push({ title: slotLabel(s), hero: products[0], products: products.slice(1) })
+        sections.push({ title: slotLabel(s), hero: products[0], products: products.slice(1), query: s?.query })
       }
       look = data.outfitSlots.map((s: any) => toProduct(s?.products?.[0])).filter((p: V2Product) => p.image)
     } else if (Array.isArray(data?.outfitGroups) && data.outfitGroups.length > 0) {
       for (const g of data.outfitGroups) {
         const products = (g?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
         if (!products.length) continue
-        sections.push({ title: titleFor(products, g?.label), hero: products[0], products: products.slice(1) })
+        sections.push({ title: titleFor(products, g?.label), hero: products[0], products: products.slice(1), query: g?.query || data?.searchQuery || q })
       }
       look = (data.outfitGroups[0]?.products ?? []).map(toProduct).filter((p: V2Product) => p.image)
     }
@@ -423,9 +423,38 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
     }
   }, [context])
 
+  /** The next page of one strip.
+   *
+   *  The endpoint's load-more mode takes the query and everything already on
+   *  screen, and returns only what it has not sent — so the page extends rather
+   *  than repeating itself. It needs no model, which is why it keeps working
+   *  when the stylist is degraded. */
+  const onLoadMore = useCallback(async (query: string, excludeIds: string[]): Promise<V2Product[]> => {
+    try {
+      const res = await fetch('/api/ai/stylist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'load-more', query, excludeIds, ...context }),
+      })
+      if (!res.ok) return []
+      const text = await res.text()
+      let data: any = null
+      for (const line of text.split('\n')) {
+        const t = line.trim()
+        if (!t) continue
+        try { const o = JSON.parse(t); if (o.type === 'result') data = o } catch { /* partial */ }
+      }
+      const more = Array.isArray(data?.foundProducts) ? data.foundProducts.map(toProduct) : []
+      return more.filter((p: V2Product) => p.image && !excludeIds.includes(p.id))
+    } catch {
+      return []
+    }
+  }, [context])
+
   return (
     <DiscernV2
       onQuery={onQuery}
+      onLoadMore={onLoadMore}
       onFeatured={onFeatured}
       onSearched={remember}
       onSavedChange={onSavedChange}

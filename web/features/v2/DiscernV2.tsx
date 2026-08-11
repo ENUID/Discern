@@ -83,7 +83,13 @@ export type V2Turn = {
 }
 /** Transcript entry sent back to the stylist so follow-ups have context. */
 export type V2Msg = { role: 'user' | 'assistant'; content: string }
-export type V2Section = { title: string; subtitle?: string; hero?: V2Product; products: V2Product[] }
+export type V2Section = {
+  title: string; subtitle?: string; hero?: V2Product; products: V2Product[]
+  /** The query that produced this strip, so "See more" can ask for the next
+   *  page of the same thing rather than guessing from the heading — which names
+   *  the clothes, not the search. */
+  query?: string
+}
 export type V2CartLine = { product: V2Product; color?: string; size?: string; qty: number }
 
 type View = 'home' | 'results' | 'product' | 'look'
@@ -256,7 +262,7 @@ function BagBtn({ on, just, onClick, size = 34, ghost }: {
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function DiscernV2({
-  heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onFeatured, onSearched, onSavedChange, heroCopy = 0,
+  heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onLoadMore, onFeatured, onSearched, onSavedChange, heroCopy = 0,
   buyerCountry,
 }: {
   heroMedia?: string; heroPoster?: string
@@ -264,6 +270,8 @@ export default function DiscernV2({
     sections: V2Section[]; look?: V2Product[]
     answer?: string; didSearch?: boolean; light?: boolean; failed?: boolean; busy?: boolean
   }>
+  /** The next page of one strip: the query, and everything already shown. */
+  onLoadMore?: (query: string, excludeIds: string[]) => Promise<V2Product[]>
   /** Real catalogue imagery for the three hero cards. Supplying this is what
    *  keeps the opening screen from depending on hand-placed jpgs. */
   onFeatured?: () => Promise<string[]>
@@ -1028,6 +1036,41 @@ export default function DiscernV2({
 
   const submit = () => run(input)
 
+  /** Ask for the next page of one strip.
+   *
+   *  Everything already on screen is sent as excludeIds, so the endpoint does
+   *  not hand back what the shopper is already looking at. A page that comes
+   *  back empty is not a failure — it is the end of the catalogue for that
+   *  query — and the button says so rather than staying hopeful. */
+  const [moreBusy, setMoreBusy] = useState<number | null>(null)
+  const [moreDone, setMoreDone] = useState<Set<string>>(new Set())
+
+  const loadMore = useCallback(async (turnId: string, sectionIndex: number) => {
+    if (!onLoadMore || moreBusy !== null) return
+    const turn = turns.find(t => t.id === turnId)
+    const section = turn?.sections[sectionIndex]
+    if (!turn || !section) return
+    const query = section.query || turn.question
+    setMoreBusy(sectionIndex)
+    try {
+      const seen = turn.sections.flatMap(x => [...(x.hero ? [x.hero] : []), ...x.products]).map(p => p.id)
+      const more = await onLoadMore(query, seen)
+      if (!more.length) {
+        setMoreDone(prev => new Set(prev).add(`${turnId}:${sectionIndex}`))
+        return
+      }
+      setTurns(prev => prev.map(t => t.id !== turnId ? t : {
+        ...t,
+        sections: t.sections.map((x, i) => i !== sectionIndex ? x
+          : { ...x, products: [...x.products, ...more.filter((m: V2Product) => !seen.includes(m.id))] }),
+      }))
+    } catch {
+      setMoreDone(prev => new Set(prev).add(`${turnId}:${sectionIndex}`))
+    } finally {
+      setMoreBusy(null)
+    }
+  }, [onLoadMore, moreBusy, turns])
+
   const openProduct = (p: V2Product) => {
     setProduct(p); setAcc(null); setDetailsOpen(false)
     setColorMode(false); setSizeMode(false)
@@ -1305,6 +1348,19 @@ export default function DiscernV2({
                   {s.title && (
                     <button className="v2-discover" onClick={() => s.hero && openProduct(s.hero)}>
                       Discover all {s.title} <span aria-hidden>›</span>
+                    </button>
+                  )}
+                  {/* The next page of the same search. The endpoint has always
+                      supported this — it takes the query and the ids already
+                      shown and returns what it has not sent yet — and nothing
+                      here asked, so a results page was however much came back
+                      and no deeper. */}
+                  {(s.query || turn.didSearch) && onLoadMore && (
+                    <button className="v2-more" disabled={moreBusy === si}
+                      onClick={() => loadMore(turn.id, si)}>
+                      {moreBusy === si ? 'Looking…'
+                        : moreDone.has(`${turn.id}:${si}`) ? 'That is everything'
+                        : 'See more'}
                     </button>
                   )}
                 </div>
@@ -2147,6 +2203,14 @@ export default function DiscernV2({
         .v2-discover{display:inline-flex;align-items:center;gap:7px;margin-top:15px;background:none;border:none;
           cursor:pointer;color:${V2.ink};font-size:14px;padding:6px 2px;}
         .v2-discover span{font-size:17px;line-height:1;}
+        /* Quieter than Discover all: that opens a piece, this extends a list.
+           Full width under the grid, where the eye already is after scrolling
+           to the end of it. */
+        .v2-more{display:block;width:100%;min-height:44px;margin:26px 0 0;
+          border:1px solid ${V2.hairline};border-radius:12px;background:none;cursor:pointer;
+          color:${V2.ink70};font-family:${V2.sans};font-size:13px;transition:background .16s;}
+        .v2-more:hover{background:rgba(26,26,28,.04);}
+        .v2-more:disabled{cursor:default;opacity:.6;}
 
         /* Gutters, and air at the edges. The tiles were 3px apart and flush to
            the screen, so the grid read as one sheet of photographs rather than

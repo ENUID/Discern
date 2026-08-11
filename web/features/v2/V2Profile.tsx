@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useQuery, useMutation } from 'convex/react'
 import { api } from '@/convex/_generated/api'
@@ -60,7 +60,9 @@ export default function V2Profile({ country }: { country?: string }) {
   const scope = email && authProof ? { userEmail: email, authProof } : 'skip'
 
   const profile = useQuery(api.tasteProfile.getTasteProfile, scope as never) as
-    { sizes?: Record<string, string> } | undefined | null
+    { sizes?: Record<string, string>
+      wardrobe?: { summary?: string; items?: Array<{ color?: string; type?: string }> } }
+    | undefined | null
   const save = useMutation(api.tasteProfile.upsertTasteProfile)
 
   const [gender, setGender] = useState<Gender | ''>('')
@@ -86,6 +88,93 @@ export default function V2Profile({ country }: { country?: string }) {
       || (s.bottoms ?? '') !== sizes.bottoms
       || (s.shoes ?? '') !== sizes.shoes
   }, [profile, gender, sizes])
+
+  // ── The wardrobe ──────────────────────────────────────────────────────────
+  // The stylist reads this on every request — shopperWardrobe is what stops it
+  // recommending the coat you already own — and until now nothing in this
+  // interface could write it, so it was empty for every v2 shopper. The chat UI
+  // had the scan; this is that, in the place the other facts about you live.
+  //
+  // The endpoint owns the vision call and the save (mode: 'wardrobe-scan'), so
+  // this is a file picker, a compressor and a status line.
+  const [scanning, setScanning] = useState(false)
+  const [scanNote, setScanNote] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  /** 768px JPEG data URLs, the same pipeline the composer uses for photos. A
+   *  raw phone photograph is several megabytes and four of them will not fit in
+   *  a request body. */
+  const compress = (file: File) => new Promise<string | null>(resolve => {
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const img = new Image()
+      img.onload = () => {
+        const scale = Math.min(1, 768 / Math.max(img.width, img.height))
+        const c = document.createElement('canvas')
+        c.width = Math.round(img.width * scale)
+        c.height = Math.round(img.height * scale)
+        const ctx2d = c.getContext('2d')
+        if (!ctx2d) return resolve(null)
+        ctx2d.drawImage(img, 0, 0, c.width, c.height)
+        resolve(c.toDataURL('image/jpeg', 0.82))
+      }
+      img.onerror = () => resolve(null)
+      img.src = String(ev.target?.result ?? '')
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
+
+  const scanWardrobe = async (files: FileList | null) => {
+    if (!files?.length || scanning || !email || !authProof) return
+    setScanning(true)
+    setScanNote(null)
+    try {
+      // Four is the endpoint's own working limit and plenty for a rail.
+      const images = (await Promise.all(Array.from(files).slice(0, 4).map(compress)))
+        .filter((x): x is string => !!x)
+      if (!images.length) { setScanNote('Those photos could not be read.'); return }
+
+      const res = await fetch('/api/ai/stylist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'wardrobe-scan', images, userEmail: email, authProof }),
+      })
+      // The endpoint streams progress then one result line, same as a search.
+      const text = await res.text()
+      let data: any = null
+      for (const line of text.split('\n')) {
+        const t = line.trim()
+        if (!t) continue
+        try { const o = JSON.parse(t); if (o.type === 'result') data = o } catch { /* partial */ }
+      }
+      const n = Array.isArray(data?.wardrobeScan?.items) ? data.wardrobeScan.items.length : 0
+      setScanNote(
+        n > 0
+          ? `Read ${n} ${n === 1 ? 'piece' : 'pieces'}. Fabrics will style around what you already own.`
+          : (data?.reply || 'Nothing legible in those. Try clearer, well-lit photos.'),
+      )
+    } catch {
+      setScanNote('That did not go through. Try again.')
+    } finally {
+      setScanning(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  /** What the account already knows, said back in one line. Without it the
+   *  button is a promise with no evidence behind it — and a shopper who scanned
+   *  months ago has no way to tell whether it took. */
+  const wardrobeLine = useMemo(() => {
+    const w = profile?.wardrobe
+    const n = w?.items?.length ?? 0
+    if (!n && !w?.summary) return ''
+    const kinds = Array.from(new Set((w?.items ?? []).map(i => (i.type || '').toLowerCase()).filter(Boolean)))
+    const named = kinds.slice(0, 3).join(', ')
+    return n
+      ? `${n} ${n === 1 ? 'piece' : 'pieces'} on file${named ? ` — ${named}${kinds.length > 3 ? '…' : ''}` : ''}.`
+      : (w?.summary ?? '')
+  }, [profile])
 
   const commit = async () => {
     if (!email || !authProof || !dirty || state === 'saving') return
@@ -138,6 +227,22 @@ export default function V2Profile({ country }: { country?: string }) {
         ))}
       </div>
 
+      <div className="v2p-wardrobe">
+        <span className="v2p-eyebrow">Your wardrobe</span>
+        <p className="v2p-why">
+          Photograph what you already own and Fabrics stops offering it back to
+          you — and starts filling the gaps instead.
+        </p>
+        {wardrobeLine && <p className="v2p-known">{wardrobeLine}</p>}
+        <input ref={fileRef} type="file" accept="image/*" multiple hidden
+          onChange={e => scanWardrobe(e.target.files)} />
+        <button className="v2p-scan" disabled={scanning}
+          onClick={() => fileRef.current?.click()}>
+          {scanning ? 'Reading your photos…' : wardrobeLine ? 'Scan again' : 'Scan my wardrobe'}
+        </button>
+        {scanNote && <p className="v2p-scannote">{scanNote}</p>}
+      </div>
+
       {country && (
         <p className="v2p-where">
           Shopping from <b>{countryName(country)}</b> — prices and brands are shown for there.
@@ -168,6 +273,15 @@ export default function V2Profile({ country }: { country?: string }) {
         .v2p-row input{flex:1;min-width:0;border:none;background:none;outline:none;color:inherit;
           font-family:${V2.sans};font-size:16px;text-align:right;padding:11px 0;}
         .v2p-row input::placeholder{color:rgba(var(--srf-ink-rgb),.32);}
+        .v2p-wardrobe{margin-bottom:18px;padding-top:18px;
+          border-top:1px solid rgba(var(--srf-ink-rgb),.12);}
+        .v2p-known{font-size:12px;line-height:1.5;opacity:.62;margin:0 0 12px;}
+        .v2p-scan{width:100%;min-height:44px;border-radius:12px;cursor:pointer;
+          font-family:${V2.sans};font-size:13px;color:inherit;
+          background:rgba(var(--srf-ink-rgb),.08);
+          border:1px solid rgba(var(--srf-ink-rgb),.18);transition:background .16s;}
+        .v2p-scan:disabled{opacity:.55;cursor:default;}
+        .v2p-scannote{font-size:12px;line-height:1.5;opacity:.7;margin:10px 0 0;}
         .v2p-where{font-size:12px;line-height:1.5;opacity:.5;margin:0 0 18px;}
         .v2p-where b{font-weight:500;opacity:.85;}
         .v2p-save{width:100%;min-height:44px;border-radius:12px;border:none;cursor:pointer;
