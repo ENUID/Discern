@@ -2158,15 +2158,23 @@ export default function DiscernV2({
               const key = lineKey(l)
               const on = hostOfLine(l) === activeHost && !dropped.has(key)
               return (
-              <div className={`v2-line ${on ? '' : 'off'}`} key={key}>
-                {/* Which pieces this checkout is for. A tick rather than a
-                    separate screen: the bag is already the list, and the only
-                    thing missing was a way to say "not that one". */}
-                <label className="v2-line-pick">
-                  <input type="checkbox" checked={on} onChange={() => togglePick(l)} />
-                  <span aria-hidden />
-                  <em>{on ? `${l.product.title} is in this checkout` : `${l.product.title} is not in this checkout`}</em>
-                </label>
+              // Which pieces this checkout is for. The piece itself is the
+              // control — you press the thing you mean and it draws a border
+              // around itself. A tick box beside it was a second object
+              // explaining the first, in a list that is already made of the
+              // things being chosen.
+              //
+              // Not a <button>: it contains the quantity steppers and Remove,
+              // and a button inside a button is invalid and unpredictable. A
+              // checkbox role carries the same meaning to a screen reader and
+              // lets the inner controls stay real buttons.
+              <div className={`v2-line ${on ? 'on' : 'off'}`} key={key}
+                role="checkbox" aria-checked={on} tabIndex={0}
+                aria-label={`${l.product.title} — ${on ? 'in this checkout' : 'not in this checkout'}`}
+                onClick={() => togglePick(l)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePick(l) }
+                }}>
                 <Img src={l.product.image} />
                 <div>
                   <span className="v2-line-name">{l.product.title}</span>
@@ -2176,10 +2184,12 @@ export default function DiscernV2({
                   <span className="v2-line-meta">{l.product.vendor || hostOfLine(l)}</span>
                   {l.product.sku && <span className="v2-line-sku">SKU: {l.product.sku}</span>}
                   <div className="v2-qty">
-                    Quantity: <button onClick={() => setQty(i, -1)} aria-label="Decrease">−</button>
+                    Quantity:
+                    <button onClick={e => { e.stopPropagation(); setQty(i, -1) }} aria-label="Decrease">−</button>
                     <b>{l.qty}</b>
-                    <button onClick={() => setQty(i, 1)} aria-label="Increase">+</button>
-                    <button className="v2-remove" onClick={() => setCart(c => c.filter((_, x) => x !== i))}>Remove</button>
+                    <button onClick={e => { e.stopPropagation(); setQty(i, 1) }} aria-label="Increase">+</button>
+                    <button className="v2-remove"
+                      onClick={e => { e.stopPropagation(); setCart(c => c.filter((_, x) => x !== i)) }}>Remove</button>
                   </div>
                 </div>
               </div>
@@ -3054,21 +3064,19 @@ export default function DiscernV2({
         .v2-qty button{width:20px;height:20px;border:none;background:none;cursor:pointer;font-size:14px;color:${V2.ink70};}
         .v2-qty b{font-weight:400;color:${V2.ink};}
         .v2-remove{width:auto !important;margin-left:8px;text-decoration:underline;font-size:13px !important;}
-        /* The tick sits in the line's own left margin so the photograph and
-           the copy keep the position they already had. */
-        .v2-line{position:relative;}
-        .v2-line.off{opacity:.42;}
-        .v2-line-pick{position:absolute;left:-4px;top:-4px;z-index:2;width:34px;height:34px;
-          display:flex;align-items:center;justify-content:center;cursor:pointer;}
-        .v2-line-pick input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;}
-        .v2-line-pick em{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
-        .v2-line-pick span{width:20px;height:20px;border-radius:6px;background:#fff;
-          border:1.5px solid ${V2.hairline};transition:background .15s ${V2.ease},border-color .15s ${V2.ease};}
-        .v2-line-pick input:checked + span{background:${V2.ink};border-color:${V2.ink};}
-        /* The mark is drawn rather than a glyph, so it lines up at any size. */
-        .v2-line-pick input:checked + span::after{content:'';display:block;width:5px;height:9px;
-          margin:2px auto 0;border:solid #fff;border-width:0 1.6px 1.6px 0;transform:rotate(45deg);}
-        .v2-line-pick input:focus-visible + span{outline:2px solid ${V2.ink};outline-offset:2px;}
+        /* Selection is a border around the piece, drawn on the line itself.
+           The border is always present and only changes colour, so choosing
+           something never nudges the layout by a pixel. */
+        .v2-line{position:relative;cursor:pointer;border:1.5px solid transparent;border-radius:14px;
+          padding:12px;margin-bottom:10px;
+          transition:border-color .18s ${V2.ease},background .18s ${V2.ease};}
+        .v2-line.on{border-color:${V2.ink};background:rgba(0,0,0,.015);}
+        @media(hover:hover){.v2-line:not(.on):hover{border-color:${V2.hairline};}}
+        .v2-line:focus-visible{outline:2px solid ${V2.ink};outline-offset:3px;}
+        /* Unselected stays legible rather than greyed out — the border says
+           which pieces are going, and a bag you cannot read is worse than one
+           that makes you look twice. */
+        .v2-line.off{opacity:.62;}
         .v2-bag-fx{color:${V2.ink45};font-size:12px !important;}
         .v2-bag-sum{border-top:1px solid ${V2.hairline};padding-top:16px;display:flex;flex-direction:column;gap:9px;margin-bottom:22px;}
         .v2-bag-sum div{display:flex;justify-content:space-between;font-size:13px;}

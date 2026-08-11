@@ -623,15 +623,20 @@ async function journey(browser, screen) {
 
   const bag = await page.evaluate(() => ({
     lines: document.querySelectorAll('.v2-line').length,
-    ticks: document.querySelectorAll('.v2-line-pick input').length,
-    allOn: [...document.querySelectorAll('.v2-line-pick input')].every(i => i.checked),
+    pickable: [...document.querySelectorAll('.v2-line')].filter(l => l.getAttribute('role') === 'checkbox').length,
+    allOn: [...document.querySelectorAll('.v2-line')].every(l => l.getAttribute('aria-checked') === 'true'),
+    bordered: [...document.querySelectorAll('.v2-line')]
+      .filter(l => l.getAttribute('aria-checked') === 'true')
+      .every(l => getComputedStyle(l).borderTopWidth !== '0px'
+        && getComputedStyle(l).borderTopColor !== 'rgba(0, 0, 0, 0)'),
     sums: [...document.querySelectorAll('.v2-bag-sum div')].map(d => d.textContent.replace(/\s+/g, ' ').trim()),
     pays: [...document.querySelectorAll('.v2-pay')].map(b => b.textContent.replace(/\s+/g, ' ').trim()),
     note: document.querySelector('.v2-bag-note')?.textContent?.trim() ?? null,
   }))
   check(bag.lines > 0, 'the bag has what was put in it', { lines: bag.lines })
-  check(bag.ticks === bag.lines, 'every line can be taken out of the checkout', bag)
-  check(bag.allOn, 'and they all start in it, so one brand is still one tap')
+  check(bag.pickable === bag.lines, 'the piece itself is the control — no tick box beside it', bag)
+  check(bag.allOn, 'and they all start in the checkout, so one brand is still one tap')
+  check(bag.bordered, 'the chosen ones are drawn with a border rather than a tick')
   check(bag.pays.length === 1, 'there is exactly one Checkout button, never a stack of them', bag.pays)
   check(bag.note === 'Checkout happens on the brand\u2019s own store.',
     'and one sentence under it', { note: bag.note })
@@ -644,7 +649,7 @@ async function journey(browser, screen) {
   // Untick one and the total has to follow it.
   const sumBefore = await page.evaluate(() =>
     document.querySelector('.v2-bag-sum div:last-child span:last-child')?.textContent ?? null)
-  await page.evaluate(() => document.querySelector('.v2-line-pick input')?.click())
+  await page.evaluate(() => document.querySelector('.v2-line')?.click())
   await sleep(600)
   const afterUntick = await page.evaluate(() => ({
     total: document.querySelector('.v2-bag-sum div:last-child span:last-child')?.textContent ?? null,
@@ -654,9 +659,26 @@ async function journey(browser, screen) {
     { before: sumBefore, after: afterUntick.total })
   check(afterUntick.dimmed, 'and the line says it is out')
 
+  // The controls that live inside a line must not toggle the line they sit in.
+  const qtyBefore = await page.evaluate(() =>
+    document.querySelector('.v2-line .v2-qty b')?.textContent ?? null)
+  await page.evaluate(() => {
+    const plus = [...document.querySelectorAll('.v2-line .v2-qty button')]
+      .find(b => b.getAttribute('aria-label') === 'Increase')
+    plus?.click()
+  })
+  await sleep(500)
+  const qtyAfter = await page.evaluate(() => ({
+    qty: document.querySelector('.v2-line .v2-qty b')?.textContent ?? null,
+    checked: document.querySelector('.v2-line')?.getAttribute('aria-checked') ?? null,
+  }))
+  check(qtyAfter.qty !== qtyBefore, 'the quantity stepper still works inside a line',
+    { before: qtyBefore, after: qtyAfter.qty })
+  check(qtyAfter.checked === 'false', 'and pressing it does not flip the line it sits in', qtyAfter)
+
   // Take everything out: Checkout must not be live with nothing selected.
-  await page.evaluate(() => [...document.querySelectorAll('.v2-line-pick input')]
-    .filter(i => i.checked).forEach(i => i.click()))
+  await page.evaluate(() => [...document.querySelectorAll('.v2-line')]
+    .filter(l => l.getAttribute('aria-checked') === 'true').forEach(l => l.click()))
   await sleep(600)
   const none = await page.evaluate(() => ({
     disabled: document.querySelector('.v2-pay')?.disabled ?? null,
@@ -670,8 +692,8 @@ async function journey(browser, screen) {
     'and the note is the one sentence it should always be', { note: none.note })
 
   // Put them back, and check out — one tab, and it stops at the account gate.
-  await page.evaluate(() => [...document.querySelectorAll('.v2-line-pick input')]
-    .filter(i => !i.checked).forEach(i => i.click()))
+  await page.evaluate(() => [...document.querySelectorAll('.v2-line')]
+    .filter(l => l.getAttribute('aria-checked') !== 'true').forEach(l => l.click()))
   await sleep(600)
   const opened = await page.evaluate(() => window.__opened.length)
   await page.evaluate(() => document.querySelector('.v2-pay')?.click())
