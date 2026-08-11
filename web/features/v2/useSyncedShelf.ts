@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useQuery, useMutation } from 'convex/react'
 import { api } from '@/convex/_generated/api'
@@ -22,6 +22,14 @@ import { useConvexAuthProof } from '@/hooks/useConvexAuthProof'
  * and every write after it is a replacement, which is what makes deletion work
  * at all. A union on every write would make removal impossible: the other
  * device would keep handing the deleted line back.
+ *
+ * WHICH FIRST EXCHANGE. That union has to happen once per account per DEVICE,
+ * and it was happening once per page load, because the flag lived in a ref and
+ * a ref does not survive a refresh. So: delete a recent, reload, and the union
+ * ran again — local (deleted) merged with the account (still holding it) — and
+ * handed the deleted recent straight back. A union cannot tell "this device
+ * has never seen it" from "this device deleted it", which is exactly why it
+ * must not run twice. The marker is in localStorage now, keyed by account.
  */
 
 type Line = { product: { id: string } } & Record<string, unknown>
@@ -55,8 +63,31 @@ export function useSyncedShelf(opts: {
   const scope = email && authProof ? { userEmail: email, authProof } : 'skip'
   /** The same pair, as an object the mutation can be spread from — `scope`
    *  doubles as the query's skip sentinel and cannot be spread while it might
-   *  be the string. */
-  const who = email && authProof ? { userEmail: email, authProof } : null
+   *  be the string.
+   *
+   *  Memoised, and that is load-bearing rather than tidy. As a bare object
+   *  literal this was a new reference on every render, so the publishing
+   *  effect below tore down and re-registered every time the component
+   *  rendered — and its cleanup clears the debounce timer. A write only ever
+   *  landed if nothing rendered for the whole 700ms, which on a screen with a
+   *  drawer open is rare. Deleting a recent usually never reached the account
+   *  at all, and the account then handed it back. */
+  const who = useMemo(
+    () => (email && authProof ? { userEmail: email, authProof } : null),
+    [email, authProof],
+  )
+
+  /** Has this device already merged with this account? Kept where a refresh
+   *  cannot lose it. */
+  const mergeKey = email ? `discern.v2.merged:${email.toLowerCase()}` : ''
+  const alreadyMerged = () => {
+    if (!mergeKey) return false
+    try { return localStorage.getItem(mergeKey) === '1' } catch { return false }
+  }
+  const rememberMerged = () => {
+    if (!mergeKey) return
+    try { localStorage.setItem(mergeKey, '1') } catch { /* private mode */ }
+  }
 
   const shelf = useQuery(api.shopperShelf.getShelf, scope as never) as
     { bag?: Line[]; recents?: string[]; updatedAt?: number } | undefined | null
@@ -81,8 +112,18 @@ export function useSyncedShelf(opts: {
     const remoteBag = shelf?.bag ?? []
     const remoteRecents = shelf?.recents ?? []
 
+    if (!merged.current && alreadyMerged()) {
+      // Seen this account before on this device: the account is simply the
+      // truth. Merging again would resurrect anything deleted here.
+      merged.current = true
+      lastSeen.current = JSON.stringify([remoteBag.map(l => l?.product?.id), remoteRecents])
+      onRemote({ bag: remoteBag, recents: remoteRecents })
+      return
+    }
+
     if (!merged.current) {
       merged.current = true
+      rememberMerged()
       const nextBag = unionBags(bag, remoteBag)
       const nextRecents = unionRecents(recents, remoteRecents)
       lastSeen.current = JSON.stringify([nextBag.map(l => l.product?.id), nextRecents])
@@ -112,7 +153,16 @@ export function useSyncedShelf(opts: {
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
       lastSeen.current = stamp
-      if (who) void save({ ...who, bag, recents } as never).catch(() => {})
+      if (who) {
+        void save({ ...who, bag, recents } as never).catch(() => {
+          // The account did not take it. Believing we wrote something we did
+          // not is the other way a deleted recent comes back: the next push
+          // from the account differs from what we think we published, so it
+          // is adopted — and it still contains the thing that was deleted.
+          // Forgetting the stamp makes the next change republish.
+          if (lastSeen.current === stamp) lastSeen.current = ''
+        })
+      }
     }, 700)
 
     return () => { if (timer.current) clearTimeout(timer.current) }

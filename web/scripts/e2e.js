@@ -416,6 +416,8 @@ async function journey(browser, screen) {
   check(!drawer.items.some(i => /Saved/.test(i)), 'and "Saved" is gone', drawer.items)
   check(drawer.recents.length > 0, 'recents remembers the question', drawer.recents)
   check(drawer.newChat, 'and there is a way to start again')
+
+
   await shoot(page, `e2e-${screen.name}-4-drawer`)
   await page.keyboard.press('Escape'); await sleep(700)
 
@@ -609,6 +611,37 @@ async function journey(browser, screen) {
   check(bagAfter === bagBefore && Number(bagAfter) >= 1,
     'and the bag is still holding what was put in it', { before: bagBefore, after: bagAfter })
 
+  // Deleting a recent has to stay deleted. It came back — signed in because
+  // the first-exchange union re-ran on every page load and handed it straight
+  // back, signed out because nothing had published it. This covers the
+  // signed-out half, which is the half a browser can reach.
+  await page.evaluate(() => document.querySelector('.v2-menu-btn')?.click())
+  await sleep(800)
+  const beforeDelete = await page.evaluate(() =>
+    [...document.querySelectorAll('.v2-recent-go')].map(b => b.textContent.trim()))
+  await page.evaluate(() => {
+    const del = [...document.querySelectorAll('.v2-recent-acts button')]
+      .find(b => /^Delete/.test(b.getAttribute('aria-label') || ''))
+    del?.click()
+  })
+  await sleep(600)
+  const afterDelete = await page.evaluate(() =>
+    [...document.querySelectorAll('.v2-recent-go')].map(b => b.textContent.trim()))
+  check(afterDelete.length === beforeDelete.length - 1,
+    'deleting a recent removes it', { before: beforeDelete.length, after: afterDelete.length })
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('textarea', { timeout: 60000 })
+  await sleep(4000)
+  await page.evaluate(() => document.querySelector('.v2-menu-btn')?.click())
+  await sleep(800)
+  const afterReload = await page.evaluate(() =>
+    [...document.querySelectorAll('.v2-recent-go')].map(b => b.textContent.trim()))
+  check(afterReload.length === afterDelete.length,
+    'and it is still gone after a refresh', { afterDelete, afterReload })
+  check(!afterReload.includes(beforeDelete[0]),
+    'the deleted one specifically does not come back', { deleted: beforeDelete[0], now: afterReload })
+  await page.keyboard.press('Escape'); await sleep(500)
   // ── 13b · the bag: what you are buying, from whom, in what currency ──────
   // Three faults reported from a real bag of three brands: Checkout opened one
   // store and reported the rest blocked, there was no way to say which pieces
