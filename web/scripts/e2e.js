@@ -116,15 +116,6 @@ const STEPS = [
   { icon: 'assemble', main: 'Laying them out', detail: '' },
 ]
 
-// What production really returns when several pieces are pinned: prose with
-// [PRODUCT:N] placed in it. Verified against the live endpoint — the backend
-// re-inserts these on purpose and the interface has to draw them.
-const CARDED = {
-  type: 'result',
-  reply: 'The blazer and the trousers are the strongest pairing. [PRODUCT:1] [PRODUCT:0] '
-    + 'Both are wool, so they read as one cloth rather than two.',
-}
-
 const COMPARISON = {
   type: 'result',
   reply: 'Here is how they sit against each other:',
@@ -296,8 +287,7 @@ async function journey(browser, screen) {
     if (body.mode === 'load-more') {
       return stream(ndjson({ type: 'result', reply: '', foundProducts: MORE_SHIRTS }))
     }
-    if (Array.isArray(body.products) && body.products.length > 1) return stream(ndjson(CARDED))
-    if (Array.isArray(body.products) && body.products.length) return stream(ndjson(COMPARISON))
+    if (/\bcompare\b/i.test(String(body.question || ''))) return stream(ndjson(COMPARISON))
     if (scene === 'dead') return r.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
     await sleep(1400)
     return stream(ndjson(...STEPS.map(s => ({ type: 'progress', ...s })), TWO_STRIPS))
@@ -541,18 +531,17 @@ async function journey(browser, screen) {
   const collide = await page.evaluate(OVERLAP)
   check(collide.length === 0, 'nothing overlaps on the product page', collide)
 
-  // ── 11 · the pin survives the walk back, and comes back as a comparison ───
+  // ── 11 · a comparison renders as a table ─────────────────────────────────
+  // The backend emits [COMPARE:] on any question that wants two things weighed
+  // against each other, pinned pieces or not — Ask Fabrics is held back, this
+  // is not.
   await page.evaluate(() => document.querySelector('.v2-back')?.click())
   await sleep(1200)
-  const pin = await page.evaluate(() => {
-    const c = document.querySelector('.v2-pinned')
-    const bar = document.querySelector('.v2-bar')
-    return { there: !!c, inBar: !!(c && bar && bar.contains(c)), text: c?.querySelector('span')?.textContent?.trim() ?? null }
-  })
-  check(pin.there && pin.inBar, 'the piece you opened is still the subject when you come back', pin)
+  check(!(await page.$('.v2-pinned')),
+    'opening a piece does not quietly attach it to your next question')
 
   const ta2 = await page.$('textarea')
-  await ta2.click(); await ta2.type('is this better than a blend')
+  await ta2.click(); await ta2.type('compare supima against a cotton blend')
   await sleep(250)
   await page.click('.v2-send')
   await page.waitForSelector('.v2-cmp-grid', { timeout: 30000 })
@@ -563,14 +552,10 @@ async function journey(browser, screen) {
     pick: document.querySelector('.v2-cmp-pick')?.textContent?.trim() ?? null,
     fits: (document.querySelector('.v2-cmp-grid')?.getBoundingClientRect().right ?? 0) <= innerWidth + 0.5,
   }))
-  check(cmp.labels.length === 3, 'a question about a pinned piece answers as a table', cmp.labels)
+  check(cmp.labels.length === 3, 'a question that weighs two things answers as a table', cmp.labels)
   check(cmp.won === 3, 'with the recommendation marked in every row')
   check(/Supima/.test(cmp.pick || ''), 'and the reason given')
   check(cmp.fits, 'and it fits the screen')
-  check(Array.isArray(sent?.products) && sent.products.length === 1,
-    'the pinned piece really went with the question', { carried: sent?.products?.length })
-  check(!(await page.$('.v2-pinned')), 'and the pin clears once it has been asked')
-
   // ── 12 · the wordmark goes home, and does not lose the session ────────────
   await page.click('.v2-brand'); await sleep(1000)
   const back = await page.evaluate(() => ({
@@ -584,9 +569,12 @@ async function journey(browser, screen) {
   // has to survive a reload. Both halves matter: the drawer entry has to run,
   // and the result has to still be there after F5.
   await page.click('.v2-menu-btn'); await sleep(800)
-  const recentGo = await page.$('.v2-recent-go')
-  check(!!recentGo, 'a recent search can be reopened from the drawer')
-  await recentGo.click()
+  // The newest recent is now the comparison question, which answers as a table
+  // rather than a page of clothes — so reopen the one this is about.
+  const recentGo = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('.v2-recent-go')].find(b => /shirts/i.test(b.textContent)) ?? null)
+  check(!!recentGo.asElement(), 'a recent search can be reopened from the drawer')
+  await recentGo.asElement().click()
   await page.waitForSelector('.v2-results', { timeout: 60000 })
   await sleep(1500)
   const bagCount = () => page.evaluate(() => {
@@ -621,109 +609,88 @@ async function journey(browser, screen) {
   check(bagAfter === bagBefore && Number(bagAfter) >= 1,
     'and the bag is still holding what was put in it', { before: bagBefore, after: bagAfter })
 
-  // ── 13b · Ask Fabrics: a long press puts a piece in the question ─────────
-  // The endpoint answers about pinned pieces instead of searching again, and
-  // takes up to eight. Opening a piece pins one; this is the only way to hand
-  // it a second, which is what "which of these" needs.
-  const longPress = async (nth) => {
-    // Scroll first and measure after it has settled. Measuring inside the same
-    // evaluate returned the rect the tile had BEFORE the scroll, so the press
-    // landed somewhere else entirely and nothing happened — which reads
-    // exactly like the gesture not being wired.
-    const there = await page.evaluate(i => {
-      const t = [...document.querySelectorAll('.v2-tile-btn')][i]
-      if (!t) return false
-      t.scrollIntoView({ block: 'center' })
-      return true
-    }, nth)
-    if (!there) return false
-    await sleep(700)
-    const box = await page.evaluate(i => {
-      const t = [...document.querySelectorAll('.v2-tile-btn')][i]
-      if (!t) return null
-      const r = t.getBoundingClientRect()
-      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
-    }, nth)
-    if (!box) return false
-    await page.mouse.move(box.x, box.y)
-    await page.mouse.down()
-    await sleep(750)          // past the 520ms the gesture asks for
-    await page.mouse.up()
-    await sleep(400)
-    return true
-  }
-
-  check(await longPress(0), 'there is a tile to press')
-  const menu = await page.evaluate(() => ({
-    there: !!document.querySelector('.v2-tm'),
-    items: [...document.querySelectorAll('.v2-tm button')].map(b => b.textContent.replace(/\s+/g, ' ').trim()),
-    inside: (() => {
-      const m = document.querySelector('.v2-tm')?.getBoundingClientRect()
-      return m ? m.right <= innerWidth + 0.5 && m.bottom <= innerHeight + 0.5 && m.left >= 0 && m.top >= 0 : null
-    })(),
-  }))
-  check(menu.there, 'holding a piece opens its menu', menu.items)
-  check(menu.items.some(i => /Ask Fabrics/.test(i)), 'with Ask Fabrics on it', menu.items)
-  check(menu.inside === true, 'and the menu stays on screen wherever it was opened')
-
+  // ── 13b · the bag: what you are buying, from whom, in what currency ──────
+  // Three faults reported from a real bag of three brands: Checkout opened one
+  // store and reported the rest blocked, there was no way to say which pieces
+  // you meant, and the subtotal was printed in dollars over rupee prices.
+  await page.evaluate(() => document.querySelector('.v2-menu-btn')?.click())
+  await sleep(700)
   await page.evaluate(() => {
-    const b = [...document.querySelectorAll('.v2-tm button')].find(x => /Ask Fabrics/.test(x.textContent))
+    const b = [...document.querySelectorAll('.v2-menu-nav button')].find(x => /Bag/.test(x.textContent))
     b?.click()
   })
-  await sleep(700)
-  const staged = await page.evaluate(() => ({
-    gone: !document.querySelector('.v2-tm'),
-    chips: document.querySelectorAll('.v2-pinned .v2-pin-chip').length,
-    one: !!document.querySelector('.v2-pinned .v2-pin-one'),
-    focused: document.activeElement?.tagName === 'TEXTAREA',
-    onResults: !!document.querySelector('.v2-results'),
-  }))
-  check(staged.gone, 'choosing it closes the menu')
-  check(staged.onResults, 'and leaves you where the composer is')
-  check(staged.one === true || staged.chips >= 1, 'the piece is in the composer', staged)
-  check(staged.focused, 'with the cursor already in the field')
+  await sleep(1200)
 
-  // A second piece — the thing that was impossible before.
-  await longPress(1)
+  const bag = await page.evaluate(() => ({
+    lines: document.querySelectorAll('.v2-line').length,
+    ticks: document.querySelectorAll('.v2-line-pick input').length,
+    allOn: [...document.querySelectorAll('.v2-line-pick input')].every(i => i.checked),
+    sums: [...document.querySelectorAll('.v2-bag-sum div')].map(d => d.textContent.replace(/\s+/g, ' ').trim()),
+    pays: [...document.querySelectorAll('.v2-pay')].map(b => b.textContent.replace(/\s+/g, ' ').trim()),
+  }))
+  check(bag.lines > 0, 'the bag has what was put in it', { lines: bag.lines })
+  check(bag.ticks === bag.lines, 'every line can be taken out of the checkout', bag)
+  check(bag.allOn, 'and they all start in it, so one brand is still one tap')
+
+  // The money. Every stubbed piece is priced in INR, so nothing may say $.
+  const sums = bag.sums.join(' | ')
+  check(/₹|INR/.test(sums), 'the subtotal is in the currency the pieces are priced in', { sums })
+  check(!/\$/.test(sums), 'and never labels rupees as dollars', { sums })
+
+  // Untick one and the total has to follow it.
+  const sumBefore = await page.evaluate(() =>
+    document.querySelector('.v2-bag-sum div:last-child span:last-child')?.textContent ?? null)
+  await page.evaluate(() => document.querySelector('.v2-line-pick input')?.click())
+  await sleep(600)
+  const afterUntick = await page.evaluate(() => ({
+    total: document.querySelector('.v2-bag-sum div:last-child span:last-child')?.textContent ?? null,
+    dimmed: !!document.querySelector('.v2-line.off'),
+  }))
+  check(afterUntick.total !== sumBefore, 'taking a piece out changes the total',
+    { before: sumBefore, after: afterUntick.total })
+  check(afterUntick.dimmed, 'and the line says it is out')
+
+  // Take everything out: Checkout must not be live with nothing selected.
+  await page.evaluate(() => [...document.querySelectorAll('.v2-line-pick input')]
+    .filter(i => i.checked).forEach(i => i.click()))
+  await sleep(600)
+  const none = await page.evaluate(() => ({
+    disabled: document.querySelector('.v2-pay')?.disabled ?? null,
+    note: document.querySelector('.v2-bag-note')?.textContent?.trim() ?? null,
+  }))
+  check(none.disabled === true, 'with nothing ticked, Checkout is inert', none)
+  check(/Tick what/i.test(none.note || ''), 'and it says what to do', { note: none.note })
+
+  // Put them back, and check out — one tab, and it stops at the account gate.
+  await page.evaluate(() => [...document.querySelectorAll('.v2-line-pick input')]
+    .filter(i => !i.checked).forEach(i => i.click()))
+  await sleep(600)
+  const opened = await page.evaluate(() => window.__opened.length)
+  await page.evaluate(() => document.querySelector('.v2-pay')?.click())
+  await sleep(1400)
+  const gate2 = await page.evaluate(() => ({
+    opened: window.__opened.length,
+    sheet: !!document.querySelector('.v2a-card'),
+  }))
+  check(gate2.opened === opened, 'checkout from the bag still opens nothing without an account')
+  check(gate2.sheet === true, 'it asks first')
+  await shoot(page, `e2e-${screen.name}-9-bag`)
+  await page.keyboard.press('Escape'); await sleep(700)
+  const closed = await page.evaluate(() => ({
+    sheet: !!document.querySelector('.v2a-card'),
+    bag: !!document.querySelector('.v2-bag-list'),
+  }))
+  check(!closed.sheet, 'and Escape closes it from the bag too', closed)
   await page.evaluate(() => {
-    const b = [...document.querySelectorAll('.v2-tm button')].find(x => /Ask Fabrics/.test(x.textContent))
-    b?.click()
+    document.querySelector('.v2a-x')?.click()
+    document.querySelector('.v2-bag-x')?.click()
   })
-  await sleep(700)
-  const two = await page.evaluate(() => ({
-    chips: document.querySelectorAll('.v2-pinned .v2-pin-chip').length,
-    count: document.querySelector('.v2-pin-count')?.textContent?.trim() ?? null,
-    fits: (document.querySelector('.v2-pinned')?.getBoundingClientRect().right ?? 0) <= innerWidth + 0.5,
+  await sleep(800)
+  const clear = await page.evaluate(() => ({
+    sheet: !!document.querySelector('.v2a-card'),
+    bag: !!document.querySelector('.v2-bag-list'),
   }))
-  check(two.chips === 2, 'a second piece joins the first rather than replacing it', two)
-  check(two.count === '2 pieces', 'and the composer says how many', { count: two.count })
-  check(two.fits, 'and the row stays inside the composer')
-
-  const taPick = await page.$('textarea')
-  await taPick.click(); await taPick.type('which of these two')
-  await sleep(250)
-  await page.click('.v2-send')
-  await sleep(5000)
-  check(Array.isArray(sent?.products) && sent.products.length === 2,
-    'both pieces really go with the question', { carried: sent?.products?.length })
-
-  // And the reply's [PRODUCT:N] tokens are drawn, not printed.
-  const carded = await page.evaluate(() => ({
-    text: document.querySelector('.v2-bar-said p')?.textContent ?? '',
-    cards: document.querySelectorAll('.v2-said-card').length,
-    names: [...document.querySelectorAll('.v2-said-card span')].map(x => x.textContent.trim()),
-  }))
-  check(!/\[PRODUCT:/i.test(carded.text),
-    'no [PRODUCT:N] left showing through as text', { text: carded.text.slice(0, 80) })
-  check(carded.cards === 2, 'each one is drawn as the piece it points at', carded.names)
-  check(!(await page.$('.v2-pinned')), 'and the selection clears once it has been asked')
-  await shoot(page, `e2e-${screen.name}-8-askfabrics`)
-
-  const cardCollide = await page.evaluate(OVERLAP)
-  check(cardCollide.length === 0, 'nothing overlaps with pieces drawn in the reply', cardCollide)
-
-  await page.evaluate(() => document.querySelector('.v2-bar-said-x')?.click())
-  await sleep(400)
+  check(!clear.sheet && !clear.bag, 'and the bag closes behind it', clear)
 
   // ── 14 · the model dies mid-session and the clothes still arrive ──────────
   scene = 'dead'

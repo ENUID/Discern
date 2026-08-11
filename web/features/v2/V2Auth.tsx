@@ -108,6 +108,10 @@ export default function V2Auth({
     return () => clearTimeout(t)
   }, [resendIn])
 
+  /** Held so the keydown listener below never has to be re-registered. */
+  const close = useRef(onClose)
+  close.current = onClose
+
   useEffect(() => {
     if (!open) return
     // Escape always works, including on the checkout sheet. Requiring an
@@ -115,10 +119,17 @@ export default function V2Auth({
     // another, and this had no way out at all — backdrop guarded, no handle,
     // no ✕. A shopper who pressed Checkout and thought better of it was stuck
     // with their own product page behind the glass.
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') close.current() }
     window.addEventListener('keydown', esc)
     return () => window.removeEventListener('keydown', esc)
-  }, [open, onClose, reason])
+    // Deliberately NOT keyed on onClose. It arrives as a fresh arrow on every
+    // render of the parent, so this effect used to tear the listener down and
+    // add a new one constantly — and a listener removed while a keydown is
+    // being dispatched is never called for that keydown. One render of the
+    // parent in the same tick as the key, and Escape did nothing at all. The
+    // handler is held in a ref instead, so the registration outlives the
+    // renders. eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   const send = async () => {
     if (!email.trim() || sending) return

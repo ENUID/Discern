@@ -96,6 +96,9 @@ export type V2CartLine = { product: V2Product; color?: string; size?: string; qt
 
 type View = 'home' | 'results' | 'product' | 'look'
 
+/** The brand behind a store link, as a person would name it. */
+const hostOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return u } }
+
 // ── Keyboard offset ──────────────────────────────────────────────────────────
 /** How far the software keyboard has pushed the bottom of the window up.
  *
@@ -365,6 +368,7 @@ function SaidBody({ text, refs, photos, onOpen }: {
 export default function DiscernV2({
   heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onLoadMore, onFeatured, onSearched, onSavedChange, heroCopy = 0,
   buyerCountry,
+  buyerCurrency,
 }: {
   heroMedia?: string; heroPoster?: string
   onQuery?: (q: string, history: V2Msg[], images: string[], onProgress?: (step: { text: string; icon?: string }) => void, pinned?: V2Product[]) => Promise<{
@@ -387,6 +391,9 @@ export default function DiscernV2({
   /** Where the shopper is, resolved server-side from the request. Shown on the
    *  account so the geo-scoped prices and brands are not a silent decision. */
   buyerCountry?: string
+  /** What the shopper's money is in. The bag totals in it; the lines stay in
+   *  whatever the brand charges, because that is what will be taken. */
+  buyerCurrency?: string
 }) {
   const [view, setView] = useState<View>('home')
   const [input, setInput] = useState('')
@@ -476,25 +483,20 @@ export default function DiscernV2({
   const [saidRefs, setSaidRefs] = useState<V2Product[]>([])
   /** And the photographs it was sent, for [PHOTO:N], for the same reason. */
   const [saidPhotos, setSaidPhotos] = useState<string[]>([])
-  /** The pieces the next question is about.
+  /** The pieces the next question is about — Ask Fabrics, held back.
    *
-   *  v1 let a shopper pin pieces and ask about them, and the endpoint still has
-   *  that whole path — pinned products ARE the answer server-side, so it
-   *  describes them rather than searching again. v2 never sent the field, so it
-   *  was unreachable.
+   *  The endpoint has always been able to answer ABOUT pieces rather than
+   *  search for new ones, and this is the field that reaches it. Everything
+   *  that used to fill it has been removed on purpose: opening a piece no
+   *  longer pins it, tiles no longer answer a long press, and the chip that
+   *  showed the selection is gone with them. It was showing context in the
+   *  composer for a feature that is not ready, and asking about two pinned
+   *  pieces went out as an ordinary search and came back with socks.
    *
-   *  Opening a piece makes it the subject. Ask Fabrics — the long press on a
-   *  tile — adds one to the selection without leaving the page, which is how
-   *  you reach "which of these": the endpoint takes up to eight pinned pieces
-   *  and this is the only way to hand it more than one. Until it existed the
-   *  comparison path was reachable in theory and unreachable in practice.
-   *
-   *  The chips in the composer mean it is never invisible — a question that
-   *  silently carries context you cannot see is worse than one that carries
-   *  none. */
+   *  The wiring stays because it is correct and because turning it back on is
+   *  three call sites, not a rebuild. Nothing sets it today, so nothing is
+   *  sent and nothing is drawn. */
   const [pinned, setPinned] = useState<V2Product[]>([])
-  /** The little menu a long press opens over a piece. */
-  const [tileMenu, setTileMenu] = useState<{ product: V2Product; x: number; y: number } | null>(null)
   // Turns, not sections. Each query used to replace the results wholesale, so
   // the previous answer and its products were destroyed on every follow-up.
   const [turns, setTurns] = useState<V2Turn[]>([])
@@ -712,6 +714,14 @@ export default function DiscernV2({
     if (!(bagOpen || histOpen || menuOpen || lookOpen)) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      // The sign-in card is the front layer and closes itself. Peeling the bag
+      // out from under it left the card stranded over a page with nothing
+      // behind it — and worse, it left no way out at all, because closing the
+      // bag re-rendered this component, which tore down and re-added the
+      // card's own Escape listener mid-dispatch. A listener removed while an
+      // event is being dispatched is never called for that event, so the key
+      // that was supposed to close the card silently did nothing.
+      if (authReason !== null) return
       e.stopPropagation()
       if (bagOpen) setBagOpen(false)
       else if (histOpen) setHistOpen(false)
@@ -720,7 +730,7 @@ export default function DiscernV2({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [bagOpen, histOpen, menuOpen, lookOpen])
+  }, [bagOpen, histOpen, menuOpen, lookOpen, authReason])
 
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -734,7 +744,77 @@ export default function DiscernV2({
   const canSend = input.trim().length > 0
   const idle = !focused && input.length === 0
   const cartCount = cart.reduce((n, l) => n + l.qty, 0)
-  const subtotal = cart.reduce((n, l) => n + (l.product.price ?? 0) * l.qty, 0)
+  /** Which lines this checkout is for.
+   *
+   *  Held as the ones NOT going, so a piece added later is in the order by
+   *  default and nothing has to be kept in step with the cart. A single-brand
+   *  bag therefore still checks out in one tap; the ticks are there for the
+   *  case that was broken — several pieces, and no way to say which of them
+   *  you meant. */
+  const [dropped, setDropped] = useState<Set<string>>(new Set())
+  const lineKey = (l: V2CartLine) => `${l.product.id}|${l.color ?? ''}|${l.size ?? ''}`
+  const picked = useMemo(() => cart.filter(l => !dropped.has(lineKey(l))), [cart, dropped])
+
+  /** Live rates, fetched the first time the bag is opened rather than on every
+   *  page load — nothing before this point needs them. */
+  const [rates, setRates] = useState<Record<string, number> | null>(null)
+  useEffect(() => {
+    if (!bagOpen || rates) return
+    let gone = false
+    fetch('/api/rates')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!gone && d && typeof d === 'object' && !d.error) setRates(d) })
+      .catch(() => { /* the honest per-currency total below still stands */ })
+    return () => { gone = true }
+  }, [bagOpen, rates])
+
+  /** What the selected lines come to.
+   *
+   *  It used to be one number with no currency on it at all — `money(subtotal)`
+   *  falls back to USD — so a bag of rupee-priced pieces reported a dollar
+   *  total, and the number itself was the sum of amounts in whatever
+   *  currencies the brands happened to charge in, added together as if they
+   *  were the same unit. Both halves of that are wrong and the second is worse
+   *  than the first.
+   *
+   *  So: total per currency first, which is always true. One currency, one
+   *  total. Several, and it converts into the shopper's own currency at the
+   *  live rate — and if a rate for any of them is missing it does NOT guess,
+   *  it shows each currency on its own line. A total labelled in a currency it
+   *  was never converted into is how you tell somebody ₹14,897 is $14,897. */
+  const totals = useMemo(() => {
+    const by = new Map<string, number>()
+    for (const l of picked) {
+      const c = (l.product.currency || 'USD').toUpperCase()
+      by.set(c, (by.get(c) ?? 0) + (l.product.price ?? 0) * l.qty)
+    }
+    return Array.from(by.entries()).map(([currency, amount]) => ({ currency, amount }))
+  }, [picked])
+
+  const target = (buyerCurrency || totals[0]?.currency || 'USD').toUpperCase()
+  const converted = useMemo(() => {
+    if (totals.length <= 1) return null
+    if (!rates || !rates[target]) return null
+    if (!totals.every(t => rates[t.currency])) return null
+    return totals.reduce((n, t) => n + (t.amount / rates[t.currency]) * rates[target], 0)
+  }, [totals, rates, target])
+
+  /** One group per brand, because one tap can open one tab.
+   *
+   *  A bag spanning three stores used to fire three window.open calls off a
+   *  single click: the browser allows the first and blocks the rest, so the
+   *  shopper reached one brand and was told the others were blocked. Three
+   *  brands is three checkouts; the interface says so and hands over one at a
+   *  time. */
+  const brands = useMemo(() => {
+    const m = new Map<string, { host: string; lines: V2CartLine[] }>()
+    for (const l of picked) {
+      const h = hostOf(l.product.storeUrl || '')
+      const g = m.get(h) ?? { host: h, lines: [] }
+      g.lines.push(l); m.set(h, g)
+    }
+    return Array.from(m.values())
+  }, [picked])
 
   // ── Checkout ───────────────────────────────────────────────────────────────
   // Discern never takes payment: every line hands off to the brand that sells
@@ -745,7 +825,7 @@ export default function DiscernV2({
   // Browsers only reliably allow ONE window.open per user gesture, so anything
   // after the first is likely to be blocked. Rather than fail silently, blocked
   // stores are surfaced as real links the shopper can click themselves.
-  const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return u } }
+  const host = hostOf
 
   /** One cart link per store, built from what the shopper picked. The matching
    *  and grouping rules live in ./cartLink, tested directly — they decide where
@@ -1209,78 +1289,11 @@ export default function DiscernV2({
 
   const openProduct = (p: V2Product) => {
     setProduct(p); setAcc(null); setDetailsOpen(false)
-    setPinned([p])
     setColorMode(false); setSizeMode(false)
     setPickedColor(p.colors?.[0] ?? null); setPickedSize(null)
     setView('product')
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
   }
-
-  /** Ask Fabrics — put a piece into the question without opening it.
-   *
-   *  The endpoint answers about pinned pieces instead of searching again;
-   *  "which of these" and "compare these" are its whole reason for existing.
-   *  Opening a piece pins exactly one, so until this existed there was no way
-   *  to hand it a second.
-   *
-   *  It closes whatever it was opened from, focuses the composer, and leaves
-   *  the chip showing — so the selection is somewhere you can see it and take
-   *  it back. */
-  const askFabrics = useCallback((p: V2Product) => {
-    setPinned(prev => (prev.some(x => x.id === p.id) || prev.length >= 8 ? prev : [...prev, p]))
-    setMenuOpen(false); setBagOpen(false); setTileMenu(null)
-    // The composer does not exist on the product page — the dock owns the
-    // bottom there — so asking from it has to come back out first.
-    setView(v => (v === 'product' ? 'results' : v))
-    requestAnimationFrame(() => taRef.current?.focus())
-  }, [])
-
-  /** The long press that reaches it.
-   *
-   *  Touch has no right-click and a photograph has no room for a third
-   *  control, so the piece answers a press held past half a second — the
-   *  gesture the phone already uses everywhere for "more about this". A press
-   *  that turns into a scroll is not a long press, which is why movement
-   *  cancels it: without that the menu opened every time somebody flicked down
-   *  the grid. A mouse gets the context menu as well. */
-  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pressWas = useRef(false)
-  const pressAt = useRef({ x: 0, y: 0 })
-  const cancelPress = useCallback(() => {
-    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null }
-  }, [])
-  const openTileMenu = useCallback((p: V2Product, x: number, y: number) => {
-    pressWas.current = true
-    const W = 208, H = 100
-    setTileMenu({
-      product: p,
-      x: Math.max(10, Math.min(x, window.innerWidth - W - 10)),
-      y: y + 10 + H > window.innerHeight ? Math.max(10, y - H - 6) : y + 10,
-    })
-  }, [])
-  const pressHandlers = useCallback((p: V2Product) => ({
-    onPointerDown: (e: React.PointerEvent) => {
-      if (e.button === 2) return
-      pressWas.current = false
-      pressAt.current = { x: e.clientX, y: e.clientY }
-      cancelPress()
-      pressTimer.current = setTimeout(() => openTileMenu(p, e.clientX, e.clientY), 520)
-    },
-    onPointerMove: (e: React.PointerEvent) => {
-      if (!pressTimer.current) return
-      const { x, y } = pressAt.current
-      if (Math.abs(e.clientX - x) > 10 || Math.abs(e.clientY - y) > 10) cancelPress()
-    },
-    onPointerUp: cancelPress,
-    onPointerCancel: cancelPress,
-    onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); openTileMenu(p, e.clientX, e.clientY) },
-    // The press already did something. The tap that ends it must not also open
-    // the product page underneath the menu it just opened.
-    onClick: (e: React.MouseEvent) => {
-      if (pressWas.current) { e.preventDefault(); e.stopPropagation(); pressWas.current = false; return }
-      openProduct(p)
-    },
-  }), [cancelPress, openTileMenu])
 
   /** Straight to the brand's checkout with this one piece, in the colour and
    *  size chosen on this page.
@@ -1566,7 +1579,7 @@ export default function DiscernV2({
                   {s.subtitle && <p>{s.subtitle}</p>}
                   {s.hero && (
                     <div className="v2-sec-hero">
-                      <button className="v2-shot" {...pressHandlers(s.hero)}><Img src={s.hero.image} alt={s.hero.title} /></button>
+                      <button className="v2-shot" onClick={() => openProduct(s.hero!)}><Img src={s.hero.image} alt={s.hero.title} /></button>
                       <BagBtn on={inBag(s.hero.id)} just={justBagged === s.hero.id} onClick={e => { e.stopPropagation(); bagIt(s.hero!) }} />
                     </div>
                   )}
@@ -1600,7 +1613,7 @@ export default function DiscernV2({
                     <div className="v2-mosaic">
                       {s.products.map((p, i) => (
                         <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
-                          <button className="v2-tile-btn" {...pressHandlers(p)}><Img src={p.image} alt={p.title} loading="lazy" /></button>
+                          <button className="v2-tile-btn" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} loading="lazy" /></button>
                           <BagBtn on={inBag(p.id)} just={justBagged === p.id} onClick={e => { e.stopPropagation(); bagIt(p) }} />
                           <span className="v2-tile-name">{p.title} <i aria-hidden>›</i></span>
                         </div>
@@ -2091,8 +2104,23 @@ export default function DiscernV2({
           <h2>Bag <em>({cartCount})</em></h2>
           <div className="v2-bag-list">
             {cart.length === 0 && <p className="v2-bag-empty">Nothing here yet.</p>}
-            {cart.map((l, i) => (
-              <div className="v2-line" key={i}>
+            {cart.map((l, i) => {
+              const key = lineKey(l)
+              const on = !dropped.has(key)
+              return (
+              <div className={`v2-line ${on ? '' : 'off'}`} key={key}>
+                {/* Which pieces this checkout is for. A tick rather than a
+                    separate screen: the bag is already the list, and the only
+                    thing missing was a way to say "not that one". */}
+                <label className="v2-line-pick">
+                  <input type="checkbox" checked={on} onChange={() => setDropped(d => {
+                    const next = new Set(d)
+                    if (on) next.add(key); else next.delete(key)
+                    return next
+                  })} />
+                  <span aria-hidden />
+                  <em>{on ? `${l.product.title} is in this checkout` : `${l.product.title} is not in this checkout`}</em>
+                </label>
                 <Img src={l.product.image} />
                 <div>
                   <span className="v2-line-name">{l.product.title}</span>
@@ -2104,29 +2132,61 @@ export default function DiscernV2({
                     Quantity: <button onClick={() => setQty(i, -1)} aria-label="Decrease">−</button>
                     <b>{l.qty}</b>
                     <button onClick={() => setQty(i, 1)} aria-label="Increase">+</button>
-                    {/* Something you have already set aside is exactly what
-                        you want a second opinion on, so the bag reaches the
-                        stylist too rather than only the grid. */}
-                    <button className="v2-line-ask" onClick={() => askFabrics(l.product)}>Ask Fabrics</button>
                     <button className="v2-remove" onClick={() => setCart(c => c.filter((_, x) => x !== i))}>Remove</button>
                   </div>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
           <div className="v2-bag-sum">
             <div><span>Shipping Costs</span><span>FREE</span></div>
-            <div><span>Subtotal (tax incl.)</span><span>{money(subtotal)}</span></div>
+            {converted !== null ? (
+              <>
+                <div><span>Subtotal (tax incl.)</span><span>{money(converted, target)}</span></div>
+                <div className="v2-bag-fx">
+                  <span>{totals.map(t => money(t.amount, t.currency)).join('  +  ')}</span>
+                  <span>at today’s rate</span>
+                </div>
+              </>
+            ) : totals.length === 0 ? (
+              <div><span>Subtotal (tax incl.)</span><span>{money(0, target)}</span></div>
+            ) : (
+              // One row per currency. Adding rupees to dollars and printing one
+              // number is not a subtotal, it is a fiction.
+              totals.map(t => (
+                <div key={t.currency}>
+                  <span>Subtotal (tax incl.){totals.length > 1 ? ` · ${t.currency}` : ''}</span>
+                  <span>{money(t.amount, t.currency)}</span>
+                </div>
+              ))
+            )}
           </div>
-          <button className="v2-pay" onClick={checkout} disabled={!cart.length}>
-            Checkout <span aria-hidden>↗</span>
-          </button>
+          {brands.length > 1 ? (
+            // One button per brand. Browsers allow one new tab per tap, so
+            // three brands is three taps — said out loud instead of opening
+            // one and reporting the rest as blocked.
+            <div className="v2-pays">
+              {brands.map(b => (
+                <button key={b.host} className="v2-pay" onClick={() => checkoutLines(b.lines)}>
+                  <span>Checkout at {b.host}</span>
+                  <em>{b.lines.length} {b.lines.length === 1 ? 'piece' : 'pieces'}</em>
+                  <span aria-hidden>↗</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <button className="v2-pay" onClick={() => checkoutLines(picked)} disabled={!picked.length}>
+              Checkout <span aria-hidden>↗</span>
+            </button>
+          )}
           <p className="v2-bag-note">
             {blockedStores.length
               ? 'Your browser blocked the new tab. Open the brand directly:'
-              : payLinks.length > 1
-                ? `Your bag spans ${payLinks.length} brands — each opens in its own tab.`
-                : 'Checkout happens on the brand’s own store.'}
+              : !picked.length
+                ? 'Tick what you want to check out.'
+                : brands.length > 1
+                  ? `These ${picked.length} pieces come from ${brands.length} brands, so they are ${brands.length} separate checkouts.`
+                  : 'Checkout happens on the brand’s own store.'}
           </p>
           {blockedStores.length > 0 && (
             <div className="v2-bag-fallback">
@@ -2155,35 +2215,6 @@ export default function DiscernV2({
                 e.preventDefault()
                 taRef.current?.focus()
               }}>
-              {pinned.length > 0 && (
-                <div className="v2-pinned">
-                  {/* One piece reads as a subject — "About the coat". Several
-                      read as a selection, and the question that follows is
-                      almost always "which of these", so they line up as chips
-                      instead of repeating the word About four times. */}
-                  {pinned.length === 1 ? (
-                    <span className="v2-pin-one">
-                      <img src={pinned[0].image} alt="" />
-                      <span>About <b>{pinned[0].title}</b></span>
-                    </span>
-                  ) : (
-                    <span className="v2-pin-many">
-                      {pinned.map(p => (
-                        <button key={p.id} className="v2-pin-chip" title={p.title}
-                          aria-label={`Take ${p.title} out of the selection`}
-                          onClick={() => setPinned(prev => prev.filter(x => x.id !== p.id))}>
-                          <img src={p.image} alt="" />
-                          <i aria-hidden><CloseIcon size={8} /></i>
-                        </button>
-                      ))}
-                      <span className="v2-pin-count">{pinned.length} pieces</span>
-                    </span>
-                  )}
-                  <button aria-label="Ask about something else" onClick={() => setPinned([])}>
-                    <CloseIcon size={10} />
-                  </button>
-                </div>
-              )}
               {photos.length > 0 && (
                 <div className="v2-shots" aria-label="Attached photos">
                   {photos.map(u => (
@@ -2257,25 +2288,6 @@ export default function DiscernV2({
             </div>
           </div>
         </div>
-      )}
-
-      {/* ── Long press on a piece ─────────────────────────────────────────
-          The two things you can do to a garment without opening it: put it in
-          the question, or put it in the bag. Anchored where the finger was,
-          and flipped above the point when there is no room below it. */}
-      {tileMenu && (
-        <>
-          <div className="v2-tm-scrim" onClick={() => setTileMenu(null)} />
-          <div className="v2-tm" style={{ left: tileMenu.x, top: tileMenu.y }} role="menu">
-            <button role="menuitem" onClick={() => askFabrics(tileMenu.product)}>
-              <span>Ask Fabrics</span><SparkleIcon size={13} />
-            </button>
-            <button role="menuitem" onClick={() => { bagIt(tileMenu.product); setTileMenu(null) }}>
-              <span>{inBag(tileMenu.product.id) ? 'Remove from bag' : 'Add to bag'}</span>
-              <BagIcon size={13} />
-            </button>
-          </div>
-        </>
       )}
 
       <style jsx global>{`
@@ -2510,6 +2522,13 @@ export default function DiscernV2({
            caption. Only the image needs a plate to load against. */
         .v2-tile{position:relative;display:flex;flex-direction:column;}
         .v2-tile-btn{display:block;width:100%;padding:0;border:none;cursor:pointer;background:${V2.boneDeep};}
+        /* Holding a photograph in a shop is not a request to save or share it.
+           iOS offers its own Save Image / Share sheet over any long-pressed
+           image, which lands on top of the app and has nothing to do with
+           shopping — so the callout is refused and the photographs are not
+           text to be selected. */
+        .v2-tile-btn,.v2-shot,.v2-tile img,.v2-shot img,.v2-pdp-img,.v2-cart-thumb{
+          -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;}
         /* Every tile the same height. The grid alternated 3/4 and 2/3 tiles as a
            masonry, which staggered the rows and left the names on a ragged
            baseline — the reference runs an even two-up where each row reads as
@@ -2634,27 +2653,6 @@ export default function DiscernV2({
         .v2-pinned button:hover{opacity:.95;}
         .v2-pinned button::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
           transform:translate(-50%,-50%);}
-        /* One subject: a thumbnail and its name, which is what the rules
-           above were written for. */
-        .v2-pinned .v2-pin-one{display:flex;align-items:center;gap:9px;flex:1;min-width:0;}
-        /* Several: the photographs themselves are the label. A row of four
-           names would not fit and would say less than four pictures do. */
-        .v2-pinned .v2-pin-many{display:flex;align-items:center;gap:6px;flex:1;min-width:0;
-          overflow-x:auto;scrollbar-width:none;}
-        .v2-pinned .v2-pin-many::-webkit-scrollbar{display:none;}
-        .v2-pinned .v2-pin-chip{position:relative;width:30px;height:36px;flex-shrink:0;
-          padding:0;border-radius:7px;overflow:hidden;opacity:1;background:none;}
-        .v2-pinned .v2-pin-chip img{width:100%;height:100%;border-radius:7px;}
-        /* The cross sits on the photograph rather than beside it — at this size
-           there is no beside — and only on a pointer that can hover. On touch
-           the whole chip is the target. */
-        .v2-pinned .v2-pin-chip i{position:absolute;inset:0;display:flex;align-items:center;
-          justify-content:center;color:#fff;background:rgba(0,0,0,.42);opacity:0;
-          transition:opacity .16s ${V2.ease};}
-        @media(hover:hover){.v2-pinned .v2-pin-chip:hover i{opacity:1;}}
-        .v2-pinned .v2-pin-count{flex:0 0 auto;font-size:11px;opacity:.55;padding-left:2px;
-          white-space:nowrap;}
-
         /* ── A reply that names pieces ──────────────────────────────────────
            The prose keeps the composer's own type; the pieces it named sit
            under it as a row you can scroll and open, because a recommendation
@@ -2673,23 +2671,6 @@ export default function DiscernV2({
         @media(hover:hover){.v2-said-card:hover span{opacity:.95;}}
         .v2-said-shot{flex:0 0 auto;width:64px;height:80px;object-fit:cover;border-radius:8px;display:block;}
 
-        /* ── The long-press menu ────────────────────────────────────────────
-           Above everything, because it is anchored to a finger rather than to
-           the layout, and it must not be clipped by the scroller it opened
-           over. */
-        .v2-tm-scrim{position:absolute;inset:0;z-index:90;}
-        .v2-tm{position:absolute;z-index:91;width:208px;padding:5px;border-radius:14px;
-          background:${V2.glassDark};color:#fff;
-          backdrop-filter:blur(30px) saturate(160%);-webkit-backdrop-filter:blur(30px) saturate(160%);
-          border:1px solid ${V2.glassEdge};box-shadow:0 18px 48px rgba(0,0,0,.34);
-          font-family:${V2.sans};animation:v2-tm-in .16s ${V2.ease};transform-origin:top left;}
-        @keyframes v2-tm-in{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
-        .v2-tm button{display:flex;align-items:center;justify-content:space-between;gap:10px;
-          width:100%;min-height:44px;padding:0 11px;border:none;border-radius:10px;cursor:pointer;
-          background:none;color:inherit;font-family:inherit;font-size:14px;text-align:left;}
-        .v2-tm button:hover{background:rgba(255,255,255,.1);}
-        .v2-tm button svg{opacity:.6;flex-shrink:0;}
-        @media(prefers-reduced-motion:reduce){.v2-tm{animation:none;}}
         .v2-bar-said-x{position:relative;flex-shrink:0;width:22px;height:22px;margin-top:1px;
           display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
           color:inherit;cursor:pointer;opacity:.55;transition:opacity .14s;
@@ -3041,12 +3022,25 @@ export default function DiscernV2({
         .v2-qty button{width:20px;height:20px;border:none;background:none;cursor:pointer;font-size:14px;color:${V2.ink70};}
         .v2-qty b{font-weight:400;color:${V2.ink};}
         .v2-remove{width:auto !important;margin-left:8px;text-decoration:underline;font-size:13px !important;}
-        /* .v2-qty button sizes the +/− steppers at 20px square; this is a word,
-           so it opts out of that the same way Remove does. */
-        .v2-line-ask{width:auto !important;margin-left:auto;background:none;border:none;padding:0;
-          cursor:pointer;color:inherit;font-family:inherit;font-size:13px !important;opacity:.55;
-          text-decoration:underline;text-underline-offset:2px;}
-        .v2-line-ask:hover{opacity:.9;}
+        /* The tick sits in the line's own left margin so the photograph and
+           the copy keep the position they already had. */
+        .v2-line{position:relative;}
+        .v2-line.off{opacity:.42;}
+        .v2-line-pick{position:absolute;left:-4px;top:-4px;z-index:2;width:34px;height:34px;
+          display:flex;align-items:center;justify-content:center;cursor:pointer;}
+        .v2-line-pick input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;}
+        .v2-line-pick em{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
+        .v2-line-pick span{width:20px;height:20px;border-radius:6px;background:#fff;
+          border:1.5px solid ${V2.hairline};transition:background .15s ${V2.ease},border-color .15s ${V2.ease};}
+        .v2-line-pick input:checked + span{background:${V2.ink};border-color:${V2.ink};}
+        /* The mark is drawn rather than a glyph, so it lines up at any size. */
+        .v2-line-pick input:checked + span::after{content:'';display:block;width:5px;height:9px;
+          margin:2px auto 0;border:solid #fff;border-width:0 1.6px 1.6px 0;transform:rotate(45deg);}
+        .v2-line-pick input:focus-visible + span{outline:2px solid ${V2.ink};outline-offset:2px;}
+        .v2-bag-fx{color:${V2.ink45};font-size:12px !important;}
+        .v2-pays{display:flex;flex-direction:column;gap:9px;}
+        .v2-pays .v2-pay{justify-content:space-between;padding:15px 18px;}
+        .v2-pays .v2-pay em{font-style:normal;opacity:.55;font-size:12px;margin-left:auto;margin-right:10px;}
         .v2-bag-sum{border-top:1px solid ${V2.hairline};padding-top:16px;display:flex;flex-direction:column;gap:9px;margin-bottom:22px;}
         .v2-bag-sum div{display:flex;justify-content:space-between;font-size:13px;}
         .v2-pay{width:100%;padding:16px;border:none;border-radius:12px;background:${V2.ink};color:#fff;cursor:pointer;

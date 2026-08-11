@@ -471,6 +471,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       onSavedChange={onSavedChange}
       heroCopy={heroCopy}
       buyerCountry={buyerCountry}
+      buyerCurrency={buyerCurrency}
     />
   )
 }
