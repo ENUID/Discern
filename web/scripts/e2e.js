@@ -113,6 +113,15 @@ const STEPS = [
   { icon: 'assemble', main: 'Laying them out', detail: '' },
 ]
 
+// What production really returns when several pieces are pinned: prose with
+// [PRODUCT:N] placed in it. Verified against the live endpoint — the backend
+// re-inserts these on purpose and the interface has to draw them.
+const CARDED = {
+  type: 'result',
+  reply: 'The blazer and the trousers are the strongest pairing. [PRODUCT:1] [PRODUCT:0] '
+    + 'Both are wool, so they read as one cloth rather than two.',
+}
+
 const COMPARISON = {
   type: 'result',
   reply: 'Here is how they sit against each other:',
@@ -182,11 +191,16 @@ const OVERLAP = () => {
     return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight
   }
   const flow = el => getComputedStyle(el).position === 'static'
+  // An inline box is not a layout box: two <span>s in one paragraph share
+  // line boxes by definition, so their rects overlap while the text reads
+  // perfectly. Boxes are what collide.
+  const boxy = el => getComputedStyle(el).display !== 'inline'
   const els = [...document.querySelectorAll(WANT)].filter(el => {
     if (SKIP.some(s => el.closest(s))) return false
     if (!vis(el)) return false
     // Deliberately lifted out of flow — it is meant to sit on something.
     if (!flow(el)) return false
+    if (!boxy(el)) return false
     // Leaves only: a paragraph wrapping a span is not two things colliding.
     return ![...el.querySelectorAll(WANT)].some(vis)
   })
@@ -279,6 +293,7 @@ async function journey(browser, screen) {
     if (body.mode === 'load-more') {
       return stream(ndjson({ type: 'result', reply: '', foundProducts: MORE_SHIRTS }))
     }
+    if (Array.isArray(body.products) && body.products.length > 1) return stream(ndjson(CARDED))
     if (Array.isArray(body.products) && body.products.length) return stream(ndjson(COMPARISON))
     if (scene === 'dead') return r.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
     await sleep(1400)
@@ -602,6 +617,110 @@ async function journey(browser, screen) {
   const bagAfter = await bagCount()
   check(bagAfter === bagBefore && Number(bagAfter) >= 1,
     'and the bag is still holding what was put in it', { before: bagBefore, after: bagAfter })
+
+  // ── 13b · Ask Fabrics: a long press puts a piece in the question ─────────
+  // The endpoint answers about pinned pieces instead of searching again, and
+  // takes up to eight. Opening a piece pins one; this is the only way to hand
+  // it a second, which is what "which of these" needs.
+  const longPress = async (nth) => {
+    // Scroll first and measure after it has settled. Measuring inside the same
+    // evaluate returned the rect the tile had BEFORE the scroll, so the press
+    // landed somewhere else entirely and nothing happened — which reads
+    // exactly like the gesture not being wired.
+    const there = await page.evaluate(i => {
+      const t = [...document.querySelectorAll('.v2-tile-btn')][i]
+      if (!t) return false
+      t.scrollIntoView({ block: 'center' })
+      return true
+    }, nth)
+    if (!there) return false
+    await sleep(700)
+    const box = await page.evaluate(i => {
+      const t = [...document.querySelectorAll('.v2-tile-btn')][i]
+      if (!t) return null
+      const r = t.getBoundingClientRect()
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+    }, nth)
+    if (!box) return false
+    await page.mouse.move(box.x, box.y)
+    await page.mouse.down()
+    await sleep(750)          // past the 520ms the gesture asks for
+    await page.mouse.up()
+    await sleep(400)
+    return true
+  }
+
+  check(await longPress(0), 'there is a tile to press')
+  const menu = await page.evaluate(() => ({
+    there: !!document.querySelector('.v2-tm'),
+    items: [...document.querySelectorAll('.v2-tm button')].map(b => b.textContent.replace(/\s+/g, ' ').trim()),
+    inside: (() => {
+      const m = document.querySelector('.v2-tm')?.getBoundingClientRect()
+      return m ? m.right <= innerWidth + 0.5 && m.bottom <= innerHeight + 0.5 && m.left >= 0 && m.top >= 0 : null
+    })(),
+  }))
+  check(menu.there, 'holding a piece opens its menu', menu.items)
+  check(menu.items.some(i => /Ask Fabrics/.test(i)), 'with Ask Fabrics on it', menu.items)
+  check(menu.inside === true, 'and the menu stays on screen wherever it was opened')
+
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.v2-tm button')].find(x => /Ask Fabrics/.test(x.textContent))
+    b?.click()
+  })
+  await sleep(700)
+  const staged = await page.evaluate(() => ({
+    gone: !document.querySelector('.v2-tm'),
+    chips: document.querySelectorAll('.v2-pinned .v2-pin-chip').length,
+    one: !!document.querySelector('.v2-pinned .v2-pin-one'),
+    focused: document.activeElement?.tagName === 'TEXTAREA',
+    onResults: !!document.querySelector('.v2-results'),
+  }))
+  check(staged.gone, 'choosing it closes the menu')
+  check(staged.onResults, 'and leaves you where the composer is')
+  check(staged.one === true || staged.chips >= 1, 'the piece is in the composer', staged)
+  check(staged.focused, 'with the cursor already in the field')
+
+  // A second piece — the thing that was impossible before.
+  await longPress(1)
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.v2-tm button')].find(x => /Ask Fabrics/.test(x.textContent))
+    b?.click()
+  })
+  await sleep(700)
+  const two = await page.evaluate(() => ({
+    chips: document.querySelectorAll('.v2-pinned .v2-pin-chip').length,
+    count: document.querySelector('.v2-pin-count')?.textContent?.trim() ?? null,
+    fits: (document.querySelector('.v2-pinned')?.getBoundingClientRect().right ?? 0) <= innerWidth + 0.5,
+  }))
+  check(two.chips === 2, 'a second piece joins the first rather than replacing it', two)
+  check(two.count === '2 pieces', 'and the composer says how many', { count: two.count })
+  check(two.fits, 'and the row stays inside the composer')
+
+  const taPick = await page.$('textarea')
+  await taPick.click(); await taPick.type('which of these two')
+  await sleep(250)
+  await page.click('.v2-send')
+  await sleep(5000)
+  check(Array.isArray(sent?.products) && sent.products.length === 2,
+    'both pieces really go with the question', { carried: sent?.products?.length })
+
+  // And the reply's [PRODUCT:N] tokens are drawn, not printed.
+  const carded = await page.evaluate(() => ({
+    text: document.querySelector('.v2-bar-said p')?.textContent ?? '',
+    cards: document.querySelectorAll('.v2-said-card').length,
+    names: [...document.querySelectorAll('.v2-said-card span')].map(x => x.textContent.trim()),
+  }))
+  check(!/\[PRODUCT:/i.test(carded.text),
+    'no [PRODUCT:N] left showing through as text', { text: carded.text.slice(0, 80) })
+  check(carded.cards === 2, 'each one is drawn as the piece it points at', carded.names)
+  check(!(await page.$('.v2-pinned')), 'and the selection clears once it has been asked')
+  await shoot(page, `e2e-${screen.name}-8-askfabrics`)
+
+  const cardCollide = await page.evaluate(OVERLAP)
+  check(cardCollide.length === 0, 'nothing overlaps with pieces drawn in the reply', cardCollide)
+
+  await page.evaluate(() => document.querySelector('.v2-bar-said-x')?.click())
+  await sleep(400)
 
   // ── 14 · the model dies mid-session and the clothes still arrive ──────────
   scene = 'dead'

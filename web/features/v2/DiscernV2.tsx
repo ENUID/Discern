@@ -262,6 +262,64 @@ function BagBtn({ on, just, onClick, size = 34, ghost }: {
   )
 }
 
+/** What Fabrics said, with the pieces it named drawn where it named them.
+ *
+ *  When a question carries pinned pieces the endpoint does not only answer in
+ *  prose — it re-inserts [PRODUCT:N] into the reply, right after the sentence
+ *  that recommends each one, so the words and the garment arrive together.
+ *  v1 rendered those. v2 printed the reply straight into a <p>, so somebody
+ *  comparing four pieces read "the navy blazer and grey trousers are the
+ *  strongest pairing. [PRODUCT:2] [PRODUCT:0]". The tokens were never a bug in
+ *  the backend; they were an instruction nobody was listening to.
+ *
+ *  [PHOTO:N] is the same for photographs the shopper attached. A token
+ *  pointing at something that is not there is dropped rather than shown: a
+ *  reference with nothing behind it should leave no trace at all. */
+function SaidBody({ text, refs, photos, onOpen }: {
+  text: string
+  refs: V2Product[]
+  photos: string[]
+  onOpen: (p: V2Product) => void
+}) {
+  const parts = text
+    // The model sometimes bolds a token; strip the emphasis off it so the
+    // token still matches whole.
+    .replace(/\*\*\s*(\[(?:PRODUCT|PHOTO):\s*\d{1,2}\])\s*\*\*/gi, '$1')
+    .split(/(\[(?:PRODUCT|PHOTO):\s*\d{1,2}\])/i)
+    .filter(Boolean)
+
+  const prose: React.ReactNode[] = []
+  const cards: React.ReactNode[] = []
+  parts.forEach((seg, i) => {
+    const m = seg.match(/^\[(PRODUCT|PHOTO):\s*(\d{1,2})\]$/i)
+    // Pushed as text, not wrapped in a span: two inline spans in one
+    // paragraph share line boxes by definition, and every overlap check ever
+    // written reads that as a collision.
+    if (!m) { if (seg.trim()) prose.push(seg); return }
+    const n = Number(m[2])
+    if (/photo/i.test(m[1])) {
+      const src = photos[n]
+      if (src) cards.push(<img key={`p${i}`} className="v2-said-shot" src={src} alt="" />)
+      return
+    }
+    const pr = refs[n]
+    if (!pr) return
+    cards.push(
+      <button key={`c${i}`} className="v2-said-card" title={pr.title} onClick={() => onOpen(pr)}>
+        <Img src={pr.image} alt="" />
+        <span>{pr.title}</span>
+      </button>,
+    )
+  })
+
+  return (
+    <div className="v2-said-body">
+      <p>{prose}</p>
+      {cards.length > 0 && <div className="v2-said-cards">{cards}</div>}
+    </div>
+  )
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 export default function DiscernV2({
   heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onLoadMore, onFeatured, onSearched, onSavedChange, heroCopy = 0,
@@ -371,18 +429,31 @@ export default function DiscernV2({
    *  the composer until the next question, because a stylist who answers you
    *  out loud and is never heard is indistinguishable from a broken app. */
   const [said, setSaid] = useState<string | null>(null)
-  /** The piece the next question is about.
+  /** The pieces that answer is about, so a [PRODUCT:N] inside it can be drawn.
+   *  Held beside the words rather than read off `pinned`, which empties the
+   *  moment the question is sent. */
+  const [saidRefs, setSaidRefs] = useState<V2Product[]>([])
+  /** And the photographs it was sent, for [PHOTO:N], for the same reason. */
+  const [saidPhotos, setSaidPhotos] = useState<string[]>([])
+  /** The pieces the next question is about.
    *
    *  v1 let a shopper pin pieces and ask about them, and the endpoint still has
    *  that whole path — pinned products ARE the answer server-side, so it
    *  describes them rather than searching again. v2 never sent the field, so it
    *  was unreachable.
    *
-   *  Here it pins itself: open a piece, ask a question, and the question is
-   *  about that piece. The chip in the composer means it is never invisible — a
-   *  question that silently carries context you cannot see is worse than one
-   *  that carries none. */
-  const [pinned, setPinned] = useState<V2Product | null>(null)
+   *  Opening a piece makes it the subject. Ask Fabrics — the long press on a
+   *  tile — adds one to the selection without leaving the page, which is how
+   *  you reach "which of these": the endpoint takes up to eight pinned pieces
+   *  and this is the only way to hand it more than one. Until it existed the
+   *  comparison path was reachable in theory and unreachable in practice.
+   *
+   *  The chips in the composer mean it is never invisible — a question that
+   *  silently carries context you cannot see is worse than one that carries
+   *  none. */
+  const [pinned, setPinned] = useState<V2Product[]>([])
+  /** The little menu a long press opens over a piece. */
+  const [tileMenu, setTileMenu] = useState<{ product: V2Product; x: number; y: number } | null>(null)
   // Turns, not sections. Each query used to replace the results wholesale, so
   // the previous answer and its products were destroyed on every follow-up.
   const [turns, setTurns] = useState<V2Turn[]>([])
@@ -930,7 +1001,7 @@ export default function DiscernV2({
     const sentPhotos = photos
     // Captured with the photos and cleared in the same place: a pin belongs to
     // the question asked while it was showing, not to the next one.
-    const sentPinned = pinned ? [pinned] : undefined
+    const sentPinned = pinned.length ? pinned : undefined
     onSearched?.(question)
     /** Whether this turn produced something worth showing a page for. */
     let show = false
@@ -964,15 +1035,19 @@ export default function DiscernV2({
           // recorded and then immediately hidden behind a blank page.
           show = true
           setInput('')
-          setSaid(null)
+          setSaid(null); setSaidRefs([]); setSaidPhotos([])
           return
         }
         setInput('')
         setSaid(words)
+        // What the reply is talking about. Without these a [PRODUCT:2] the
+        // backend deliberately placed has nothing to draw and shows through as
+        // the literal characters.
+        setSaidRefs(sentPinned ?? []); setSaidPhotos(sentPhotos)
         setLoading(false)
         return
       }
-      setSaid(null)
+      setSaid(null); setSaidRefs([]); setSaidPhotos([])
 
       setTurns(prev => [{
         id: `${prev.length}-${question.slice(0, 24)}`,
@@ -999,7 +1074,7 @@ export default function DiscernV2({
       // The attached photos belonged to this question; leaving them in the bar
       // silently re-sent them with every follow-up.
       if (sentPhotos.length) setPhotos(p => p.filter(u => !sentPhotos.includes(u)))
-      if (sentPinned) setPinned(null)
+      if (sentPinned) setPinned([])
       // Only leave the page when there is a page to leave for. `finally` runs
       // on the early return above too, so a turn that produced nothing to show
       // still navigated to the results view — which then had no turn to render.
@@ -1044,13 +1119,13 @@ export default function DiscernV2({
   /** Back to the opening screen, keeping everything. Distinct from New chat,
    *  which deliberately throws the turn away. */
   const goHome = useCallback(() => {
-    setProduct(null); setLookOpen(false); setView('home'); setSaid(null); setPinned(null)
+    setProduct(null); setLookOpen(false); setView('home'); setSaid(null); setSaidRefs([]); setSaidPhotos([]); setPinned([])
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
   }, [])
 
   const newSearch = useCallback(() => {
     setTurns([]); setLook(null); setLookOpen(false); setProduct(null)
-    setInput(''); setPhotos([]); setView('home'); setSaid(null); setPinned(null)
+    setInput(''); setPhotos([]); setView('home'); setSaid(null); setSaidRefs([]); setSaidPhotos([]); setPinned([])
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
   }, [])
 
@@ -1093,12 +1168,78 @@ export default function DiscernV2({
 
   const openProduct = (p: V2Product) => {
     setProduct(p); setAcc(null); setDetailsOpen(false)
-    setPinned(p)
+    setPinned([p])
     setColorMode(false); setSizeMode(false)
     setPickedColor(p.colors?.[0] ?? null); setPickedSize(null)
     setView('product')
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
   }
+
+  /** Ask Fabrics — put a piece into the question without opening it.
+   *
+   *  The endpoint answers about pinned pieces instead of searching again;
+   *  "which of these" and "compare these" are its whole reason for existing.
+   *  Opening a piece pins exactly one, so until this existed there was no way
+   *  to hand it a second.
+   *
+   *  It closes whatever it was opened from, focuses the composer, and leaves
+   *  the chip showing — so the selection is somewhere you can see it and take
+   *  it back. */
+  const askFabrics = useCallback((p: V2Product) => {
+    setPinned(prev => (prev.some(x => x.id === p.id) || prev.length >= 8 ? prev : [...prev, p]))
+    setMenuOpen(false); setBagOpen(false); setTileMenu(null)
+    // The composer does not exist on the product page — the dock owns the
+    // bottom there — so asking from it has to come back out first.
+    setView(v => (v === 'product' ? 'results' : v))
+    requestAnimationFrame(() => taRef.current?.focus())
+  }, [])
+
+  /** The long press that reaches it.
+   *
+   *  Touch has no right-click and a photograph has no room for a third
+   *  control, so the piece answers a press held past half a second — the
+   *  gesture the phone already uses everywhere for "more about this". A press
+   *  that turns into a scroll is not a long press, which is why movement
+   *  cancels it: without that the menu opened every time somebody flicked down
+   *  the grid. A mouse gets the context menu as well. */
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pressWas = useRef(false)
+  const pressAt = useRef({ x: 0, y: 0 })
+  const cancelPress = useCallback(() => {
+    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null }
+  }, [])
+  const openTileMenu = useCallback((p: V2Product, x: number, y: number) => {
+    pressWas.current = true
+    const W = 208, H = 100
+    setTileMenu({
+      product: p,
+      x: Math.max(10, Math.min(x, window.innerWidth - W - 10)),
+      y: y + 10 + H > window.innerHeight ? Math.max(10, y - H - 6) : y + 10,
+    })
+  }, [])
+  const pressHandlers = useCallback((p: V2Product) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      if (e.button === 2) return
+      pressWas.current = false
+      pressAt.current = { x: e.clientX, y: e.clientY }
+      cancelPress()
+      pressTimer.current = setTimeout(() => openTileMenu(p, e.clientX, e.clientY), 520)
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      if (!pressTimer.current) return
+      const { x, y } = pressAt.current
+      if (Math.abs(e.clientX - x) > 10 || Math.abs(e.clientY - y) > 10) cancelPress()
+    },
+    onPointerUp: cancelPress,
+    onPointerCancel: cancelPress,
+    onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); openTileMenu(p, e.clientX, e.clientY) },
+    // The press already did something. The tap that ends it must not also open
+    // the product page underneath the menu it just opened.
+    onClick: (e: React.MouseEvent) => {
+      if (pressWas.current) { e.preventDefault(); e.stopPropagation(); pressWas.current = false; return }
+      openProduct(p)
+    },
+  }), [cancelPress, openTileMenu])
 
   /** Straight to the brand's checkout with this one piece, in the colour and
    *  size chosen on this page.
@@ -1384,7 +1525,7 @@ export default function DiscernV2({
                   {s.subtitle && <p>{s.subtitle}</p>}
                   {s.hero && (
                     <div className="v2-sec-hero">
-                      <button className="v2-shot" onClick={() => openProduct(s.hero!)}><Img src={s.hero.image} alt={s.hero.title} /></button>
+                      <button className="v2-shot" {...pressHandlers(s.hero)}><Img src={s.hero.image} alt={s.hero.title} /></button>
                       <BagBtn on={inBag(s.hero.id)} just={justBagged === s.hero.id} onClick={e => { e.stopPropagation(); bagIt(s.hero!) }} />
                     </div>
                   )}
@@ -1418,7 +1559,7 @@ export default function DiscernV2({
                     <div className="v2-mosaic">
                       {s.products.map((p, i) => (
                         <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
-                          <button className="v2-tile-btn" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} loading="lazy" /></button>
+                          <button className="v2-tile-btn" {...pressHandlers(p)}><Img src={p.image} alt={p.title} loading="lazy" /></button>
                           <BagBtn on={inBag(p.id)} just={justBagged === p.id} onClick={e => { e.stopPropagation(); bagIt(p) }} />
                           <span className="v2-tile-name">{p.title} <i aria-hidden>›</i></span>
                         </div>
@@ -1922,6 +2063,10 @@ export default function DiscernV2({
                     Quantity: <button onClick={() => setQty(i, -1)} aria-label="Decrease">−</button>
                     <b>{l.qty}</b>
                     <button onClick={() => setQty(i, 1)} aria-label="Increase">+</button>
+                    {/* Something you have already set aside is exactly what
+                        you want a second opinion on, so the bag reaches the
+                        stylist too rather than only the grid. */}
+                    <button className="v2-line-ask" onClick={() => askFabrics(l.product)}>Ask Fabrics</button>
                     <button className="v2-remove" onClick={() => setCart(c => c.filter((_, x) => x !== i))}>Remove</button>
                   </div>
                 </div>
@@ -1969,11 +2114,31 @@ export default function DiscernV2({
                 e.preventDefault()
                 taRef.current?.focus()
               }}>
-              {pinned && (
+              {pinned.length > 0 && (
                 <div className="v2-pinned">
-                  <img src={pinned.image} alt="" />
-                  <span>About <b>{pinned.title}</b></span>
-                  <button aria-label="Ask about something else" onClick={() => setPinned(null)}>
+                  {/* One piece reads as a subject — "About the coat". Several
+                      read as a selection, and the question that follows is
+                      almost always "which of these", so they line up as chips
+                      instead of repeating the word About four times. */}
+                  {pinned.length === 1 ? (
+                    <span className="v2-pin-one">
+                      <img src={pinned[0].image} alt="" />
+                      <span>About <b>{pinned[0].title}</b></span>
+                    </span>
+                  ) : (
+                    <span className="v2-pin-many">
+                      {pinned.map(p => (
+                        <button key={p.id} className="v2-pin-chip" title={p.title}
+                          aria-label={`Take ${p.title} out of the selection`}
+                          onClick={() => setPinned(prev => prev.filter(x => x.id !== p.id))}>
+                          <img src={p.image} alt="" />
+                          <i aria-hidden><CloseIcon size={8} /></i>
+                        </button>
+                      ))}
+                      <span className="v2-pin-count">{pinned.length} pieces</span>
+                    </span>
+                  )}
+                  <button aria-label="Ask about something else" onClick={() => setPinned([])}>
                     <CloseIcon size={10} />
                   </button>
                 </div>
@@ -1999,8 +2164,8 @@ export default function DiscernV2({
                   one. */}
               {said && !loading && (
                 <div className="v2-bar-said" role="status" aria-live="polite">
-                  <p>{said}</p>
-                  <button className="v2-bar-said-x" aria-label="Dismiss" onClick={() => setSaid(null)}>
+                  <SaidBody text={said} refs={saidRefs} photos={saidPhotos} onOpen={openProduct} />
+                  <button className="v2-bar-said-x" aria-label="Dismiss" onClick={() => { setSaid(null); setSaidRefs([]); setSaidPhotos([]) }}>
                     <CloseIcon size={12} />
                   </button>
                 </div>
@@ -2051,6 +2216,25 @@ export default function DiscernV2({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Long press on a piece ─────────────────────────────────────────
+          The two things you can do to a garment without opening it: put it in
+          the question, or put it in the bag. Anchored where the finger was,
+          and flipped above the point when there is no room below it. */}
+      {tileMenu && (
+        <>
+          <div className="v2-tm-scrim" onClick={() => setTileMenu(null)} />
+          <div className="v2-tm" style={{ left: tileMenu.x, top: tileMenu.y }} role="menu">
+            <button role="menuitem" onClick={() => askFabrics(tileMenu.product)}>
+              <span>Ask Fabrics</span><SparkleIcon size={13} />
+            </button>
+            <button role="menuitem" onClick={() => { bagIt(tileMenu.product); setTileMenu(null) }}>
+              <span>{inBag(tileMenu.product.id) ? 'Remove from bag' : 'Add to bag'}</span>
+              <BagIcon size={13} />
+            </button>
+          </div>
+        </>
       )}
 
       <style jsx global>{`
@@ -2409,6 +2593,62 @@ export default function DiscernV2({
         .v2-pinned button:hover{opacity:.95;}
         .v2-pinned button::before{content:'';position:absolute;left:50%;top:50%;width:44px;height:44px;
           transform:translate(-50%,-50%);}
+        /* One subject: a thumbnail and its name, which is what the rules
+           above were written for. */
+        .v2-pinned .v2-pin-one{display:flex;align-items:center;gap:9px;flex:1;min-width:0;}
+        /* Several: the photographs themselves are the label. A row of four
+           names would not fit and would say less than four pictures do. */
+        .v2-pinned .v2-pin-many{display:flex;align-items:center;gap:6px;flex:1;min-width:0;
+          overflow-x:auto;scrollbar-width:none;}
+        .v2-pinned .v2-pin-many::-webkit-scrollbar{display:none;}
+        .v2-pinned .v2-pin-chip{position:relative;width:30px;height:36px;flex-shrink:0;
+          padding:0;border-radius:7px;overflow:hidden;opacity:1;background:none;}
+        .v2-pinned .v2-pin-chip img{width:100%;height:100%;border-radius:7px;}
+        /* The cross sits on the photograph rather than beside it — at this size
+           there is no beside — and only on a pointer that can hover. On touch
+           the whole chip is the target. */
+        .v2-pinned .v2-pin-chip i{position:absolute;inset:0;display:flex;align-items:center;
+          justify-content:center;color:#fff;background:rgba(0,0,0,.42);opacity:0;
+          transition:opacity .16s ${V2.ease};}
+        @media(hover:hover){.v2-pinned .v2-pin-chip:hover i{opacity:1;}}
+        .v2-pinned .v2-pin-count{flex:0 0 auto;font-size:11px;opacity:.55;padding-left:2px;
+          white-space:nowrap;}
+
+        /* ── A reply that names pieces ──────────────────────────────────────
+           The prose keeps the composer's own type; the pieces it named sit
+           under it as a row you can scroll and open, because a recommendation
+           you cannot look at is only half of one. */
+        .v2-said-body{flex:1;min-width:0;}
+        .v2-said-cards{display:flex;gap:8px;margin-top:9px;overflow-x:auto;
+          scrollbar-width:none;padding-bottom:2px;}
+        .v2-said-cards::-webkit-scrollbar{display:none;}
+        .v2-said-card{flex:0 0 auto;width:64px;padding:0;border:none;background:none;
+          cursor:pointer;color:inherit;text-align:left;}
+        .v2-said-card img{width:64px;height:80px;object-fit:cover;border-radius:8px;display:block;
+          background:rgba(255,255,255,.08);
+          background:color-mix(in srgb, currentColor 8%, transparent);}
+        .v2-said-card span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+          overflow:hidden;margin-top:5px;font-size:10.5px;line-height:1.3;opacity:.62;}
+        @media(hover:hover){.v2-said-card:hover span{opacity:.95;}}
+        .v2-said-shot{flex:0 0 auto;width:64px;height:80px;object-fit:cover;border-radius:8px;display:block;}
+
+        /* ── The long-press menu ────────────────────────────────────────────
+           Above everything, because it is anchored to a finger rather than to
+           the layout, and it must not be clipped by the scroller it opened
+           over. */
+        .v2-tm-scrim{position:absolute;inset:0;z-index:90;}
+        .v2-tm{position:absolute;z-index:91;width:208px;padding:5px;border-radius:14px;
+          background:${V2.glassDark};color:#fff;
+          backdrop-filter:blur(30px) saturate(160%);-webkit-backdrop-filter:blur(30px) saturate(160%);
+          border:1px solid ${V2.glassEdge};box-shadow:0 18px 48px rgba(0,0,0,.34);
+          font-family:${V2.sans};animation:v2-tm-in .16s ${V2.ease};transform-origin:top left;}
+        @keyframes v2-tm-in{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+        .v2-tm button{display:flex;align-items:center;justify-content:space-between;gap:10px;
+          width:100%;min-height:44px;padding:0 11px;border:none;border-radius:10px;cursor:pointer;
+          background:none;color:inherit;font-family:inherit;font-size:14px;text-align:left;}
+        .v2-tm button:hover{background:rgba(255,255,255,.1);}
+        .v2-tm button svg{opacity:.6;flex-shrink:0;}
+        @media(prefers-reduced-motion:reduce){.v2-tm{animation:none;}}
         .v2-bar-said-x{position:relative;flex-shrink:0;width:22px;height:22px;margin-top:1px;
           display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
           color:inherit;cursor:pointer;opacity:.55;transition:opacity .14s;
@@ -2760,6 +3000,12 @@ export default function DiscernV2({
         .v2-qty button{width:20px;height:20px;border:none;background:none;cursor:pointer;font-size:14px;color:${V2.ink70};}
         .v2-qty b{font-weight:400;color:${V2.ink};}
         .v2-remove{width:auto !important;margin-left:8px;text-decoration:underline;font-size:13px !important;}
+        /* .v2-qty button sizes the +/− steppers at 20px square; this is a word,
+           so it opts out of that the same way Remove does. */
+        .v2-line-ask{width:auto !important;margin-left:auto;background:none;border:none;padding:0;
+          cursor:pointer;color:inherit;font-family:inherit;font-size:13px !important;opacity:.55;
+          text-decoration:underline;text-underline-offset:2px;}
+        .v2-line-ask:hover{opacity:.9;}
         .v2-bag-sum{border-top:1px solid ${V2.hairline};padding-top:16px;display:flex;flex-direction:column;gap:9px;margin-bottom:22px;}
         .v2-bag-sum div{display:flex;justify-content:space-between;font-size:13px;}
         .v2-pay{width:100%;padding:16px;border:none;border-radius:12px;background:${V2.ink};color:#fff;cursor:pointer;
