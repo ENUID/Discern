@@ -35,6 +35,9 @@ const { chromium } = require(path.join(__dirname, '..', 'node_modules', 'playwri
 
 const BASE = process.env.BASE || 'http://localhost:3000'
 const ONLY_LIVE = process.argv.includes('--live-only')
+// One scene on its own, for when you are working on that scene. The full
+// journey is ten minutes; a fail-first check should not be.
+const ONLY_KB = process.argv.includes('--keyboard')
 const LIVE = ONLY_LIVE || process.argv.includes('--live')
 const SHOTS = process.env.SHOTS || null
 const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'
@@ -824,6 +827,98 @@ async function journey(browser, screen) {
   return fails
 }
 
+// ── the composer stays on the floor ─────────────────────────────────────────
+/** The bar sits at `bottom: keyboardOffset`, so a wrong offset is not a subtle
+ *  bug — the composer floats in the middle of the phone with a band of empty
+ *  page underneath it, which is what a screenshot from a real phone showed.
+ *
+ *  The cause was a rule that could not tell a keyboard from Safari's own
+ *  address bar: both resize the visual viewport, so minimising the toolbar
+ *  read as a keyboard opening, latched two hundred-odd pixels, and nothing
+ *  fired afterwards to correct it.
+ *
+ *  Chromium has no iOS toolbar and no software keyboard, so this drives a
+ *  visualViewport of its own — installed before the app's own script runs —
+ *  and plays both events through it. */
+async function keyboard(browser) {
+  console.log(`\n══ keyboard · the composer stays on the floor ${'═'.repeat(11)}`)
+  const { check, fails } = reporter('keyboard')
+
+  const ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+  })
+  await ctx.addInitScript(() => {
+    const listeners = { resize: [], scroll: [] }
+    const vv = {
+      height: window.innerHeight, offsetTop: 0, offsetLeft: 0, width: window.innerWidth,
+      scale: 1, pageTop: 0, pageLeft: 0,
+      addEventListener: (t, f) => { (listeners[t] ||= []).push(f) },
+      removeEventListener: (t, f) => { listeners[t] = (listeners[t] || []).filter(x => x !== f) },
+    }
+    Object.defineProperty(window, 'visualViewport', { get: () => vv, configurable: true })
+    // The control surface the harness drives from the outside.
+    window.__vv = (shrinkBy) => {
+      vv.height = window.innerHeight - shrinkBy
+      ;(listeners.resize || []).forEach(f => f())
+    }
+  })
+  const page = await ctx.newPage()
+  const json = (r, body) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+  await page.route('**/api/featured', r => json(r, { products: [] }))
+  await page.route('**/api/product-names', r => json(r, { names: {} }))
+
+  await page.goto(BASE + '/', { waitUntil: 'domcontentloaded', timeout: 120000 })
+  await page.waitForSelector('textarea', { timeout: 60000 })
+  await sleep(3000)
+
+  /** How far the composer is floating above the bottom of the app. */
+  const lift = () => page.evaluate(() => {
+    const bar = document.querySelector('.v2-bar-wrap')?.getBoundingClientRect()
+    const root = document.querySelector('.v2-root')?.getBoundingClientRect()
+    return bar && root ? Math.round(root.bottom - bar.bottom) : null
+  })
+
+  check(await lift() === 0, 'it starts on the floor', { lift: await lift() })
+
+  // A real keyboard: the field is focused and the viewport shrinks.
+  await page.focus('textarea')
+  await page.evaluate(() => window.__vv(320))
+  await sleep(400)
+  const up = await lift()
+  check(up >= 300 && up <= 340, 'a real keyboard lifts it by the keyboard', { lift: up })
+
+  // The keyboard goes away.
+  await page.evaluate(() => { document.activeElement.blur(); window.__vv(0) })
+  await sleep(900)
+  check(await lift() === 0, 'and it comes back down when the keyboard goes', { lift: await lift() })
+
+  // ── the bug ──────────────────────────────────────────────────────────────
+  // Safari's address bar animating, with nothing focused. This used to read as
+  // a keyboard and leave the composer stranded halfway up the screen.
+  await page.evaluate(() => window.__vv(240))
+  await sleep(600)
+  const strayed = await lift()
+  check(strayed === 0, 'the address bar collapsing does NOT lift it', { lift: strayed })
+  if (strayed !== 0) await shoot(page, 'e2e-keyboard-stranded')
+
+  // And a stale offset heals rather than latching: even if something did put
+  // it up, the next event with nothing focused must put it back.
+  await page.evaluate(() => window.__vv(0))
+  await sleep(400)
+  check(await lift() === 0, 'and nothing is left latched behind it', { lift: await lift() })
+
+  // The bar must also be reachable, not under the fold.
+  const onScreen = await page.evaluate(() => {
+    const b = document.querySelector('.v2-bar')?.getBoundingClientRect()
+    return b ? b.bottom <= innerHeight + 1 && b.top >= 0 : null
+  })
+  check(onScreen === true, 'and the whole bar is on the screen')
+  await shoot(page, 'e2e-keyboard-floor')
+
+  await ctx.close()
+  return fails
+}
+
 // ── the live pass ───────────────────────────────────────────────────────────
 /** Stubs prove the interface. This proves the two endpoints behind it are
  *  really talking to brand stores and a model — separately, so an outage
@@ -880,7 +975,7 @@ async function live() {
   // browser about it too, or every run against a deployed URL reports as a
   // connection reset and looks like the site is down.
   const all = []
-  if (!ONLY_LIVE) {
+  if (!ONLY_LIVE || ONLY_KB) {
     const proxy = process.env.HTTPS_PROXY || process.env.https_proxy
     const browser = await chromium.launch({
       executablePath: CHROME,
@@ -888,10 +983,12 @@ async function live() {
       ...(proxy && !BASE.startsWith('http://localhost') ? { proxy: { server: proxy } } : {}),
     })
     try {
-      for (const screen of SCREENS) {
+      for (const screen of ONLY_KB ? [] : SCREENS) {
         try { all.push(...(await journey(browser, screen))) }
         catch (e) { all.push(`${screen.name}: the journey stopped — ${e.message}`); console.log(`  STOP  ${e.message}`) }
       }
+      try { all.push(...(await keyboard(browser))) }
+      catch (e) { all.push(`keyboard: ${e.message}`); console.log(`  STOP  ${e.message}`) }
     } finally { await browser.close() }
   }
 
@@ -902,7 +999,9 @@ async function live() {
 
   console.log('\n' + '═'.repeat(60))
   if (!all.length) {
-    console.log(ONLY_LIVE ? 'All good. The endpoints answer.' : 'All good. The journey holds at every width.')
+    console.log(ONLY_LIVE ? 'All good. The endpoints answer.'
+      : ONLY_KB ? 'All good. The composer stays on the floor.'
+      : 'All good. The journey holds at every width.')
   }
   else {
     console.log(`${all.length} failing:`)

@@ -97,15 +97,56 @@ export type V2CartLine = { product: V2Product; color?: string; size?: string; qt
 type View = 'home' | 'results' | 'product' | 'look'
 
 // ── Keyboard offset ──────────────────────────────────────────────────────────
+/** How far the software keyboard has pushed the bottom of the window up.
+ *
+ *  The composer sits at `bottom: this`, so anything wrong here is visible
+ *  immediately as a bar floating in the middle of the screen with a band of
+ *  empty page under it — which is exactly what it did.
+ *
+ *  The old rule was "if the visual viewport is more than 150px shorter than
+ *  the window, that is the keyboard". On iOS that is not true. Safari's own
+ *  toolbar collapsing and expanding resizes the visual viewport too, and
+ *  during that animation `vv.height` and `window.innerHeight` are read from
+ *  different moments — so a scroll that minimised the address bar could
+ *  produce a reading of two hundred-odd pixels, latch it, and leave it there,
+ *  because nothing fires afterwards to correct it.
+ *
+ *  The fix is a rule that cannot be fooled by a toolbar: an offset is only
+ *  real while something is focused that a keyboard could be open for. Safari's
+ *  chrome is not a text field. Everything else — the >150 floor, the recheck
+ *  after blur — stays, and the recheck is now several, spread across the
+ *  keyboard's dismissal, because a single one at 150ms measured the animation
+ *  rather than its end. */
 function useKeyboardOffset(): number {
   const [o, setO] = useState(0)
   useEffect(() => {
     const vv = (window as any).visualViewport; if (!vv) return
-    const check = () => { const k = window.innerHeight - vv.height - vv.offsetTop; setO(k > 150 ? Math.round(k) : 0) }
-    const blur = () => setTimeout(check, 150)
+    const typing = () => {
+      const el = document.activeElement as HTMLElement | null
+      if (!el) return false
+      return el.tagName === 'TEXTAREA'
+        || (el.tagName === 'INPUT' && !/^(file|checkbox|radio|button|submit|hidden)$/i.test((el as HTMLInputElement).type))
+        || el.isContentEditable
+    }
+    const check = () => {
+      if (!typing()) { setO(0); return }
+      const k = window.innerHeight - vv.height - vv.offsetTop
+      setO(k > 150 ? Math.round(k) : 0)
+    }
+    // The keyboard leaves over about a third of a second and does not always
+    // fire a resize when it lands, so this walks it down instead of guessing
+    // one moment.
+    const settle = () => [0, 150, 320, 550].forEach(t => setTimeout(check, t))
     vv.addEventListener('resize', check); vv.addEventListener('scroll', check)
-    document.addEventListener('focusout', blur)
-    return () => { vv.removeEventListener('resize', check); vv.removeEventListener('scroll', check); document.removeEventListener('focusout', blur) }
+    document.addEventListener('focusout', settle)
+    document.addEventListener('focusin', check)
+    window.addEventListener('orientationchange', settle)
+    return () => {
+      vv.removeEventListener('resize', check); vv.removeEventListener('scroll', check)
+      document.removeEventListener('focusout', settle)
+      document.removeEventListener('focusin', check)
+      window.removeEventListener('orientationchange', settle)
+    }
   }, [])
   return o
 }
