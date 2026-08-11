@@ -784,6 +784,30 @@ export function slotLabelFor(cat: SlotCategory): string {
 // What category does an outfit-slot QUERY intend? Reads the garment terms out of
 // the user-facing query ("men's tan leather loafers" → 'shoes'). Returns null
 // when the query names no recognizable garment.
+/** Garment keys that are just the name of their own slot.
+ *
+ *  "Shoes and sneakers" is one request, not two: a sneaker IS a shoe, so
+ *  splitting it into a Shoes strip and a Sneakers strip shows the same rail
+ *  twice and answers half the question with the other half. But "shirts and
+ *  t-shirts" is genuinely two — both are tops, and neither is the word "top".
+ *  So the rule is narrow on purpose: a key is dropped only when it is the
+ *  generic name for a slot AND something specific in that same slot was also
+ *  named. Anything else stays.
+ */
+const GENERIC_GARMENTS: Record<string, string> = {
+  shoe: 'shoes',
+}
+
+export function dropGenericWhenSpecific(keys: string[]): string[] {
+  if (keys.length < 2) return keys
+  return keys.filter(key => {
+    const slot = GENERIC_GARMENTS[key]
+    if (!slot) return true
+    // Kept unless a more specific member of the same slot is also named.
+    return !keys.some(other => other !== key && GARMENT_CATEGORY[other] === slot)
+  })
+}
+
 export function classifyQuerySlot(query: string): SlotCategory | null {
   const { garmentKeys } = decomposeQuery(query)
   for (const key of garmentKeys) {

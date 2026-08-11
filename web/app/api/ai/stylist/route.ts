@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { groqChat, wardrobeVisionChat, stripThinkTags, stripAiDashes, stripSafetyLabels, looksLikeLeakedReasoning, CHAT_MODEL, FAST_MODEL } from '@/lib/groq'
 import { geminiChat } from '@/lib/gemini'
 import { GlobalCatalogService, type CatalogProgress } from '@/lib/services/GlobalCatalogService'
-import { normalizeFashionTypos, buildMandatoryConcepts, classifyQuerySlot, productMatchesSlot, productMatchesGarmentKey, slotLabelFor, decomposeQuery, GARMENT_VOCAB, GARMENT_CATEGORY, type SlotCategory } from '@/lib/queryParser'
+import { normalizeFashionTypos, dropGenericWhenSpecific, buildMandatoryConcepts, classifyQuerySlot, productMatchesSlot, productMatchesGarmentKey, slotLabelFor, decomposeQuery, GARMENT_VOCAB, GARMENT_CATEGORY, type SlotCategory } from '@/lib/queryParser'
 import { matchStyles, vocabPromptBlock } from '@/lib/styleVocabulary'
 import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/stores'
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
@@ -233,7 +233,10 @@ async function multiCategorySearch(
   // broad slot. Compounds still collapse ("dress shirt" is one shirt), so the
   // strip count genuinely tracks the request. Fewer than two garments → single
   // search (the caller handles it).
-  const named = separatedGarmentKeys(fullQuery)
+  // Same rule as the catalogue route: the generic word for a slot loses to a
+  // specific one in it, so "shoes and sneakers" is one strip rather than the
+  // same rail shown twice under two headings.
+  const named = dropGenericWhenSpecific(separatedGarmentKeys(fullQuery))
   // Naming a situation is naming an outfit. "What do I wear to an interview"
   // names no garment at all, so this used to fall through to one flat list of
   // whatever "interview" retrieves — which is the shape of the complaint that

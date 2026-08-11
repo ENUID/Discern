@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { GlobalCatalogService } from '@/lib/services/GlobalCatalogService'
 import {
   normalizeFashionTypos, buildMandatoryConcepts, classifyQuerySlot,
-  GARMENT_VOCAB, decomposeQuery,
+  GARMENT_VOCAB, decomposeQuery, dropGenericWhenSpecific,
 } from '@/lib/queryParser'
 import { compileIntent } from '@/lib/intentCompiler'
 import { outfitPlan } from '@/lib/fashion/outfitKnowledge'
@@ -42,6 +42,18 @@ export const maxDuration = 60
  *  enough to finish and returns real pieces instead of an apology. */
 const BUDGET_MS = 26_000
 const RETRY_MS = 9_000
+/** One strip's own ceiling.
+ *
+ *  Generous on purpose: every strip is a full fan-out over ninety brand stores
+ *  plus the relevance judge, and 24s cut the second strip of "shirts and
+ *  trousers" — the request came back as shirts alone, which is the exact bug
+ *  this split exists to prevent. They run concurrently, so a higher ceiling
+ *  costs no wall-clock; it only stops a strip being thrown away just before it
+ *  would have answered. Still well inside the route's own 60s. */
+const STRIP_MS = 38_000
+
+const perStrip = <T,>(work: Promise<T[]>): Promise<T[]> =>
+  Promise.race([work.catch(() => [] as T[]), new Promise<T[]>(r => setTimeout(() => r([] as T[]), STRIP_MS))])
 
 async function byDeadline<T>(work: Promise<T>, fallback: T, retry?: () => Promise<T>): Promise<T> {
   const timeout = Symbol('deadline')
@@ -114,7 +126,9 @@ export async function POST(req: NextRequest) {
     // one of them silently. The stylist route splits the same way; these two
     // have to agree or the same sentence gets two different answers depending
     // on which path served it.
-    const named = decomposeQuery(q).garmentKeys
+    // "shoes and sneakers" is one request; a sneaker is a shoe. The generic
+    // word loses to the specific one in the same slot — see the helper.
+    const named = dropGenericWhenSpecific(decomposeQuery(q).garmentKeys)
     const plan = named.length > 0 ? null : outfitPlan(q, gender)
     const slots: string[] = named.length >= 2 ? named.slice(0, 4)
       : (plan && plan.slots.length >= 2 ? plan.slots.slice(0, 4) : [])
@@ -123,20 +137,27 @@ export async function POST(req: NextRequest) {
       // Only an occasion contributes a fabric; a named garment is taken as
       // asked, without a fibre nobody mentioned.
       const fabric = plan?.fabrics[0] ?? ''
-      const groups = (await byDeadline(Promise.all(slots.map(async (slot) => {
+      // Each strip gets its OWN deadline, not one shared across all of them.
+      // A single budget wrapped around Promise.all means the slowest slot
+      // decides for every slot: two searches over ninety stores each, plus the
+      // relevance judge, went past it and the race resolved to an empty array —
+      // so "shirts and trousers" fell through to the single-search path and came
+      // back as trousers alone. A slow strip should cost that strip, nothing
+      // else.
+      const groups = (await Promise.all(slots.map(async (slot) => {
         const term = GARMENT_VOCAB[slot]?.query[0] || slot
         const sub = withGender([fabric, term].filter(Boolean).join(' '))
         try {
-          const found = await GlobalCatalogService.search(
+          const found = await perStrip(GlobalCatalogService.search(
             sub, undefined, [], countryCode, true, buildMandatoryConcepts(sub),
             'relevance', currency, { fastFirstPage: true }, [], undefined, sub, sizeFor(sub),
-          )
+          ))
           const label = term.charAt(0).toUpperCase() + term.slice(1)
           return { label, query: sub, products: found.slice(0, 8) } as Group
         } catch {
           return { label: term, query: sub, products: [] } as Group
         }
-      })), [] as Group[])).filter(gr => gr.products.length > 0)
+      }))).filter(gr => gr.products.length > 0)
 
       if (groups.length) {
         const seen = new Set<string>()
