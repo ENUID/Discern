@@ -1013,7 +1013,7 @@ export default function DiscernV2({
       }
       setLoading(false)
     }
-  }, [loading, onQuery, onSearched, photos, turns, pushStep, drainSteps])
+  }, [loading, onQuery, onSearched, photos, turns, pushStep, drainSteps, pinned])
 
   /** The menu carries what the chat UI's sidebar carried: start again, the
    *  things you have set aside, and what you asked before.
