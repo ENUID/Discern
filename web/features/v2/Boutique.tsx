@@ -136,6 +136,10 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
   // Recent searches are free-tier personalisation: they carry taste even for a
   // shopper who has never signed in. Kept here rather than inside DiscernV2
   // because this is the layer that owns everything else Fabrics is told.
+  /** Better captions for catalogue titles, arriving after the grid is already
+   *  on screen. Keyed by the raw title, because that is what the products
+   *  carry and what the endpoint was asked about. */
+  const [renames, setRenames] = useState<Record<string, string>>({})
   const [recentSearches, setRecentSearches] = useState<string[]>([])
   const remember = useCallback((q: string) => {
     setRecentSearches(prev => [q, ...prev.filter(x => x !== q)].slice(0, 8))
@@ -384,28 +388,35 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
     // written for a search engine — four lines of keywords under a photograph,
     // or a bare style code that names no garment at all. Failure is silent and
     // the raw titles stand, which is where this started.
-    try {
+    // NOT awaited. This is a model call — measured at 0.9 to 1.6 seconds
+    // against production, and on the run that prompted this it renamed
+    // nothing at all — and it used to sit between the answer and the page. The
+    // clothes were found, judged and ready, and the shopper watched a spinner
+    // while a second model decided what to call them. A caption is worth
+    // waiting nothing for: the grid draws with the catalogue's own titles and
+    // the better ones drop in when they arrive.
+    {
       const all = [...sections.flatMap(s => [s.hero, ...s.products]), ...(look ?? [])]
         .filter(Boolean) as V2Product[]
       if (all.length) {
-        const res = await fetch('/api/product-names', {
+        fetch('/api/product-names', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ items: all.map(p => ({ title: p.title })) }),
         })
-        if (res.ok) {
-          const { names } = await res.json()
-          if (names && typeof names === 'object') {
-            for (const p of all) {
-              const better = names[p.title]
-              // Keep the catalogue title for the product page and the bag —
-              // it is the piece's real name, and the shopper is buying it.
-              if (typeof better === 'string' && better) { p.fullTitle = p.title; p.title = better }
+          .then(res => (res.ok ? res.json() : null))
+          .then(d => {
+            const names = d?.names
+            if (!names || typeof names !== 'object') return
+            const clean: Record<string, string> = {}
+            for (const [raw, better] of Object.entries(names)) {
+              if (typeof better === 'string' && better.trim() && better !== raw) clean[raw] = better
             }
-          }
-        }
+            if (Object.keys(clean).length) setRenames(prev => ({ ...prev, ...clean }))
+          })
+          .catch(() => { /* raw titles are a worse caption, not a broken one */ })
       }
-    } catch { /* raw titles are a worse caption, not a broken one */ }
+    }
 
 
     // The reply was previously used only as a 90-character section caption and
@@ -472,6 +483,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       heroCopy={heroCopy}
       buyerCountry={buyerCountry}
       buyerCurrency={buyerCurrency}
+      renames={renames}
     />
   )
 }

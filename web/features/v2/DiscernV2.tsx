@@ -369,6 +369,7 @@ export default function DiscernV2({
   heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onLoadMore, onFeatured, onSearched, onSavedChange, heroCopy = 0,
   buyerCountry,
   buyerCurrency,
+  renames,
 }: {
   heroMedia?: string; heroPoster?: string
   onQuery?: (q: string, history: V2Msg[], images: string[], onProgress?: (step: { text: string; icon?: string }) => void, pinned?: V2Product[]) => Promise<{
@@ -394,6 +395,11 @@ export default function DiscernV2({
   /** What the shopper's money is in. The bag totals in it; the lines stay in
    *  whatever the brand charges, because that is what will be taken. */
   buyerCurrency?: string
+  /** Readable captions for catalogue titles, keyed by the raw title. They
+   *  arrive a second or so after the grid does, so this is only ever a
+   *  caption: the product page and the bag keep the piece's real name, which
+   *  is what the shopper is actually buying. */
+  renames?: Record<string, string>
 }) {
   const [view, setView] = useState<View>('home')
   const [input, setInput] = useState('')
@@ -421,7 +427,12 @@ export default function DiscernV2({
   const stepShownAt = useRef(0)
   const stepTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const MIN_DWELL = 620
-  const DRAIN_DWELL = 190
+  // The tail, once the answer is already in hand. While work is genuinely in
+  // flight a line is worth reading and the shopper is waiting anyway; after
+  // the clothes have arrived the same pacing is just a queue replaying itself
+  // in front of a finished page. Fast enough to read as motion rather than as
+  // a wait, slow enough that no line is skipped outright.
+  const DRAIN_DWELL = 120
 
   const pumpSteps = useCallback((finishing: boolean) => {
     if (stepTimer.current) { clearTimeout(stepTimer.current); stepTimer.current = null }
@@ -462,7 +473,17 @@ export default function DiscernV2({
     // Each remaining line costs a dwell plus the guaranteed frame between
     // renders, so the cap has to allow for both or the last line is scheduled
     // and then cut off a beat before it paints.
-    const cap = setTimeout(finish, Math.min(2600, queued * (DRAIN_DWELL + 60) + 320))
+    // Sized to the queue, with a ceiling that is only ever reached by an
+    // unusually long narration. A flat 800 truncated the last two lines of an
+    // ordinary six-step search — the interesting two — which is the bug this
+    // whole queue exists to prevent. Six lines now cost about 1.1s rather than
+    // the 2.6s they used to, and none of them is dropped.
+    // The cap is a safety net, not the pace. The interval below finishes the
+    // moment the queue empties, so the real cost is queued x dwell — a cap
+    // tuned tighter than that does nothing but truncate the last line, which
+    // is the bug this queue exists to prevent. What made the tail shorter is
+    // the dwell itself (190ms to 120ms), not this number.
+    const cap = setTimeout(finish, Math.min(2000, queued * (DRAIN_DWELL + 90) + 400))
     const tick = setInterval(() => { if (stepQueue.current.length === 0) finish() }, 40)
     function finish() { clearTimeout(cap); clearInterval(tick); resolve() }
   }), [pumpSteps])
@@ -731,6 +752,13 @@ export default function DiscernV2({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [bagOpen, histOpen, menuOpen, lookOpen, authReason])
+
+  /** The caption for a piece. A better name if one has arrived, its own
+   *  otherwise — never a wait for one. */
+  const captionOf = useCallback(
+    (p: V2Product) => (renames && renames[p.title]) || p.title,
+    [renames],
+  )
 
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -1615,7 +1643,7 @@ export default function DiscernV2({
                         <div key={p.id} className={`v2-tile ${i % 5 === 1 || i % 5 === 4 ? 'tall' : ''}`}>
                           <button className="v2-tile-btn" onClick={() => openProduct(p)}><Img src={p.image} alt={p.title} loading="lazy" /></button>
                           <BagBtn on={inBag(p.id)} just={justBagged === p.id} onClick={e => { e.stopPropagation(); bagIt(p) }} />
-                          <span className="v2-tile-name">{p.title} <i aria-hidden>›</i></span>
+                          <span className="v2-tile-name">{captionOf(p)} <i aria-hidden>›</i></span>
                         </div>
                       ))}
                     </div>
