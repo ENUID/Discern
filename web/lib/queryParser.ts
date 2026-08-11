@@ -132,9 +132,21 @@ export const GARMENT_VOCAB: Record<string, GarmentEntry> = {
     query:   ['shoe', 'shoes', 'footwear'],
     product: ['shoe', 'shoes', 'footwear'],
   },
+  // A sneaker brand will very often never write the word. Comet's whole
+  // catalogue is "X Lows CORTADO", "Aeon v2 ECLIPSE", "Alter" — no title, tag
+  // or description anywhere says sneaker or even shoe, so a matcher that only
+  // knows the word threw the brand out of its own category. What identifies
+  // these is the SHAPE: low top, high top, court, runner, skate. Those go in
+  // the product terms (what a listing might say) but stay out of the query
+  // terms (what a shopper searching "sneakers" is sent to look for), because
+  // the two lists answer different questions.
   sneaker: {
     query:   ['sneaker', 'sneakers', 'trainer', 'trainers', 'running shoe', 'running shoes', 'athletic shoe', 'court shoe'],
-    product: ['sneaker', 'sneakers', 'trainer', 'trainers', 'running shoe', 'athletic'],
+    product: [
+      'sneaker', 'sneakers', 'trainer', 'trainers', 'running shoe', 'athletic',
+      'low top', 'low-top', 'lowtop', 'lows', 'high top', 'high-top', 'hightop',
+      'court shoe', 'runner', 'runners', 'skate shoe', 'plimsoll', 'canvas shoe',
+    ],
   },
   boot: {
     query:   ['boot', 'boots', 'chelsea boot', 'chelsea boots', 'ankle boot', 'ankle boots', 'knee-high boot', 'combat boot'],
@@ -350,6 +362,12 @@ export const GARMENT_EXCLUSIONS: Record<string, string[]> = {
   boot:    ['bootcut', 'boot cut', 'bootie shorts'],
   jean:    ['denim jacket', 'denim shirt', 'denim skirt', 'denim dress', 'denim jkt'],
   tank:    ['tankini'],
+  // The shape words above are strong signals on footwear and meaningless
+  // elsewhere: "low rise" is a trouser, "track pant" is not a runner, and a
+  // "high top" sock is a sock. Each of these would otherwise pull a garment
+  // from another slot into the sneaker strip.
+  sneaker: ['low rise', 'low-rise', 'lowrise', 'high rise', 'high-rise', 'high waist',
+            'sock', 'socks', 'boot', 'sandal', 'slide', 'loafer'],
   // "dress" as a garment must reject the adjectival uses — a "dress shirt" is a
   // shirt, "dress pants" are trousers, "dress shoes" are footwear — and the
   // sleepwear look-alikes (nightgown, dressing gown).

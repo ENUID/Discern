@@ -547,8 +547,9 @@ const UCP_REGISTRY_ALL: StoreProfile[] = [
   {
     "domain": "antifragilecompany.in",
     "categories": [
-      "apparel"
+      "top"
     ],
+    "items": ["tee", "t-shirt"],
     "vibe": [
       "sport",
       "workout",
@@ -966,8 +967,13 @@ const UCP_REGISTRY_ALL: StoreProfile[] = [
   {
     "domain": "kartikresearch.com",
     "categories": [
-      "apparel"
+      "top",
+      "bottom",
+      "outerwear",
+      "footwear",
+      "accessory"
     ],
+    "items": ["jacket", "pant", "shirt", "short", "knit", "loafer", "tote"],
     "vibe": [
       "sport",
       "outdoor"
@@ -1070,8 +1076,9 @@ const UCP_REGISTRY_ALL: StoreProfile[] = [
   {
     "domain": "rarabarefoot.in",
     "categories": [
-      "apparel"
+      "footwear"
     ],
+    "items": ["barefoot shoe", "sneaker", "sandal"],
     "vibe": [
       "outdoor",
       "active",
@@ -1167,11 +1174,14 @@ const UCP_REGISTRY_ALL: StoreProfile[] = [
   {
     "domain": "wearcomet.com",
     "categories": [
-      "apparel"
+      "footwear"
     ],
+    "items": ["sneaker", "low top sneaker", "shoe"],
     "vibe": [
-      "denim"
-    ]
+      "streetwear",
+      "skate"
+    ],
+    "about": "Indian sneaker label - low tops and court silhouettes (X Lows, Aeon, Alter). Its products never carry the word sneaker in their titles, which is why the vocabulary has to know the shapes."
   },
   {
     "domain": "milkandwhisky.in",
@@ -1269,9 +1279,12 @@ const UCP_REGISTRY_ALL: StoreProfile[] = [
   {
     "domain": "thekiots.com",
     "categories": [
-      "apparel"
+      "footwear"
     ],
-    "vibe": []
+    "items": ["slide", "slider", "sandal"],
+    "vibe": [
+      "cozy"
+    ]
   },
   {
     "domain": "urbansocks.in",

@@ -93,7 +93,7 @@ type Occasion = {
 const OCCASIONS: Occasion[] = [
   {
     key: 'black-tie',
-    match: /\b(black[- ]?tie|tuxedo|gala|opera|ball)\b/i,
+    match: /\b(black[- ]?tie|tuxedos?|galas?|opera|balls?)\b/i,
     formality: 5,
     slots: { men: ['blazer', 'shirt', 'trouser', 'derby'], women: ['gown', 'heel', 'jewelry'] },
     palette: ['black', 'midnight blue', 'ivory'],
@@ -101,7 +101,7 @@ const OCCASIONS: Occasion[] = [
   },
   {
     key: 'wedding-guest',
-    match: /\b(wedding|marriage|nikah|reception|civil ceremony)\b/i,
+    match: /\b(weddings?|marriage|nikah|receptions?|civil ceremony|shaadi|baraat|sangeet)\b/i,
     formality: 4,
     slots: { men: ['blazer', 'shirt', 'trouser', 'loafer'], women: ['dress', 'heel', 'bag'] },
     // White is the one genuine rule in menswear-and-womenswear alike; it is
@@ -111,7 +111,7 @@ const OCCASIONS: Occasion[] = [
   },
   {
     key: 'interview',
-    match: /\b(interview|job interview|first day|presentation|pitch)\b/i,
+    match: /\b(interviews?|interviewing|job interview|first day|presentations?|pitch(?:es|ing)?|viva)\b/i,
     formality: 4,
     slots: { men: ['blazer', 'shirt', 'trouser', 'derby'], women: ['blazer', 'blouse', 'trouser', 'flat'] },
     palette: ['navy', 'charcoal', 'white', 'grey'],
@@ -119,7 +119,7 @@ const OCCASIONS: Occasion[] = [
   },
   {
     key: 'funeral',
-    match: /\b(funeral|memorial|wake|condolence)\b/i,
+    match: /\b(funerals?|memorial|wake|condolences?|prayer meet)\b/i,
     formality: 4,
     slots: { men: ['blazer', 'shirt', 'trouser', 'derby'], women: ['dress', 'coat', 'flat'] },
     palette: ['black', 'charcoal', 'navy'],
@@ -127,7 +127,7 @@ const OCCASIONS: Occasion[] = [
   },
   {
     key: 'cocktail',
-    match: /\b(cocktail|evening do|drinks party|christmas party|new year'?s? eve)\b/i,
+    match: /\b(cocktails?|evening do|drinks party|christmas party|new year'?s? eve|night ?out|clubbing|party)\b/i,
     formality: 4,
     slots: { men: ['blazer', 'shirt', 'trouser', 'loafer'], women: ['dress', 'heel', 'jewelry'] },
     palette: ['black', 'emerald', 'burgundy', 'midnight blue'],
@@ -135,7 +135,7 @@ const OCCASIONS: Occasion[] = [
   },
   {
     key: 'work',
-    match: /\b(work|office|business|workwear|corporate|meeting|9[- ]?to[- ]?5)\b/i,
+    match: /\b(work|working|office|business|workwear|corporate|meetings?|9[- ]?to[- ]?5|formals?)\b/i,
     formality: 3,
     slots: { men: ['shirt', 'trouser', 'blazer', 'loafer'], women: ['blouse', 'trouser', 'blazer', 'flat'] },
     palette: ['navy', 'charcoal', 'white', 'camel', 'olive'],
@@ -143,7 +143,7 @@ const OCCASIONS: Occasion[] = [
   },
   {
     key: 'dinner',
-    match: /\b(dinner|date night|restaurant|anniversary|dinner party)\b/i,
+    match: /\b(dinners?|date night|dates?|restaurants?|anniversary|dinner party|lunch date)\b/i,
     formality: 3,
     slots: { men: ['shirt', 'trouser', 'jacket', 'loafer'], women: ['dress', 'heel', 'jacket'] },
     palette: ['black', 'burgundy', 'ink', 'chocolate'],
@@ -151,7 +151,7 @@ const OCCASIONS: Occasion[] = [
   },
   {
     key: 'travel',
-    match: /\b(travel|flight|flying|long[- ]haul|airport|road trip)\b/i,
+    match: /\b(travel(?:ling|ing)?|flights?|flying|long[- ]haul|airport|road trip|commute|commuting)\b/i,
     formality: 2,
     slots: { men: ['tshirt', 'trouser', 'jacket', 'sneaker'], women: ['tshirt', 'trouser', 'cardigan', 'sneaker'] },
     palette: ['black', 'navy', 'grey', 'stone'],
@@ -159,7 +159,7 @@ const OCCASIONS: Occasion[] = [
   },
   {
     key: 'holiday',
-    match: /\b(holiday|vacation|beach|poolside|island|honeymoon)\b/i,
+    match: /\b(holidays?|vacations?|vacationing|beach(?:y|es)?|seaside|poolside|island|honeymoon|getaway|resort|goa|maldives)\b/i,
     formality: 2,
     slots: { men: ['shirt', 'short', 'sandal'], women: ['dress', 'sandal', 'bag'] },
     palette: ['white', 'stone', 'sky', 'terracotta'],
@@ -167,7 +167,7 @@ const OCCASIONS: Occasion[] = [
   },
   {
     key: 'weekend',
-    match: /\b(weekend|casual|everyday|brunch|day off|errands)\b/i,
+    match: /\b(weekends?|casual(?:ly|s)?|every ?-? ?day|day[- ]to[- ]day|daily|brunch|day off|errands?|regular wear|lounging|chill(?:ing)?)\b/i,
     formality: 2,
     slots: { men: ['tshirt', 'jean', 'jacket', 'sneaker'], women: ['tshirt', 'jean', 'cardigan', 'sneaker'] },
     palette: ['indigo', 'white', 'olive', 'grey'],
@@ -175,7 +175,7 @@ const OCCASIONS: Occasion[] = [
   },
   {
     key: 'gym',
-    match: /\b(gym|workout|training|run|running|yoga|pilates)\b/i,
+    match: /\b(gyms?|workouts?|working out|training|runs?|running|jog(?:ging)?|yoga|pilates|athleisure)\b/i,
     formality: 1,
     slots: { men: ['tshirt', 'short', 'sneaker'], women: ['tank', 'legging', 'sneaker'] },
     palette: ['black', 'grey', 'navy'],

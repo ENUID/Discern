@@ -47,14 +47,33 @@ export async function GET(req: NextRequest) {
 
   const empty: Gallery = { images: [], colors: [], byColor: {} }
 
-  try {
+  const grab = async (url: string) => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 7000)
-    const res = await fetch(jsonUrl, {
-      signal: controller.signal,
-      headers: { 'User-Agent': UA, Accept: 'application/json' },
-    })
-    clearTimeout(timer)
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': UA, Accept: 'application/json' },
+      })
+      return res
+    } finally { clearTimeout(timer) }
+  }
+
+  try {
+    let res = await grab(jsonUrl)
+
+    // Some stores serve /products/<handle>.json behind a bot rule and answer
+    // 403, while /products/<handle>.js — the endpoint their own storefront
+    // uses — is wide open. Todd Snyder is one, and every one of its pieces
+    // showed a single photograph because of it. The two payloads differ only
+    // in shape, so the second is normalised into the first below rather than
+    // handled twice.
+    let viaJs = false
+    if (!res.ok && res.status !== 404 && res.status !== 410) {
+      const alt = await grab(`${protocol}//${hostname}/products/${handleMatch[1]}.js`)
+      if (alt.ok) { res = alt; viaJs = true }
+    }
+
     if (!res.ok) {
       // Cache "no gallery" only for responses that mean the product page
       // genuinely has no JSON gallery (404/410). Transient upstream states
@@ -66,7 +85,24 @@ export async function GET(req: NextRequest) {
     }
 
     const data = await res.json()
-    const product = data?.product
+    // .json wraps the product; .js IS the product, and its `images` are plain
+    // URL strings rather than objects. Everything downstream reads
+    // `product.images[].src`, so the strings are lifted into that shape and
+    // the media previews are folded in behind them.
+    const product = viaJs
+      ? {
+          ...data,
+          images: [
+            ...(Array.isArray(data?.images) ? data.images : [])
+              .filter((u: unknown): u is string => typeof u === 'string')
+              .map((src: string) => ({ src })),
+            ...(Array.isArray(data?.media) ? data.media : [])
+              .map((m: any) => m?.preview_image?.src)
+              .filter((src: unknown): src is string => typeof src === 'string')
+              .map((src: string) => ({ src })),
+          ],
+        }
+      : data?.product
 
     // ── Full gallery (ordered by position) ──────────────────────────────────
     const seen = new Set<string>()

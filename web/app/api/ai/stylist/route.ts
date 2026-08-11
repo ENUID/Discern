@@ -243,7 +243,14 @@ async function multiCategorySearch(
   // every question comes back looking like a generic search. An occasion has a
   // known set of slots; retrieving them separately is the difference between
   // answering a quarter of the question and answering it.
-  const plan = named.length >= 2 ? null : outfitPlan(fullQuery, shopperGender)
+  // Read the occasion whether or not garments were named. When they were, it
+  // does not choose the slots — the shopper did — but it still knows what the
+  // cloth should be, and that is the difference between a beach shirt and a
+  // shirt. "Linen shirt and shorts for the beach" named two garments, so the
+  // occasion was thrown away entirely and the strips came back as ordinary
+  // shirts: correct garment, wrong summer.
+  const occasion = outfitPlan(fullQuery, shopperGender)
+  const plan = named.length >= 2 ? null : occasion
   const keys = named.length >= 2 ? named : (plan?.slots ?? [])
   if (keys.length < 2) return null
 
@@ -260,7 +267,12 @@ async function multiCategorySearch(
     : undefined
   const sharedBits = (plan
     ? [decomp.gender ?? profileGender, plan.fabrics[0]]
-    : [decomp.gender, ...decomp.colors, ...decomp.materials, ...decomp.fits]
+    : [
+        decomp.gender ?? profileGender, ...decomp.colors, ...decomp.materials, ...decomp.fits,
+        // The occasion's own cloth, and only when the shopper named none of
+        // their own — their word always wins over the table's.
+        decomp.materials.length === 0 ? (occasion?.fabrics[0] ?? '') : '',
+      ]
   ).filter(Boolean) as string[]
   const shared = sharedBits.join(' ')
 
