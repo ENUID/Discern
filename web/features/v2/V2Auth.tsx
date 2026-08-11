@@ -110,7 +110,12 @@ export default function V2Auth({
 
   useEffect(() => {
     if (!open) return
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !isMandatory(reason)) onClose() }
+    // Escape always works, including on the checkout sheet. Requiring an
+    // account before a handoff is one thing; a dialog with no way out is
+    // another, and this had no way out at all — backdrop guarded, no handle,
+    // no ✕. A shopper who pressed Checkout and thought better of it was stuck
+    // with their own product page behind the glass.
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', esc)
     return () => window.removeEventListener('keydown', esc)
   }, [open, onClose, reason])
@@ -136,8 +141,12 @@ export default function V2Auth({
       <div className="v2a-outer" onClick={() => { if (!isMandatory(reason)) onClose() }}>
         <div className="v2a-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Sign in">
           {/* The handle is a drag-to-dismiss affordance. Mandatory sheets do not
-              dismiss, so showing one would promise a gesture that does nothing. */}
-          {!isMandatory(reason) && <div className="v2a-handle" />}
+              dismiss by backdrop, so showing one would promise a gesture that
+              does nothing — they get an explicit ✕ instead, which is the same
+              exit stated out loud rather than implied. */}
+          {isMandatory(reason)
+            ? <button type="button" className="v2a-x" onClick={onClose} aria-label="Close">✕</button>
+            : <div className="v2a-handle" />}
 
           <div className="v2a-logo">DISCERN</div>
 
@@ -215,7 +224,7 @@ export default function V2Auth({
         .v2a-outer{position:absolute;inset:0;z-index:86;display:flex;align-items:flex-end;
           justify-content:center;background:rgba(16,15,14,.46);
           backdrop-filter:blur(10px) saturate(130%);-webkit-backdrop-filter:blur(10px) saturate(130%);}
-        .v2a-card{width:100%;color:#fff;border-radius:24px 28px 0 0;
+        .v2a-card{position:relative;width:100%;color:#fff;border-radius:24px 28px 0 0;
           padding:28px 24px 36px;max-height:94vh;overflow-y:auto;
           background:${V2.glassDark};
           backdrop-filter:blur(30px) saturate(160%);-webkit-backdrop-filter:blur(30px) saturate(160%);
@@ -224,6 +233,14 @@ export default function V2Auth({
           font-family:${V2.sans};animation:v2a-up .34s ${V2.ease};}
         @keyframes v2a-up{from{transform:translateY(100%)}to{transform:none}}
         .v2a-handle{width:40px;height:4px;border-radius:4px;background:rgba(255,255,255,.26);margin:-8px auto 20px;}
+        /* Same 44px target as everything else that gets tapped, sat in the
+           corner so it never lands on the logo or the title. */
+        .v2a-x{position:absolute;top:10px;right:10px;width:44px;height:44px;
+          display:flex;align-items:center;justify-content:center;
+          background:none;border:0;cursor:pointer;font-size:15px;line-height:1;
+          color:rgba(255,255,255,.5);font-family:${V2.sans};
+          transition:color .2s ${V2.ease};}
+        .v2a-x:hover{color:rgba(255,255,255,.9);}
 
         .v2a-logo{font-family:${V2.sans};font-size:10px;font-weight:400;letter-spacing:.42em;
           text-indent:.42em;text-align:center;margin:0 0 26px;color:rgba(255,255,255,.42);}
