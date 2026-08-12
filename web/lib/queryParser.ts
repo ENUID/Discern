@@ -545,20 +545,37 @@ const TYPO_MAP: Record<string, string> = {
   summr: 'summer', wntr: 'winter', ofice: 'office', officee: 'office',
 }
 
+/** Edit distance, counting a swap of two neighbouring letters as ONE mistake.
+ *
+ *  Plain Levenshtein charges two for a transposition, and a transposition is
+ *  the commonest thing a thumb does: "trosuers" is "trousers" with the s and
+ *  the u the wrong way round, which the fuzzy path scored as 2 and therefore
+ *  never corrected. The word was in the dictionary in its singular form
+ *  ("trosuer") and nowhere near it in its plural, so "shirts and trosuers"
+ *  came back as one strip of shirts — the exact complaint that started this,
+ *  still failing after the correction that was supposed to fix it.
+ *
+ *  This is Damerau-Levenshtein restricted to adjacent swaps, which is all that
+ *  is needed and is cheap. */
 function levenshtein(a: string, b: string): number {
   const m = a.length, n = b.length
-  if (Math.abs(m - n) > 1) return 2   // we only accept ≤1 from the fuzzy path
-  const dp: number[] = Array.from({ length: m + 1 }, (_, i) => i)
-  for (let j = 1; j <= n; j++) {
-    let prev = dp[0]
-    dp[0] = j
-    for (let i = 1; i <= m; i++) {
-      const tmp = dp[i]
-      dp[i] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[i], dp[i - 1])
-      prev = tmp
+  // A transposition keeps the length, so the early-out is unchanged: still
+  // only worth computing when the words are within one letter of each other.
+  if (Math.abs(m - n) > 1) return 2
+  // Full matrix rather than one rolling row — a transposition has to look two
+  // rows back, which the rolling version cannot do.
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)))
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + 1)
+      }
     }
   }
-  return dp[m]
+  return dp[m][n]
 }
 
 // Canonical single-word fashion terms to correct toward.
@@ -630,6 +647,13 @@ export function normalizeFashionTypos(text: string): string {
     if (CORRECTION_SET.has(lower) || GARMENT_PRODUCT_TERMS.has(lower) || FIT_WORD_SET.has(lower)) return token // already valid
     const mapped = TYPO_MAP[lower]
     if (mapped) return matchCase(token, mapped)
+    // A dictionary of misspellings will always be missing half its plurals —
+    // "trosuer" was listed and "trosuers" was not. A listed singular now
+    // covers its plural rather than needing both written out.
+    if (lower.endsWith('s')) {
+      const singular = TYPO_MAP[lower.slice(0, -1)]
+      if (singular) return matchCase(token, singular + 's')
+    }
     if (TYPO_SKIP.has(lower)) return token
     // Single-edit fuzzy match against the fashion vocabulary. Requires a unique
     // nearest term (no ties) so ambiguous tokens are left alone.
