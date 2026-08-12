@@ -218,6 +218,24 @@ export function colorFamily(text: string): ColorFamily | null {
  *  person notices instantly: how many colours are competing, and whether
  *  everything is dressed to the same level. A blazer over gym shorts scores
  *  badly here no matter how well each piece matches the words. */
+/** How dressed a piece is, from the garment word in its own text.
+ *
+ *  Coherence needs a level per piece and nothing was producing one, which is
+ *  part of why coherence itself was never called. Deliberately coarse: the
+ *  question it answers is "is this outfit dressed to one level", and that does
+ *  not need more resolution than this. */
+const FORMALITY_WORDS: [RegExp, Formality][] = [
+  [/\b(tuxedo|dinner jacket|gown|tailcoat)\b/i, 5],
+  [/\b(blazer|suit|oxford shoe|derby|brogue|dress shirt|waistcoat|tie)\b/i, 4],
+  [/\b(loafer|shirt|trouser|chino|knit|cardigan|overshirt|monk|boot)\b/i, 3],
+  [/\b(jean|denim|t-?shirt|tee|polo|sneaker|trainer|jacket|sweater|jumper)\b/i, 2],
+  [/\b(hoodie|sweatpant|jogger|short|slide|sandal|track|gym|legging)\b/i, 1],
+]
+export function pieceFormality(text: string): Formality | undefined {
+  for (const [re, level] of FORMALITY_WORDS) if (re.test(text)) return level
+  return undefined
+}
+
 export function coherence(pieces: Array<{ text: string; formality?: Formality }>): number {
   if (pieces.length < 2) return 1
 
@@ -227,12 +245,80 @@ export function coherence(pieces: Array<{ text: string; formality?: Formality }>
   // reads deliberate; three or more is where an outfit stops being an outfit.
   const colorScore = nonNeutral.size <= 1 ? 1 : nonNeutral.size === 2 ? 0.7 : 0.35
 
-  const levels = pieces.map(p => p.formality).filter((f): f is Formality => typeof f === 'number')
-  if (levels.length < 2) return colorScore
+  // The echo: something below repeating a colour from above. Thirteen of the
+  // sixteen looks in the lookbook do it — the shoe picking up the knit, the
+  // belt picking up the shoe — and it is the difference between pieces that
+  // merely avoid clashing and pieces that were chosen for each other. Counted
+  // as a bonus rather than a requirement, because three of the sixteen do not.
+  const echo = families.length >= 2 && new Set(families).size < families.length ? 1 : 0
+
+  const levels = pieces.map(p => p.formality ?? pieceFormality(p.text))
+    .filter((f): f is Formality => typeof f === 'number')
+  if (levels.length < 2) return +(colorScore * 0.85 + echo * 0.15).toFixed(3)
   const spread = Math.max(...levels) - Math.min(...levels)
   const formalityScore = spread <= 1 ? 1 : spread === 2 ? 0.6 : 0.25
 
-  return +(colorScore * 0.45 + formalityScore * 0.55).toFixed(3)
+  return +(colorScore * 0.4 + formalityScore * 0.45 + echo * 0.15).toFixed(3)
+}
+
+/** Choose which piece LEADS each slot, so the leads work together.
+ *
+ *  An outfit was being assembled rather than composed: every slot was filled
+ *  with the piece that ranked best on its own, and nothing ever compared the
+ *  blazer with the trousers it was going to be worn with. Four individually
+ *  excellent pieces are not an outfit, which is the entire complaint behind
+ *  every reference photograph in the lookbook.
+ *
+ *  So the leads are chosen together. Each slot offers its top few candidates,
+ *  every combination is scored on relevance AND on whether the set reads as
+ *  one outfit, and the winning combination's pieces are promoted to the front
+ *  of their slots. Nothing is discarded: a slot keeps all its candidates and
+ *  only their order changes, so a shopper who dislikes the chosen shirt still
+ *  has the others.
+ *
+ *  Relevance still dominates. Coherence is worth about a third, which is
+ *  enough to break a tie between two good shirts and not enough to promote a
+ *  bad one for matching. */
+export function composeOutfit<T>(
+  slots: Array<{ products: T[] }>,
+  textOf: (p: T) => string,
+  opts: { perSlot?: number; weight?: number } = {},
+): Array<{ products: T[] }> {
+  const perSlot = Math.max(1, opts.perSlot ?? 3)
+  const weight = opts.weight ?? 0.35
+  const usable = slots.filter(s => s.products.length > 0)
+  if (usable.length < 2) return slots
+  // 3^5 is 243 combinations at the very worst, and most outfits are four
+  // slots. Bounded rather than clever.
+  if (usable.length > 5) return slots
+
+  const options = usable.map(s => s.products.slice(0, perSlot))
+  let bestCombo: number[] | null = null
+  let bestScore = -Infinity
+
+  const walk = (depth: number, picked: number[]) => {
+    if (depth === options.length) {
+      const pieces = picked.map((idx, i) => ({ text: textOf(options[i][idx]) }))
+      // Relevance, as the rank it arrived at: the first candidate is the one
+      // the ranker preferred, and moving down costs.
+      const relevance = picked.reduce((sum, idx) => sum + (1 - idx * 0.34), 0) / picked.length
+      const score = relevance * (1 - weight) + coherence(pieces) * weight
+      if (score > bestScore) { bestScore = score; bestCombo = [...picked] }
+      return
+    }
+    for (let i = 0; i < options[depth].length; i++) walk(depth + 1, [...picked, i])
+  }
+  walk(0, [])
+  if (!bestCombo) return slots
+
+  const lead = new Map<Array<T>, number>()
+  usable.forEach((s, i) => lead.set(s.products, bestCombo![i]))
+  return slots.map(s => {
+    const idx = lead.get(s.products)
+    if (!idx) return s          // 0 or undefined — already leading, or untouched
+    const chosen = s.products[idx]
+    return { ...s, products: [chosen, ...s.products.filter((_, i) => i !== idx)] }
+  })
 }
 
 // ── The plan ─────────────────────────────────────────────────────────────────

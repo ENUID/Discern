@@ -7,7 +7,7 @@ import { matchStyles, vocabPromptBlock } from '@/lib/styleVocabulary'
 import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/stores'
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
-import { outfitPlan } from '@/lib/fashion/outfitKnowledge'
+import { outfitPlan, composeOutfit } from '@/lib/fashion/outfitKnowledge'
 import { wantsProducts, routeReason } from '@/lib/fashion/intentRouter'
 import { cerebrasChat, cerebrasVisionChat, CEREBRAS_VISION_CONFIGURED } from '@/lib/cerebras'
 import { nvidiaChat, nvidiaVisionChat, NVIDIA_CONFIGURED } from '@/lib/nvidia'
@@ -2423,7 +2423,18 @@ Use concrete garment, colour, and material words only, never a brand or product 
           if (slotCat) usedSlots.add(slotCat)
           builtSlots.push({ query, slotCategory: label, products: chosen })
         }
-        outfitSlots = builtSlots.length > 0 ? builtSlots : null
+        // Compose, rather than merely assemble. Up to here every slot holds
+        // the piece that ranked best on its own and nothing has compared the
+        // blazer with the trousers it will be worn with — four individually
+        // excellent pieces are not an outfit. This re-picks which candidate
+        // LEADS each slot so the leads read as one set: one accent colour
+        // against neutrals, everything dressed to the same level, something
+        // below echoing something above. Nothing is dropped, only reordered.
+        const composed = composeOutfit(
+          builtSlots,
+          (p: any) => `${p?.title ?? ''} ${(p?.tags ?? []).join(' ')}`,
+        )
+        outfitSlots = composed.length > 0 ? composed as typeof builtSlots : null
       } catch (e) {
         console.error('[stylist] outfit search error:', e)
       }
