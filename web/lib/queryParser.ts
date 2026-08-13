@@ -358,11 +358,36 @@ export const GARMENT_VOCAB: Record<string, GarmentEntry> = {
 // these more-specific look-alikes must be EXCLUDED — that was the "I asked for
 // shirts and got t-shirts" bug. Keyed by garment key; a product whose text
 // contains any of these terms is NOT that garment.
+/** Garments that cover the whole body. Nothing that names one of these is a
+ *  top or a bottom, whatever fabric it is cut from. */
+const WHOLE_BODY = ['jumpsuit', 'romper', 'playsuit', 'dungaree', 'gown', 'saree', 'lehenga', 'kaftan']
+/** Named for a different half of the body.
+ *
+ *  Only the skirt. This briefly held shirt, jacket, blazer and coat as well,
+ *  which emptied the trouser strip entirely — the exclusion is checked against
+ *  the description too, and a trouser listing perfectly properly says what
+ *  shirt to wear with it. "shirts and trousers" came back as shirts alone,
+ *  which is the bug I was fixing something else to prevent. */
+const OTHER_SLOT = ['skirt']
+
 export const GARMENT_EXCLUSIONS: Record<string, string[]> = {
   shirt:   ['t-shirt', 't shirt', 'tshirt', 'tee', 'tees', 'sweatshirt', 'polo', 'nightshirt', 'undershirt', 'henley'],
   polo:    ['polo neck', 'poloneck', 'polo-neck', 'water polo'],
   boot:    ['bootcut', 'boot cut', 'bootie shorts'],
-  jean:    ['denim jacket', 'denim shirt', 'denim skirt', 'denim dress', 'denim jkt'],
+  // These were PHRASES, and a phrase is the wrong shape for this. "denim dress"
+  // never matched "Blue Outline Denim Short Dress" because the words are split
+  // by another one, and "Blue Denim Jumpsuit" was not listed at all — so both
+  // appeared, on women, in a men's jeans strip.
+  //
+  // What actually disqualifies them is naming a garment from somewhere else
+  // entirely. A dress is not a trouser however much denim is in it. Single
+  // words, matched as words, so nothing gets past by having an adjective
+  // wedged into the middle.
+  jean:    ['denim jacket', 'denim shirt', 'denim jkt', 'dress', ...WHOLE_BODY, ...OTHER_SLOT],
+  trouser: [...WHOLE_BODY, ...OTHER_SLOT],
+  short:   ['dress', ...WHOLE_BODY, ...OTHER_SLOT, 'bootie shorts'],
+  // A co-ord is a set, not a t-shirt, and it kept arriving as one.
+  tshirt:  ['co-ord', 'coord', 'pant set', 'track pant', 'pyjama set', 'night set', ...WHOLE_BODY],
   tank:    ['tankini'],
   // The shape words above are strong signals on footwear and meaningless
   // elsewhere: "low rise" is a trouser, "track pant" is not a runner, and a
