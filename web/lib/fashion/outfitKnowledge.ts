@@ -174,6 +174,30 @@ const OCCASIONS: Occasion[] = [
     note: 'Weekend: comfort without giving up shape. Fit is what separates this from loungewear.',
   },
   {
+    // LAST on purpose. Every occasion above names a situation; this one names
+    // no situation at all — "give me some outfits", "help me dress better",
+    // "how do I up my fashion sense". It has to be checked after all of them
+    // so a real occasion always wins.
+    //
+    // It exists because that question was producing NOTHING deterministic: no
+    // occasion, no garment, no plan — so the slot choice fell entirely to the
+    // model, and the model answered an open question about style with a shirt,
+    // shorts and sandals. A beach outfit, for somebody asking how to dress
+    // better.
+    //
+    // The men's slots are the spine of the reference lookbook: a shirt or knit
+    // on top, a wide-leg trouser, a low-profile shoe. Sixteen of sixteen looks
+    // in it are built that way. The women's slots are NOT from the lookbook —
+    // every reference in it is menswear — so they are the weekend set, and
+    // this comment is here so nobody mistakes one for the other.
+    key: 'open-style',
+    match: /\b(fashion sense|style sense|dress better|dress well|improve my (?:style|wardrobe|fashion)|up my (?:style|fashion|game)|style (?:advice|tips|help)|outfit ideas|some outfits|any outfits|help me dress|what (?:should|do) i wear\b(?!.*\b(?:to|for)\b))/i,
+    formality: 2,
+    slots: { men: ['shirt', 'trouser', 'sneaker'], women: ['tshirt', 'jean', 'cardigan', 'sneaker'] },
+    palette: ['cream', 'ecru', 'stone', 'navy', 'olive', 'taupe'],
+    note: 'No occasion named: this is the house look. Neutrals with at most one muted colour, volume below the waist, texture rather than print, and a low-profile shoe. Nothing athletic, nothing beachy, nothing loud — the point is pieces that go with what they already own.',
+  },
+  {
     key: 'gym',
     match: /\b(gyms?|workouts?|working out|training|runs?|running|jog(?:ging)?|yoga|pilates|athleisure)\b/i,
     formality: 1,

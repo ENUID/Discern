@@ -64,6 +64,14 @@ const CASES = [
     want: { vendor: ['comet'] } },
   { id: 'material', q: 'linen shirt', gender: 'men',
     want: { garment: ['shirt'], material: ['linen'] } },
+  // The question with no occasion in it at all. It used to resolve to nothing
+  // deterministic, so the slot choice fell to the model, which answered "how do
+  // I dress better" with a shirt, shorts and sandals — a beach outfit. The
+  // house look answers it now, and these are the checks that say so.
+  { id: 'open-style', q: 'i need to up my fashion sense give me some outfits', gender: 'men',
+    want: { sectionsAtLeast: 2, notGarment: ['sandal', 'slider', 'flip flop', 'swim'] } },
+  { id: 'no-womenswear', q: 'men shorts', gender: 'men',
+    want: { garment: ['short'], notWomens: true } },
   { id: 'nonsense', q: 'hand knitted balaclava in vicuna', gender: 'men',
     want: { mayBeEmpty: true } },
 ]
@@ -83,6 +91,9 @@ function gradeProducts(products, want) {
     const t = ' ' + textOf(p) + ' '
     const checks = {}
     if (want.garment) checks.garment = has(t, want.garment)
+    // Some answers are wrong by what they CONTAIN rather than what they miss —
+    // sandals in an answer about dressing better.
+    if (want.notGarment) checks.notGarment = !has(t, want.notGarment)
     if (want.colour) checks.colour = has(t, want.colour)
     if (want.material) checks.material = has(t, want.material)
     if (want.vendor) checks.vendor = has(String(p?.vendor || '').toLowerCase(), want.vendor)
@@ -133,7 +144,7 @@ async function ask(body, ms = 90000) {
     const rows = gradeProducts(products, c.want)
 
     const tally = {}
-    for (const key of ['garment', 'colour', 'material', 'vendor', 'gender', 'budget', 'shoppable']) {
+    for (const key of ['garment', 'notGarment', 'colour', 'material', 'vendor', 'gender', 'budget', 'shoppable']) {
       const applicable = rows.filter(r => key in r)
       if (applicable.length) tally[key] = pct(applicable.filter(r => r[key]).length, applicable.length)
     }
@@ -200,6 +211,7 @@ async function ask(body, ms = 90000) {
     materialCorrect: avg('material'),
     budgetRespected: avg('budget'),
     shoppable: avg('shoppable'),
+    nothingWrong: avg('notGarment'),
     latency: { p50: at(0.5), p90: at(0.9), max: times.at(-1) },
   }
 
@@ -217,6 +229,7 @@ async function ask(body, ms = 90000) {
     ['garmentCorrect', 'right garment'], ['colourCorrect', 'right colour'],
     ['genderCorrect', 'right gender'], ['materialCorrect', 'right material'],
     ['budgetRespected', 'inside budget'], ['shoppable', 'buyable'],
+    ['nothingWrong', 'nothing out of place'],
   ]) {
     if (scorecard[k] != null) console.log(`  ${label.padEnd(23)} ${scorecard[k]}%`)
   }

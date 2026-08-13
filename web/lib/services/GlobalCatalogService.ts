@@ -399,7 +399,18 @@ const WOMEN_GENDER_RE = /\b(women'?s?|womens|ladies?|female)\b/i
 const MEN_GENDER_RE = /\b(men'?s?|mens|male|gentlemen)\b/i
 
 function productGenderSignal(p: UcpProduct): 'men' | 'women' | null {
-  const hay = `${p.title} ${(p.tags || []).join(' ')} ${p.product_type || ''}`.toLowerCase()
+  // The OPENING of the description as well as the title and tags. A men's
+  // shorts search was returning "Zahra Printed Shirt & Shorts Co-Ord Set" —
+  // womenswear whose title, tags and product_type never say so, and whose
+  // description says it in the first line. Reading three of the four places a
+  // store states who a garment is for is how a man ends up looking at a photo
+  // of a woman.
+  //
+  // Only the opening, deliberately. Further down a description will say things
+  // like "also available in women's", and treating that as the garment's own
+  // gender would drop menswear for mentioning that a women's version exists.
+  const intro = String(p.description || '').slice(0, 220)
+  const hay = `${p.title} ${(p.tags || []).join(' ')} ${p.product_type || ''} ${intro}`.toLowerCase()
   const isWomen = WOMEN_GENDER_RE.test(hay)
   const isMen = MEN_GENDER_RE.test(hay)
   if (isWomen && !isMen) return 'women'
@@ -955,6 +966,22 @@ function applyFiltersAndSort(
     const opposite = requestedGender === 'men' ? 'women' : 'men'
     const genderSafe = out.filter(p => productGenderSignal(p) !== opposite)
     if (genderSafe.length > 0) out = genderSafe
+
+    // Ambiguous pieces go last. Some stores tag one listing for both
+    // departments — a co-ord set tagged MEN and WOMEN together — and reading
+    // that as "cannot tell" let it survive and rank on its words alone, which
+    // is how a photograph of a woman appeared in a men's shorts strip. It is
+    // not dropped, because occasionally the item really is unisex and the page
+    // has to stay full; it simply loses to every piece that says plainly who
+    // it is for. With twelve places on a page, losing is usually enough.
+    const speaksTo = (p: UcpProduct) => {
+      const hay = `${p.title} ${(p.tags || []).join(' ')} ${p.product_type || ''} ${String(p.description || '').slice(0, 220)}`.toLowerCase()
+      const w = WOMEN_GENDER_RE.test(hay), m = MEN_GENDER_RE.test(hay)
+      // Named for the asked-for gender and not the other: unambiguous.
+      if (requestedGender === 'men') return m && !w ? 0 : (m && w ? 1 : 0.5)
+      return w && !m ? 0 : (m && w ? 1 : 0.5)
+    }
+    out = out.slice().sort((a, b) => speaksTo(a) - speaksTo(b))
   }
 
   // Colour, on the same footing as gender: a named colour is a requirement.
