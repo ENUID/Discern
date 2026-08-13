@@ -166,7 +166,11 @@ async function ask(body, ms = 90000) {
     if (c.want.sectionsAtLeast != null) {
       structural.push({ what: `${c.want.sectionsAtLeast}+ sections`, got: sectionCount, ok: sectionCount >= c.want.sectionsAtLeast })
     }
-    if (!c.want.mayBeEmpty) structural.push({ what: 'returned something', got: products.length, ok: products.length > 0 })
+    // A dead connection is not an empty result. Reporting "0 pieces" for a
+    // server that never answered reads as a quality failure and sent me
+    // looking for a regression that was not there.
+    if (res.error) structural.push({ what: 'reached the server', got: res.error.slice(0, 60), ok: false })
+    else if (!c.want.mayBeEmpty) structural.push({ what: 'returned something', got: products.length, ok: products.length > 0 })
     structural.push({ what: 'no duplicates', got: ids.length - new Set(ids).size, ok: unique })
 
     results.push({
@@ -174,6 +178,7 @@ async function ask(body, ms = 90000) {
       n: products.length,
       groups: groups.map(g => `${g.label}(${g.products?.length ?? 0})`),
       tally, structural,
+      judge: res.data?.judge ?? 'unknown',
       vendors: Array.from(new Set(products.map(p => p?.vendor).filter(Boolean))).slice(0, 6),
       error: res.error,
     })
@@ -212,6 +217,11 @@ async function ask(body, ms = 90000) {
     budgetRespected: avg('budget'),
     shoppable: avg('shoppable'),
     nothingWrong: avg('notGarment'),
+    // The one number that separates "bad taste" from "the taste layer never
+    // ran". Anything other than judged or cached means that page was keyword
+    // order with filters on it.
+    judged: `${results.filter(r => r.judge === 'judged' || r.judge === 'cached').length}/${results.length}`,
+    judgeOutcomes: results.reduce((acc, r) => { acc[r.judge] = (acc[r.judge] ?? 0) + 1; return acc }, {}),
     latency: { p50: at(0.5), p90: at(0.9), max: times.at(-1) },
   }
 
@@ -233,6 +243,7 @@ async function ask(body, ms = 90000) {
   ]) {
     if (scorecard[k] != null) console.log(`  ${label.padEnd(23)} ${scorecard[k]}%`)
   }
+  console.log(`  judge ran on            ${scorecard.judged}   ${JSON.stringify(scorecard.judgeOutcomes)}`)
   console.log(`  latency                 p50 ${scorecard.latency.p50}ms · p90 ${scorecard.latency.p90}ms · max ${scorecard.latency.max}ms`)
   console.log('─'.repeat(66))
   console.log('These are facts about the answers, not judgements of them. Whether')

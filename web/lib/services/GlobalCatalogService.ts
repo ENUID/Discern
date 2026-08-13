@@ -17,7 +17,13 @@
 import { UCP_REGISTRY, detectBrandsInQuery, BRAND_NAMES, getStoreCountry, GEO_REGIONS, brandQualityScore } from '../stores'
 import { GARMENT_PRODUCT_TERMS, matchesGarmentExclusion, COLOR_VOCAB } from '../queryParser'
 import { getExchangeRates } from '../exchangeRates'
-import { rerankByRelevance } from './relevanceRerank'
+import { rerankByRelevance, type JudgeOutcome } from './relevanceRerank'
+
+/** The last search's judge outcome, for the diagnostic endpoint and the
+ *  scorecard. A module-level value is enough: it answers "is the taste layer
+ *  running at all", which is a property of the deployment rather than of one
+ *  request. */
+export let lastJudgeOutcome: JudgeOutcome | 'not-run' = 'not-run'
 import { matchStyles, styleRecallSignals } from '../styleVocabulary'
 import { recordBrandOutcome, deprioritizeDead } from './brandHealth'
 import { readPersistentCache, writePersistentCache } from './persistentSearchCache'
@@ -1287,7 +1293,12 @@ export class GlobalCatalogService {
         // stays up while the judge is actually thinking.
         options.onProgress?.({ kind: 'judge', candidates: result.length })
         const judgeQuery = (rerankQuery && rerankQuery.trim()) ? rerankQuery.trim() : rawQuery
-        result = await rerankByRelevance(judgeQuery, result, _tasteProfile)
+        result = await rerankByRelevance(judgeQuery, result, _tasteProfile, (o) => {
+          lastJudgeOutcome = o
+          if (o !== 'judged' && o !== 'cached') {
+            console.warn(`[Catalog] the judge did NOT rank "${judgeQuery}" (${o}) — this page is keyword order`)
+          }
+        })
       } catch (err) {
         console.warn('[Catalog] rerank skipped:', err instanceof Error ? err.message : String(err))
       }

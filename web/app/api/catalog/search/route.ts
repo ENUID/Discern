@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { GlobalCatalogService } from '@/lib/services/GlobalCatalogService'
+import { GlobalCatalogService, lastJudgeOutcome } from '@/lib/services/GlobalCatalogService'
 import {
   normalizeFashionTypos, buildMandatoryConcepts, classifyQuerySlot,
   GARMENT_VOCAB, decomposeQuery, dropGenericWhenSpecific,
@@ -167,7 +167,10 @@ export async function POST(req: NextRequest) {
           seen.add(id)
           return true
         })
-        return NextResponse.json({ products: flat, groups, query: q, plan: plan?.occasion ?? 'named-garments' })
+        // Whether the taste layer actually ran. Without it a page is a keyword
+        // search with filters on it, and that is indistinguishable from bad
+        // taste unless it is said.
+        return NextResponse.json({ products: flat, groups, query: q, plan: plan?.occasion ?? 'named-garments', judge: lastJudgeOutcome })
       }
     }
 
@@ -189,7 +192,7 @@ export async function POST(req: NextRequest) {
       // time. A worse order is a far better answer than none.
       () => runSearch({ fastFirstPage: true, sort: 'trust_desc' as never }),
     )
-    return NextResponse.json({ products: found.slice(0, 12), groups: [], query: term })
+    return NextResponse.json({ products: found.slice(0, 12), groups: [], query: term, judge: lastJudgeOutcome })
   } catch (e) {
     console.error('[catalog/search] failed:', e)
     return NextResponse.json({ products: [], groups: [], reason: 'search-failed' }, { status: 200 })
