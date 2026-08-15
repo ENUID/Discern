@@ -383,8 +383,21 @@ async function journey(browser, screen) {
   })
   check(midflight.pill === true, 'a search says so while it runs')
   check(midflight.alignedLeft === true, 'the pill starts where the composer starts', midflight)
-  check(midflight.gap !== null && midflight.gap >= 2 && midflight.gap <= 16,
+  check(midflight.gap !== null && midflight.gap >= 2 && midflight.gap <= 24,
     'and sits just above it, not adrift', { gap: midflight.gap })
+  // …and it must OUTRANK the composer, not just avoid it. The gap is measured
+  // in a desktop browser; a phone adds a bottom toolbar and a home-indicator
+  // inset that this cannot see. When those close the gap anyway, the thing
+  // that tells a shopper the app is working must stay readable rather than be
+  // painted over by the thing they are waiting on. One screenshot from an
+  // iPhone, unreproducible at any width here, was this z-index and nothing
+  // else.
+  const stacking = await page.evaluate(() => {
+    const z = (sel) => { const e = document.querySelector(sel); return e ? +getComputedStyle(e).zIndex || 0 : null }
+    return { pill: z('.v2-crafting'), bar: z('.v2-bar-wrap') }
+  })
+  check(stacking.pill !== null && stacking.bar !== null && stacking.pill > stacking.bar,
+    'and it sits ON TOP of the composer, so it can never be buried', stacking)
   check(midflight.inside === true, 'and stays inside the screen')
   await shoot(page, `e2e-${screen.name}-2-searching`)
 

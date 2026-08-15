@@ -2087,12 +2087,26 @@ export default function DiscernV2({
           </div>
         </div>
       )}
-      {/* Sits just clear of the bar rather than floating above it: the status
-          belongs to the question still sitting in the composer, and 22px of air
-          read as two unrelated things. --bar is the bar's top edge, so the
-          number below is the whole gap. */}
+      {/* Sits just clear of the bar: the status belongs to the question still
+          in the composer, and 22px of air read as two unrelated things. --bar
+          is measured from the composer's real height, so this tracks a wrapped
+          query growing the bar.
+
+          The clearance is 14px rather than 8, and this element now outranks the
+          composer in z-order (51 against the bar's 50). Both because of one
+          screenshot from an iPhone: the pill half-buried under the bar, which
+          never reproduces in a desktop browser at any width or across any
+          resize — measured, the gap holds at 8px from 215px wide to 2016px.
+          iOS Safari is where it differs, because the bottom toolbar and the
+          home-indicator inset move the composer by more than 8px, and the
+          composer being ABOVE this in z-order meant that the moment they
+          touched, the status line was simply painted over.
+
+          So: more room, and if something ever closes that room anyway, the
+          thing that tells a shopper the app is working stays readable instead
+          of vanishing behind the thing they are waiting on. */}
       {loading && (
-        <div className="v2-crafting" style={{ bottom: `calc(var(--bar) - var(--bar-air) + 8px + ${kb}px)` }}
+        <div className="v2-crafting" style={{ bottom: `calc(var(--bar) - var(--bar-air) + 14px + ${kb}px)` }}
           role="status" aria-live="polite">
           {/* Icon and words are one step and swap together, keyed on the text.
               Without the key React keeps one node and mutates its textContent,
@@ -2832,7 +2846,7 @@ export default function DiscernV2({
         .v2-mat-list li{font-size:13px;line-height:1.5;opacity:.88;}
 
         /* The quiet, in-place "still working" note for follow-up searches. */
-        .v2-crafting{position:absolute;z-index:45;left:var(--col-l);max-width:var(--col-w);display:flex;align-items:center;gap:9px;
+        .v2-crafting{position:absolute;z-index:51;left:var(--col-l);max-width:var(--col-w);display:flex;align-items:center;gap:9px;
           padding:8px 15px;border-radius:999px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};font-size:13px;font-weight:400;white-space:nowrap;
