@@ -207,10 +207,33 @@ const OCCASIONS: Occasion[] = [
   },
 ]
 
+/** Words that name WHERE or WHAT, and beat a word that only names a social
+ *  gathering. "Beach party" is a beach; "pool party" is a pool. The generic
+ *  half of the phrase must not decide the outfit.
+ *
+ *  This is a regression I introduced. Widening the patterns so people could
+ *  type naturally, I added "party" to cocktail — and cocktail is checked before
+ *  holiday, so "I am going on a beach party with my friends" resolved to
+ *  cocktail and came back with BLAZERS. The word beach was right there in the
+ *  sentence and lost to the word party. */
+const PLACE_BEATS_PARTY: [RegExp, string][] = [
+  [/\b(beach|poolside|pool|seaside|island|resort|shore|sand)\b/i, 'holiday'],
+  [/\b(gym|workout|training)\b/i, 'gym'],
+  [/\b(wedding|shaadi|nikah|reception)\b/i, 'wedding-guest'],
+  [/\b(funeral|memorial)\b/i, 'funeral'],
+  [/\b(interview)\b/i, 'interview'],
+]
+
 export function readOccasion(query: string): Occasion | null {
-  // Longest-match-wins is not needed here — the patterns are disjoint by
-  // construction — but order matters where a word appears twice ('christmas
-  // party' is cocktail, not weekend), so the list order is the priority.
+  // A named place or event wins outright over a generic social word, whatever
+  // the list order says.
+  for (const [re, key] of PLACE_BEATS_PARTY) {
+    if (!re.test(query)) continue
+    const hit = OCCASIONS.find(o => o.key === key)
+    if (hit) return hit
+  }
+  // Otherwise: order matters where a word appears twice ('christmas party' is
+  // cocktail, not weekend), so the list order is the priority.
   for (const o of OCCASIONS) if (o.match.test(query)) return o
   return null
 }

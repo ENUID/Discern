@@ -369,9 +369,30 @@ const WHOLE_BODY = ['jumpsuit', 'romper', 'playsuit', 'dungaree', 'gown', 'saree
  *  shirt to wear with it. "shirts and trousers" came back as shirts alone,
  *  which is the bug I was fixing something else to prevent. */
 const OTHER_SLOT = ['skirt']
+/** A two-piece set is not one of its pieces.
+ *
+ *  "Diffuse bright orange & yellow shorts set", "Lunar Aisle Shorts Set",
+ *  "Top-pants blazer set" — co-ords led the shorts strip of a beach-party
+ *  search, because a set that contains shorts says "shorts" in its name and
+ *  the matcher had no reason to disagree. Someone asking for shorts is asking
+ *  for a pair of shorts; a matching two-piece is a different purchase and
+ *  usually a different department.
+ *
+ *  Kept to the words stores actually print in a TITLE. "set" alone is far too
+ *  broad — the exclusion is tested against the description too, where "part of
+ *  our resort set" would empty the strip. */
+const SET_PIECE = [
+  'co-ord', 'co ord', 'coord', 'co-ords', 'coords',
+  'shorts set', 'short set', 'pant set', 'pants set', 'trouser set',
+  'shirt set', 'kurta set', 'night set', 'pyjama set', 'pajama set',
+]
 
 export const GARMENT_EXCLUSIONS: Record<string, string[]> = {
-  shirt:   ['t-shirt', 't shirt', 'tshirt', 'tee', 'tees', 'sweatshirt', 'polo', 'nightshirt', 'undershirt', 'henley'],
+  // 'shirt dress' is here for the same reason 't-shirt' is: it is a garment
+  // whose name contains "shirt" and which is not one. It arrived at the top of
+  // a shirt strip as "MULMUL TINY MOTIFS BLOCK PRINTED SHIRT DRESS".
+  shirt:   ['t-shirt', 't shirt', 'tshirt', 'tee', 'tees', 'sweatshirt', 'polo', 'nightshirt', 'undershirt', 'henley',
+            'shirt dress', 'shirtdress'],
   polo:    ['polo neck', 'poloneck', 'polo-neck', 'water polo'],
   boot:    ['bootcut', 'boot cut', 'bootie shorts'],
   // These were PHRASES, and a phrase is the wrong shape for this. "denim dress"
@@ -383,11 +404,11 @@ export const GARMENT_EXCLUSIONS: Record<string, string[]> = {
   // entirely. A dress is not a trouser however much denim is in it. Single
   // words, matched as words, so nothing gets past by having an adjective
   // wedged into the middle.
-  jean:    ['denim jacket', 'denim shirt', 'denim jkt', 'dress', ...WHOLE_BODY, ...OTHER_SLOT],
-  trouser: [...WHOLE_BODY, ...OTHER_SLOT],
-  short:   ['dress', ...WHOLE_BODY, ...OTHER_SLOT, 'bootie shorts'],
+  jean:    ['denim jacket', 'denim shirt', 'denim jkt', 'dress', ...WHOLE_BODY, ...OTHER_SLOT, ...SET_PIECE],
+  trouser: [...WHOLE_BODY, ...OTHER_SLOT, ...SET_PIECE],
+  short:   ['dress', ...WHOLE_BODY, ...OTHER_SLOT, 'bootie shorts', ...SET_PIECE],
   // A co-ord is a set, not a t-shirt, and it kept arriving as one.
-  tshirt:  ['co-ord', 'coord', 'pant set', 'track pant', 'pyjama set', 'night set', ...WHOLE_BODY],
+  tshirt:  ['track pant', ...WHOLE_BODY, ...SET_PIECE],
   tank:    ['tankini'],
   // The shape words above are strong signals on footwear and meaningless
   // elsewhere: "low rise" is a trouser, "track pant" is not a runner, and a

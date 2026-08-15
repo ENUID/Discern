@@ -309,7 +309,14 @@ function getCategoryDomains(query: string, cc?: string | null): string[] {
 
 function productHaystack(p: UcpProduct): string {
   const opts = (p.options || []).map(o => `${o.name} ${o.values.join(' ')}`).join(' ')
-  return `${p.title} ${(p.tags || []).join(' ')} ${p.description || ''} ${opts}`.toLowerCase()
+  // Separators become spaces. Shopify tags are written `key_Value`
+  // (`Filtercategory_Women`, `Bottomwear_Classic`, `Men > Shirts`), and `_` is
+  // a WORD character to a JavaScript regex — so every word-boundary test in
+  // here silently failed to read the single most structured field a store
+  // gives us. The tags were being carried around and never actually read.
+  return `${p.title} ${(p.tags || []).join(' ')} ${p.description || ''} ${opts}`
+    .toLowerCase()
+    .replace(/[_/|>]+/g, ' ')
 }
 
 function conceptHit(haystack: string, group: string[]): boolean {
@@ -405,19 +412,31 @@ function isNonFashion(p: UcpProduct): boolean {
 const WOMEN_GENDER_RE = /\b(women'?s?|womens|ladies?|female)\b/i
 const MEN_GENDER_RE = /\b(men'?s?|mens|male|gentlemen)\b/i
 
-function productGenderSignal(p: UcpProduct): 'men' | 'women' | null {
-  // The OPENING of the description as well as the title and tags. A men's
-  // shorts search was returning "Zahra Printed Shirt & Shorts Co-Ord Set" —
-  // womenswear whose title, tags and product_type never say so, and whose
-  // description says it in the first line. Reading three of the four places a
-  // store states who a garment is for is how a man ends up looking at a photo
-  // of a woman.
-  //
-  // Only the opening, deliberately. Further down a description will say things
-  // like "also available in women's", and treating that as the garment's own
-  // gender would drop menswear for mentioning that a women's version exists.
+/** The places a store states who a garment is for, in one string a word-
+ *  boundary regex can actually read.
+ *
+ *  The underscore is why this function exists. Shopify's own tag convention is
+ *  `key_Value` — `Filtercategory_Women`, `category_women`, `collection_Mens
+ *  Shirt` — and in a JavaScript regex `_` is a WORD character, so `\bwomen`
+ *  never matches `Filtercategory_Women`. Every one of those tags says the
+ *  gender in plain English and the filter was blind to all of them: a shirt
+ *  tagged `Filtercategory_Women` led a beach-party search, and a strip of
+ *  women's co-ord shorts sets sat above the menswear. Separators become
+ *  spaces, so the words stand on their own.
+ *
+ *  The description is read only at its OPENING, deliberately. Further down, a
+ *  description will say things like "also available in women's", and treating
+ *  that as the garment's own gender would drop menswear for mentioning that a
+ *  women's version exists. */
+function genderHaystack(p: UcpProduct): string {
   const intro = String(p.description || '').slice(0, 220)
-  const hay = `${p.title} ${(p.tags || []).join(' ')} ${p.product_type || ''} ${intro}`.toLowerCase()
+  return `${p.title} ${(p.tags || []).join(' ')} ${p.product_type || ''} ${intro}`
+    .toLowerCase()
+    .replace(/[_/|>]+/g, ' ')
+}
+
+function productGenderSignal(p: UcpProduct): 'men' | 'women' | null {
+  const hay = genderHaystack(p)
   const isWomen = WOMEN_GENDER_RE.test(hay)
   const isMen = MEN_GENDER_RE.test(hay)
   if (isWomen && !isMen) return 'women'
@@ -982,7 +1001,7 @@ function applyFiltersAndSort(
     // has to stay full; it simply loses to every piece that says plainly who
     // it is for. With twelve places on a page, losing is usually enough.
     const speaksTo = (p: UcpProduct) => {
-      const hay = `${p.title} ${(p.tags || []).join(' ')} ${p.product_type || ''} ${String(p.description || '').slice(0, 220)}`.toLowerCase()
+      const hay = genderHaystack(p)
       const w = WOMEN_GENDER_RE.test(hay), m = MEN_GENDER_RE.test(hay)
       // Named for the asked-for gender and not the other: unambiguous.
       if (requestedGender === 'men') return m && !w ? 0 : (m && w ? 1 : 0.5)
