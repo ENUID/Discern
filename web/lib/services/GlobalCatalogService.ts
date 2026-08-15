@@ -19,6 +19,7 @@ import { GARMENT_PRODUCT_TERMS, matchesGarmentExclusion, COLOR_VOCAB } from '../
 import { getExchangeRates } from '../exchangeRates'
 import { rerankByRelevance, type JudgeOutcome } from './relevanceRerank'
 import { palettesFor } from '../fashion/palette'
+import { runAfterResponse } from '../afterResponse'
 
 /** The last search's judge outcome, for the diagnostic endpoint and the
  *  scorecard. A module-level value is enough: it answers "is the taste layer
@@ -85,6 +86,16 @@ type ProductSort = 'price_asc' | 'price_desc' | 'relevance' | 'trust_desc'
 
 const STORE_TIMEOUT_MS = 5000   // many Shopify MCP endpoints take 2.5–4s; a tight
                                 // timeout silently drops them and starves results
+/** How long a round is allowed to hold up the page.
+ *
+ *  Distinct from STORE_TIMEOUT_MS, and the distinction is the whole point. The
+ *  timeout is how long a STORE gets before we give up on it; this is how long
+ *  the SHOPPER waits for the slowest one still talking. A store that needs 4.5s
+ *  is not a problem to be cut off — its pieces are welcome whenever they land —
+ *  it is only a problem when forty other stores have already answered and the
+ *  page is being held for it. Late arrivals ingest into the same cached pool
+ *  and show up on the next page or the next search. */
+const STORE_SOFT_MS = Number(process.env.STORE_SOFT_MS ?? 2600)
 const BATCH_SIZE = 45          // stores queried in parallel per round
 const MAX_ROUNDS_PER_CALL = 2  // up to 90 stores fetched per search() call
 // This is the CANDIDATE POOL fetched per call, not what a shopper actually
@@ -1238,9 +1249,33 @@ export class GlobalCatalogService {
     while (!enough() && entry.pending.length > 0 && rounds < MAX_ROUNDS_PER_CALL) {
       rounds++
       const batch = entry.pending.splice(0, BATCH_SIZE)
-      const batchRaw = await Promise.all(batch.map(d => fetchStore(d, storeQuery, cc, storeCtx)))
       for (const d of batch) entry.queried.add(d)
-      ingest(batchRaw)
+
+      // The round used to be `Promise.all`, which means it finished when its
+      // SLOWEST store did. Forty stores answering in 800ms and five hanging to
+      // the 5s timeout cost the shopper five seconds — for the five, which by
+      // definition contributed nothing. Every search paid the worst store in
+      // the batch, twice.
+      //
+      // So each store ingests the moment it lands, and the round stops at a
+      // soft deadline with whatever has arrived. The stragglers are NOT
+      // cancelled: they keep running and keep ingesting into this same pool,
+      // which is cached — so their pieces are simply there for the next page
+      // or the next search rather than being thrown away. Nothing fetched is
+      // ever wasted; it just stops being something anyone waits for.
+      const inflight = batch.map(d =>
+        fetchStore(d, storeQuery, cc, storeCtx)
+          .then(list => { ingest([list]); return true })
+          .catch(() => false),
+      )
+      // Keep late arrivals alive past the response on serverless, so the pool
+      // they are filling is actually there next time.
+      runAfterResponse(() => Promise.all(inflight).then(() => undefined))
+
+      await Promise.race([
+        Promise.all(inflight),
+        new Promise<void>(r => setTimeout(r, STORE_SOFT_MS)),
+      ])
     }
 
     // Second-chance recall: a literal query can miss on Shopify's keyword search

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useQuery } from 'convex/react'
 import { api } from '@/convex/_generated/api'
@@ -10,6 +10,7 @@ import {
   type TasteProfileLike,
 } from './shopperProfile'
 import type { StylistContext } from './askStylist'
+import { readDeviceGender } from '@/lib/shopperPrefs'
 
 /** Everything Fabrics is told about the shopper, gathered once.
  *
@@ -31,6 +32,22 @@ export function useStylistContext(opts: {
   const authProof = useConvexAuthProof(email)
   const scope = email && authProof ? { userEmail: email, authProof } : 'skip'
 
+  // Whoever is holding the phone, when the account has not been asked. Read
+  // after mount, never during render — localStorage does not exist on the
+  // server and reading it in a useMemo body is a hydration mismatch waiting
+  // to happen.
+  const [deviceGender, setDeviceGender] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    const sync = () => setDeviceGender(readDeviceGender() ?? undefined)
+    sync()
+    window.addEventListener('discern:shopsFor', sync)
+    window.addEventListener('storage', sync)
+    return () => {
+      window.removeEventListener('discern:shopsFor', sync)
+      window.removeEventListener('storage', sync)
+    }
+  }, [])
+
   const memory = useQuery(api.stylistMemory.getStylistMemory, scope as never)
   const taste = useQuery(api.tasteProfile.getTasteProfile, scope as never) as TasteProfileLike
 
@@ -40,7 +57,9 @@ export function useStylistContext(opts: {
     buyerCurrency,
     buyerCountry,
     memorySummary: (memory as { summary?: string } | undefined)?.summary ?? undefined,
-    shopperGender: shopperGender(taste),
+    // The account first: a fact someone stated about themselves outranks a tap
+    // on whatever device they happen to be holding.
+    shopperGender: shopperGender(taste) ?? deviceGender,
     shopperProfile: shopperProfileLine(taste),
     shopperSizes: shopperSizes(taste),
     shopperWardrobe: shopperWardrobeLine(taste),
@@ -48,5 +67,5 @@ export function useStylistContext(opts: {
     // is the premium one.
     savedProducts: savedProducts?.slice(0, 12),
     recentSearches: recentSearches?.slice(0, 8),
-  }), [buyerCurrency, buyerCountry, memory, taste, savedProducts, recentSearches])
+  }), [buyerCurrency, buyerCountry, memory, taste, savedProducts, recentSearches, deviceGender])
 }

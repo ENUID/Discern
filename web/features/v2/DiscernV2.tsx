@@ -29,6 +29,7 @@ import { V2, V2_PROMPTS, V2_SUGGESTIONS, V2_LOADING, V2_HERO_COPY } from './them
 import V2Auth, { type V2AuthReason } from './V2Auth'
 import V2Feedback from './V2Feedback'
 import V2Profile from './V2Profile'
+import { readDeviceGender, writeDeviceGender } from '@/lib/shopperPrefs'
 import { buildCartLinks } from './cartLink'
 import { useSyncedShelf } from './useSyncedShelf'
 import { productSlotCategories, type SlotCategory } from '@/lib/queryParser'
@@ -234,6 +235,47 @@ function Progress({ light }: { light?: boolean }) {
  *  (Low Power Mode does refuse); the poster stays up in that case, which is the
  *  correct degraded state and not worth reporting.
  */
+/** The one question the catalogue cannot answer for itself.
+ *
+ *  Gender is a HARD filter server-side — say men and you are never shown a
+ *  women's piece — and it is the only one that cannot be inferred, because
+ *  almost no sentence carries it. "A linen shirt" names none. "Something for a
+ *  beach party" names none. Guessing is a coin flip that is wrong for half the
+ *  people who ask, so the filter correctly does nothing while it is unknown,
+ *  and a shopper sees a mixed page and reasonably calls it broken.
+ *
+ *  It was only settable on a Convex account, three taps behind a menu, which
+ *  meant every signed-out visitor searched with it blank. So: asked once, in
+ *  one tap, right before the first search, and never shown again. It answers
+ *  onto the device; the account still wins when it holds an answer.
+ *
+ *  Deliberately not a modal. Nothing here blocks — the shopper can ignore it
+ *  and search anyway, exactly as they can today, and the only thing they lose
+ *  is the filter they never knew about. */
+function ShopsFor() {
+  const [known, setKnown] = useState<boolean | null>(null)   // null = not read yet
+
+  useEffect(() => { setKnown(readDeviceGender() !== null) }, [])
+
+  // Server render and first paint show nothing: reading localStorage during
+  // render is a hydration mismatch, and a control that flashes in and out is
+  // worse than one that arrives a beat late.
+  if (known !== false) return null
+
+  const pick = (g: 'Men' | 'Women' | 'Both') => { writeDeviceGender(g); setKnown(true) }
+
+  return (
+    <div className="v2-shopsfor" role="group" aria-label="Who are you shopping for?">
+      <span className="v2-shopsfor-q">Shopping for</span>
+      <div className="v2-shopsfor-opts">
+        {(['Men', 'Women', 'Both'] as const).map(g => (
+          <button key={g} type="button" className="v2-shopsfor-b" onClick={() => pick(g)}>{g}</button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function HeroVideo({ src, poster }: { src: string; poster?: string }) {
   const ref = useRef<HTMLVideoElement>(null)
   useEffect(() => {
@@ -1614,6 +1656,7 @@ export default function DiscernV2({
                 <h1><span>Start</span> <span>anywhere.</span></h1>
                 <p>Pick one, or ask for something else.</p>
               </div>
+              <ShopsFor />
               <div className="v2-sugs">
                 {V2_SUGGESTIONS.map(s => (
                   <button key={s} className="v2-sug" onClick={() => { setInput(s); run(s) }}>{s}</button>
@@ -2600,6 +2643,14 @@ export default function DiscernV2({
           box-shadow:inset 0 0 0 1px ${V2.glassEdge};transition:background .22s ${V2.ease};}
         .v2-inspire-cta:hover{background:rgba(255,255,255,.18);}
         .v2-sugs{position:relative;z-index:2;display:flex;flex-direction:column;gap:9px;padding:22px 14px 0;}
+        .v2-shopsfor{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;
+          flex-wrap:wrap;gap:10px;padding:18px 14px 0;}
+        .v2-shopsfor-q{font-size:13px;letter-spacing:.04em;color:rgba(255,255,255,.72);}
+        .v2-shopsfor-opts{display:flex;gap:7px;}
+        .v2-shopsfor-b{min-height:44px;padding:9px 16px;border-radius:999px;cursor:pointer;
+          font-size:14px;color:#fff;background:rgba(255,255,255,.14);
+          border:1px solid rgba(255,255,255,.28);backdrop-filter:blur(8px);}
+        .v2-shopsfor-b:hover{background:rgba(255,255,255,.24);}
         .v2-sug{text-align:left;padding:13px 18px;border:none;border-radius:999px;cursor:pointer;color:#fff;
           font-size:13px;font-weight:400;background:${V2.glassDark};
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
