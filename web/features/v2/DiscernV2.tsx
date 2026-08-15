@@ -1638,7 +1638,13 @@ export default function DiscernV2({
                 prompt panel: title, season line, and one pill into the
                 suggestions. */}
             <section className="v2-hero v2-hero2" data-surface="dark">
-              <div className="v2-hero-media"><Img src="/v2/hero-2.jpg" /><div className="v2-veil" /></div>
+              {/* No src: /v2/hero-2.jpg has never existed, so this asked for it and got a
+                  404 on every single page load. The panel is not empty without it —
+                  .v2-hero-media .v2-img-ph is a designed dark gradient with a woven
+                  texture, which is what has actually been on screen all along and
+                  reads as deliberate. Drop a hero-2.jpg into public/v2 and put the
+                  src back to use a photograph instead; nothing else needs touching. */}
+              <div className="v2-hero-media"><Img /><div className="v2-veil" /></div>
               <div className="v2-hero-copy">
                 <h1 className="v2-one"><span>Pages from Landscapes</span></h1>
                 <p>Fall-Winter 2026 Collection</p>
@@ -1651,7 +1657,7 @@ export default function DiscernV2({
 
             {/* 1c · INSPIRE — the prompt panel proper */}
             <section className="v2-hero v2-hero3" data-surface="dark">
-              <div className="v2-hero-media"><Img src="/v2/hero-3.jpg" /><div className="v2-veil" /></div>
+              <div className="v2-hero-media"><Img /><div className="v2-veil" /></div>
               <div className="v2-hero-copy">
                 <h1><span>Start</span> <span>anywhere.</span></h1>
                 <p>Pick one, or ask for something else.</p>

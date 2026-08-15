@@ -258,6 +258,13 @@ async function journey(browser, screen) {
 
   const crashes = []
   page.on('pageerror', e => crashes.push(String(e.message)))
+  // Anything the page asked for and did not get. A 404 on a chunk is a dead
+  // page; a 404 on an image is a hole in the screen. Neither raises an error,
+  // so neither is caught by pageerror above.
+  const notFound = []
+  page.on('response', r => {
+    if (r.status() === 404) notFound.push(r.url().replace(BASE, ''))
+  })
 
   // ── the stubs ─────────────────────────────────────────────────────────────
   const json = (r, body) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
@@ -322,6 +329,35 @@ async function journey(browser, screen) {
   }))
   check(home.hero && home.composer, 'the door opens onto a hero and somewhere to type', home)
   check(!home.sideways, 'and the page does not scroll sideways')
+
+  // ── 1b · the page is ALIVE, not just drawn ───────────────────────────────
+  // The most dangerous failure this app has is not an error. It is a page that
+  // renders perfectly and does nothing: the server HTML arrives, the hero and
+  // the headline and the composer are all there, and the client bundle 404s,
+  // so React never hydrates and not one effect or handler ever runs. Every
+  // screenshot looks right. Every button is dead.
+  //
+  // It happened today — two dev servers overwriting each other's chunks — and
+  // the only visible symptom was one small control failing to appear. Nothing
+  // in this harness would have called it: the checks above pass on static
+  // markup alone.
+  //
+  // So: prove hydration, by the only evidence that cannot be faked by server
+  // HTML — a piece of state that exists solely because client code ran.
+  const alive = await page.evaluate(() => {
+    const ta = document.querySelector('.v2-bar textarea')
+    if (!ta) return { hydrated: false, why: 'no composer' }
+    // React attaches its fibre to the DOM node on hydration. No fibre, no
+    // client React, however complete the markup looks.
+    const fibre = Object.keys(ta).some(k => k.startsWith('__react'))
+    return { hydrated: fibre, why: fibre ? 'react fibre present' : 'no react fibre on the composer' }
+  })
+  check(alive.hydrated, 'and the page is alive — React hydrated, handlers are attached', alive)
+
+  // Nothing the page needs may 404. A missing chunk is the failure above; a
+  // missing image is a hole in the demo. Both are silent to a shopper.
+  const missing = notFound.filter(u => !/favicon|apple-icon|\.map$/.test(u))
+  check(missing.length === 0, 'and every asset the page asked for was there', missing.slice(0, 6))
   await shoot(page, `e2e-${screen.name}-1-home`)
 
   // ── 2 · ask for two garments ──────────────────────────────────────────────
