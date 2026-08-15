@@ -1349,18 +1349,31 @@ export class GlobalCatalogService {
         // never shown anyway — every read is cached per photograph for the
         // life of the process, and the whole pass is time-boxed so a slow
         // image host costs the ordering, never the page.
-        // Eighteen, not twenty-six. The page shows twelve; reading eight more
-        // than that is enough to promote a quiet piece into view and every
-        // extra one is another image fetched on a cold cache.
-        const HEAD = 18
+        // THE WHOLE POOL, not the head of it. This read the top eighteen on
+        // the reasoning that the page shows twelve, so a few spare was enough
+        // to promote something. It was not, and the measurement says why:
+        // across the fifty-two candidates for "men shirt", twenty-four are
+        // quiet — and SIXTEEN of those sit below eighteen. "Men's Cotton Solid
+        // Slim Fit", "Relaxed Shirt", "Coreform Black Shirt", none of them
+        // ever looked at. Reordering the noisy head could never surface them,
+        // which is why the page kept coming back the same however the weights
+        // were tuned. It was a retrieval problem wearing a ranking problem's
+        // clothes.
+        //
+        // The whole pool costs 1,294ms cold for fifty-two photographs and
+        // nothing at all warm — I had assumed far worse and was measuring the
+        // store fan-out alongside it.
+        const HEAD = result.length
         const head = result.slice(0, HEAD)
         if (head.length > 3) {
           try {
             const looks = await Promise.race([
-              palettesFor(head.map(p => p.image_url || ''), 8),
+              palettesFor(head.map(p => p.image_url || ''), 12),
               // Half what it was. This is a nicety on top of an order that is
               // already correct — it must not be something a shopper waits on.
-              new Promise<null>(r => setTimeout(() => r(null), 2200)),
+              // Measured at 1.3s for the full pool cold, so this clears it
+              // with room and still refuses to be something anyone waits on.
+              new Promise<null>(r => setTimeout(() => r(null), 2600)),
             ])
             if (looks) {
               // Relevance keeps most of the weight — this reorders pieces the
