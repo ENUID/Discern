@@ -387,8 +387,35 @@ async function multiCategorySearch(
   // This function already existed and was already imported here. It was
   // running in HOW TO STYLE and had never been called on the path that answers
   // the question it was written for.
+  // One register, before anything is composed.
+  //
+  // An outfit came back with a ₹4,750 shirt and $630 loafers — the shoes cost
+  // eleven times the shirt. Both were good answers to their own slot and
+  // together they are not an outfit anybody buys. Nothing anywhere had ever
+  // compared the price of one slot to another, partly because until this
+  // commit they were not even in the same currency.
+  //
+  // Not a budget, and not a filter: the median of what the slots ALREADY
+  // returned is the register this question is being answered in, and a piece
+  // more than four times it — or less than a quarter — is out of the outfit
+  // rather than out of the catalogue. It goes behind pieces that fit, and
+  // stays available. And if a whole slot is out of band, the band is wrong,
+  // not the slot: a lone shoe strip full of good expensive shoes should not
+  // be emptied by a cheap shirt.
+  const priceOf = (p: any) => (typeof p?.display_price === 'number' ? p.display_price
+    : typeof p?.price === 'number' ? p.price : 0)
+  const leads = nonEmpty.map(g => priceOf(g.products[0])).filter(n => n > 0).sort((a, b) => a - b)
+  const median = leads.length ? leads[Math.floor(leads.length / 2)] : 0
+  const inBand = (n: number) => n > 0 && n <= median * 4 && n >= median / 4
+  const banded = median <= 0 ? nonEmpty : nonEmpty.map(g => {
+    const fits = g.products.filter(p => inBand(priceOf(p)))
+    // Every piece out of band means the median is not this slot's register.
+    return fits.length === 0 ? g
+      : { ...g, products: [...fits, ...g.products.filter(p => !inBand(priceOf(p)))] }
+  })
+
   const composed = composeOutfit(
-    nonEmpty,
+    banded,
     (p: any) => `${p?.title ?? ''} ${(p?.tags ?? []).join(' ')}`,
   ) as typeof nonEmpty
 

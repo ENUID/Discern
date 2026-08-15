@@ -20,6 +20,7 @@ import { getExchangeRates } from '../exchangeRates'
 import { rerankByRelevance, type JudgeOutcome } from './relevanceRerank'
 import { palettesFor } from '../fashion/palette'
 import { runAfterResponse } from '../afterResponse'
+import { wornGenderFor } from './wornGender'
 
 /** The last search's judge outcome, for the diagnostic endpoint and the
  *  scorecard. A module-level value is enough: it answers "is the taste layer
@@ -58,6 +59,17 @@ export type UcpProduct = {
   trust_score?: number
   relevance_score?: number
   relevance_reason?: string
+  /** The same price, in the currency the SHOPPER is using.
+   *
+   *  Every product keeps the currency its own brand quoted, and the interface
+   *  printed that verbatim — so one outfit showed a ₹4,750 shirt beside $630
+   *  loafers beside €200 sandals. Three currencies on one screen is not a
+   *  price list, it is a puzzle, and no one can tell whether the shoes cost
+   *  four times the shirt or forty. Converted once, here, where the rates
+   *  already are; `price` and `currency` stay untouched because checkout hands
+   *  off to the brand and the brand quotes its own. */
+  display_price?: number
+  display_currency?: string
   product_type?: string
   /** Shopify standard taxonomy ids, e.g. 'gid://shopify/TaxonomyCategory/aa-8-8'. */
   categories?: string[]
@@ -1085,7 +1097,15 @@ function applyFiltersAndSort(
     })
   }
 
-  return out.slice(0, params.limit)
+  // One currency for the eye. Done last so it costs nothing on the pieces that
+  // were filtered out along the way.
+  const shown = out.slice(0, params.limit)
+  const target = normalizeCurrency(params.budgetCurrency)
+  for (const p of shown) {
+    p.display_currency = target
+    p.display_price = Math.round(convertPrice(p.price, p.currency, target, params.rates))
+  }
+  return shown
 }
 
 // ─── Main search ───────────────────────────────────────────────────────────────
@@ -1511,6 +1531,41 @@ export class GlobalCatalogService {
     // Size preference — soft reorder only, applied last so it nudges within
     // whatever relevance/geo order already exists rather than overriding it.
     result = applySizePreference(result, preferredSize)
+
+    // Who is actually in the photograph.
+    //
+    // The gender filter above is a text filter and it is clean — a men's
+    // search leaks nothing that SAYS women anywhere. What survives it is the
+    // piece that says nothing at all: no department, no gendered tag, no
+    // pronoun, and a photograph of a woman. "Bunai Cotton Grace Coord Set",
+    // "Whispers of Flowers Shirt". There is no text fix for a fact nobody
+    // wrote down, and the photograph has been sitting there the whole time.
+    //
+    // Only on the page about to be shown, never on the pool of fifty-two —
+    // this is a model call, unlike the palette read beside it, and running it
+    // wide is how a search costs thirty seconds again. Only when the shopper
+    // has actually told us a gender. Demote, never drop: unisex pieces exist
+    // and a wrong read should cost a piece its place, not its existence.
+    // The gender the ANSWER was filtered to, which is not always the profile's.
+    // /api/catalog/search passes no taste profile at all — it prepends "men" to
+    // the query instead — so preferGender is null there and this whole pass was
+    // silently skipped on the path the interface falls back to. Resolved the
+    // same way applyFiltersAndSort resolves it, from the query first.
+    const effectiveGender =
+      requestedGenderFromConcepts(mandatoryConcepts ?? []) ?? preferGender ?? null
+    if (effectiveGender && result.length > 1) {
+      try {
+        const opposite = effectiveGender === 'men' ? 'woman' : 'man'
+        const worn = await wornGenderFor(result.map(p => p.image_url || ''))
+        const wrong = result.filter((_, i) => worn[i] === opposite)
+        // Everything reading as the other gender is far likelier to be a bad
+        // read than a catalogue with nothing in it for you. Leave it alone.
+        if (wrong.length > 0 && wrong.length < result.length) {
+          const wrongSet = new Set(wrong)
+          result = [...result.filter(p => !wrongSet.has(p)), ...wrong]
+        }
+      } catch { /* the order above stands */ }
+    }
 
     return result
   }

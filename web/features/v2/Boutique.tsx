@@ -97,9 +97,13 @@ function toProduct(p: any): V2Product {
   return {
     id: String(p?.id ?? p?.handle ?? Math.random()),
     title: String(p?.title ?? 'Piece'),
-    price: typeof p?.price === 'number' ? p.price : undefined,
+    // The shopper's currency when the catalogue converted one, the brand's
+    // otherwise. Showing each brand's own currency put three of them in one
+    // outfit and made the prices impossible to compare.
+    price: typeof p?.display_price === 'number' ? p.display_price
+      : typeof p?.price === 'number' ? p.price : undefined,
     compareAt: typeof p?.compare_at_price === 'number' ? p.compare_at_price : undefined,
-    currency: p?.currency ?? p?.base_currency ?? 'USD',
+    currency: p?.display_currency ?? p?.currency ?? p?.base_currency ?? 'USD',
     image: img(p),
     images: media.length ? media.slice(0, 5) : undefined,
     vendor: p?.vendor,
