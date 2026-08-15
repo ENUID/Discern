@@ -78,7 +78,16 @@ export async function infer(
   tier: Tier,
   messages: Msg[],
   system?: string,
-  opts: { max_tokens?: number; temperature?: number; timeoutMs?: number; budgetMs?: number } = {},
+  opts: {
+    max_tokens?: number; temperature?: number; timeoutMs?: number; budgetMs?: number
+    /** How much of max_tokens the model may spend THINKING before it writes
+     *  anything. On gpt-oss and Cerebras' models reasoning tokens come out of
+     *  the same completion budget, so a scoring task that needs 400 tokens of
+     *  JSON can return an empty string at 600 having spent all of it
+     *  deliberating. Callers that want an answer rather than an argument pass
+     *  'low'. */
+    reasoningEffort?: 'low' | 'medium' | 'high'
+  } = {},
 ): Promise<InferResult> {
   // A TOTAL budget for the whole ladder, not just per rung. Five rungs at six
   // seconds each is thirty seconds spent walking down a ladder that is not
@@ -107,7 +116,7 @@ export async function infer(
         max_tokens: maxTokens, temperature,
         // Low effort on the fast tier: this model will otherwise spend its
         // whole budget reasoning and return nothing inside the timeout.
-        reasoning_effort: tier === 'fast' ? 'low' : 'medium',
+        reasoning_effort: opts.reasoningEffort ?? (tier === 'fast' ? 'low' : 'medium'),
         model: CEREBRAS_MODEL,
       } as never),
     },
@@ -122,6 +131,8 @@ export async function infer(
       run: () => groqDirectChat(messages, system, {
         max_tokens: maxTokens, temperature,
         model: tier === 'fast' ? GROQ_DIRECT_FAST_MODEL : GROQ_DIRECT_SMART_MODEL,
+        // gpt-oss counts its thinking against max_tokens like everything else.
+        ...(opts.reasoningEffort ? { extraPayload: { reasoning_effort: opts.reasoningEffort } } : {}),
       }),
     },
     {
