@@ -78,8 +78,17 @@ export async function infer(
   tier: Tier,
   messages: Msg[],
   system?: string,
-  opts: { max_tokens?: number; temperature?: number; timeoutMs?: number } = {},
+  opts: { max_tokens?: number; temperature?: number; timeoutMs?: number; budgetMs?: number } = {},
 ): Promise<InferResult> {
+  // A TOTAL budget for the whole ladder, not just per rung. Five rungs at six
+  // seconds each is thirty seconds spent walking down a ladder that is not
+  // going to answer — and measured on production that pushed a search past the
+  // route's own deadline and returned an EMPTY page. Thirty-seven seconds, to
+  // show nothing. Anyone waiting on a search would rather have keyword order
+  // now than a judgement in half a minute, so the ladder gives up.
+  const started = Date.now()
+  const budget = opts.budgetMs ?? (tier === 'fast' ? 9000 : 16000)
+  const spent = () => Date.now() - started
   const maxTokens = opts.max_tokens ?? 1200
   const temperature = opts.temperature ?? 0.3
   // A fast call is one somebody is waiting on mid-search; a smart one is doing
@@ -138,12 +147,16 @@ export async function infer(
     if (!rung.ready) { skipped.push(`${rung.name}:no-key`); continue }
     if (isOnCooldown(rung.name)) { skipped.push(`${rung.name}:cooldown`); continue }
     if (!rung.fits(promptTokens, maxTokens)) { skipped.push(`${rung.name}:too-long`); continue }
+    const left = budget - spent()
+    // Not enough left to be worth a round trip: stop rather than start
+    // something that will be cut off half way through anyway.
+    if (left < 1200) { skipped.push(`${rung.name}:out-of-budget`); break }
 
     try {
       const res = await Promise.race([
         rung.run(),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('attempt-timeout')), perAttempt)),
+          setTimeout(() => reject(new Error('attempt-timeout')), Math.min(perAttempt, left))),
       ])
       const text = readContent(res)
       if (text) return { text, provider: rung.name }
@@ -157,6 +170,6 @@ export async function infer(
     }
   }
 
-  console.warn(`[infer] no provider answered (${tier}) — ${skipped.join(', ')}`)
+  console.warn(`[infer] no provider answered (${tier}) in ${spent()}ms — ${skipped.join(', ')}`)
   return { text: null, provider: `none(${skipped.join(',')})` }
 }

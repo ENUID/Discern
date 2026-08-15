@@ -1349,13 +1349,18 @@ export class GlobalCatalogService {
         // never shown anyway — every read is cached per photograph for the
         // life of the process, and the whole pass is time-boxed so a slow
         // image host costs the ordering, never the page.
-        const HEAD = 26
+        // Eighteen, not twenty-six. The page shows twelve; reading eight more
+        // than that is enough to promote a quiet piece into view and every
+        // extra one is another image fetched on a cold cache.
+        const HEAD = 18
         const head = result.slice(0, HEAD)
         if (head.length > 3) {
           try {
             const looks = await Promise.race([
               palettesFor(head.map(p => p.image_url || ''), 8),
-              new Promise<null>(r => setTimeout(() => r(null), 4500)),
+              // Half what it was. This is a nicety on top of an order that is
+              // already correct — it must not be something a shopper waits on.
+              new Promise<null>(r => setTimeout(() => r(null), 2200)),
             ])
             if (looks) {
               // Relevance keeps most of the weight — this reorders pieces the
