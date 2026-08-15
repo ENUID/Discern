@@ -123,6 +123,21 @@ export async function paletteOf(imageUrl: string, timeoutMs = 6000): Promise<Pal
     px = out.data; w = out.info.width; h = out.info.height
   } catch { return null }
 
+  // ── where the garment is ──────────────────────────────────────────────
+  // The first version measured the whole photograph and every shirt came back
+  // "busy, variety 2-3" — a plain white shirt scoring the same as a yellow
+  // plaid, which made the whole signal useless for ranking. The reason is that
+  // a model shot is mostly NOT the garment: hair, face, trousers, shoes, floor
+  // and backdrop all contributed colours, so what was being measured was the
+  // photograph rather than the thing for sale.
+  //
+  // Product photography puts the product in the middle. Reading only the
+  // central band throws away most of the hair, the floor and the surroundings,
+  // and on a full-length shot lands on the torso — which is the garment on a
+  // top and still mostly garment on a trouser.
+  const x0 = Math.floor(w * 0.22), x1 = Math.ceil(w * 0.78)
+  const y0 = Math.floor(h * 0.24), y1 = Math.ceil(h * 0.76)
+
   const at = (x: number, y: number): Rgb => {
     const i = (y * w + x) * 3
     return { r: px[i], g: px[i + 1], b: px[i + 2] }
@@ -142,10 +157,12 @@ export async function paletteOf(imageUrl: string, timeoutMs = 6000): Promise<Pal
 
   // Quantise into coarse bins. Fine enough to keep navy apart from black,
   // coarse enough that a gradient across a sleeve stays one colour.
-  const BIN = 32
+  // Coarser than it was. At 32 a sleeve's shadow counted as a second colour on
+  // a plain shirt, which is precisely the noise that flattened the signal.
+  const BIN = 52
   const bins = new Map<string, { sum: Rgb; n: number }>()
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
       const c = at(x, y)
       if (backdropIsFlat && dist(c, bg) < 40) continue
       if (looksLikeSkin(c)) continue
@@ -159,7 +176,7 @@ export async function paletteOf(imageUrl: string, timeoutMs = 6000): Promise<Pal
   const total = Array.from(bins.values()).reduce((s, e) => s + e.n, 0)
   // Almost everything was backdrop or skin: a packshot of something tiny, or a
   // photograph we cannot read. Saying nothing beats guessing.
-  if (total < 60) return null
+  if (total < 40) return null
 
   const ranked = Array.from(bins.values())
     .map(e => ({

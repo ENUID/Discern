@@ -18,6 +18,7 @@ import { UCP_REGISTRY, detectBrandsInQuery, BRAND_NAMES, getStoreCountry, GEO_RE
 import { GARMENT_PRODUCT_TERMS, matchesGarmentExclusion, COLOR_VOCAB } from '../queryParser'
 import { getExchangeRates } from '../exchangeRates'
 import { rerankByRelevance, type JudgeOutcome } from './relevanceRerank'
+import { palettesFor } from '../fashion/palette'
 
 /** The last search's judge outcome, for the diagnostic endpoint and the
  *  scorecard. A module-level value is enough: it answers "is the taste layer
@@ -1328,6 +1329,61 @@ export class GlobalCatalogService {
         // one — this only separates pieces the ranker already thought were
         // equivalent.
         result = result.slice().sort((a, b) => quiet(a) - quiet(b))
+
+        // ── And then the photograph, which is the only honest witness ──────
+        //
+        // The rule above reads the TITLE, and a title is written by whoever
+        // uploaded it. "Ronald shirt" is a loud yellow plaid. "Black Cotton
+        // Panelled Shirt" is a black-grey-teal colourblock. "KUNAL" could be
+        // anything. None of those words trip a print filter, so every one of
+        // them led a page of shirts — which is exactly what a shopper keeps
+        // seeing and calling lame.
+        //
+        // Colour extraction was already built and was only being used for
+        // outfit coherence and the styling panel, never for the page anyone
+        // actually looks at. It is here now: the leading candidates have their
+        // photographs read, and a piece carrying four competing colours loses
+        // to one carrying a single flat colour.
+        //
+        // Bounded on purpose. Only the head of the list is read — the tail is
+        // never shown anyway — every read is cached per photograph for the
+        // life of the process, and the whole pass is time-boxed so a slow
+        // image host costs the ordering, never the page.
+        const HEAD = 26
+        const head = result.slice(0, HEAD)
+        if (head.length > 3) {
+          try {
+            const looks = await Promise.race([
+              palettesFor(head.map(p => p.image_url || ''), 8),
+              new Promise<null>(r => setTimeout(() => r(null), 4500)),
+            ])
+            if (looks) {
+              // Relevance keeps most of the weight — this reorders pieces the
+              // ranker already thought were close, it does not overturn it.
+              const scored = head.map((p, i) => {
+                const look = looks[i]
+                const calm = !look ? 0.6                       // unread: neither rewarded nor punished
+                  : look.plain ? 1
+                  : Math.max(0, 1 - (look.variety - 1) * 0.28)
+                // Neutrals and a single accent are what sixteen of sixteen
+                // reference looks are built from; three families competing on
+                // one garment is the opposite of that.
+                const accents = look ? look.families.filter(f => f !== 'neutral').length : 1
+                const palette = accents <= 1 ? 1 : accents === 2 ? 0.7 : 0.4
+                const rank = 1 - i / HEAD
+                // Weighted so the photograph can actually move a piece. At
+                // 0.55 on rank the two terms cancelled and the page came back
+                // in the order it went in — a busy shirt at position one still
+                // beat a plain one at position ten by a hair. Relevance is
+                // still the largest single term, and the garment filters above
+                // are hard, so nothing off-category can climb: this only
+                // reorders pieces that all genuinely answer the ask.
+                return { p, s: rank * 0.40 + calm * 0.42 + palette * 0.18 }
+              }).sort((a, b) => b.s - a.s)
+              result = [...scored.map(x => x.p), ...result.slice(HEAD)]
+            }
+          } catch { /* the word-level order above still stands */ }
+        }
       }
     }
 
