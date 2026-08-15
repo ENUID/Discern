@@ -272,9 +272,12 @@ async function journey(browser, screen) {
     return json(r, {
       slot: 'top',
       subject: { families: ['earth'], plain: true },
+      // One per slot, which is what the endpoint returns: the trouser, the
+      // shoe, the layer — not a row of ten each.
       groups: [
-        { label: 'Trousers', query: 'men trousers', products: TROUSERS },
-        { label: 'Shoes', query: 'men shoes', products: SHIRTS.slice(0, 3) },
+        { label: 'Trousers', query: 'men trousers', products: [TROUSERS[0]] },
+        { label: 'Shoes', query: 'men shoes', products: [SHIRTS[2]] },
+        { label: 'Layer over it', query: 'men jacket', products: [SHIRTS[3]] },
       ],
     })
   })
@@ -495,21 +498,29 @@ async function journey(browser, screen) {
   await sleep(400)
   const waiting = await page.evaluate(() => document.querySelector('.v2-style-wait')?.textContent ?? null)
   check(!!waiting, 'the panel says it is looking rather than sitting empty', { line: waiting })
-  await page.waitForSelector('.v2-style-rows', { timeout: 20000 })
+  await page.waitForSelector('.v2-look', { timeout: 20000 })
   await sleep(500)
   const style = await page.evaluate(() => {
-    const rows = [...document.querySelectorAll('.v2-style-row')]
+    const pieces = [...document.querySelectorAll('.v2-look-piece')]
     const panel = document.querySelector('.v2-panel')?.getBoundingClientRect()
+    const box = document.querySelector('.v2-look')?.getBoundingClientRect()
     return {
-      rows: rows.map(r => ({ t: r.querySelector('.v2-style-row-t')?.textContent, n: r.querySelectorAll('.v2-style-cell').length })),
-      named: [...document.querySelectorAll('.v2-style-cell em')].length,
+      pieces: pieces.map(p => ({
+        slot: p.querySelector('.v2-look-slot')?.textContent,
+        name: p.querySelector('.v2-look-name')?.textContent,
+      })),
       fits: panel ? panel.right <= innerWidth + 0.5 && panel.bottom <= innerHeight + 1 : null,
+      // Three tiles across without a scroller: a look you have to scroll is a
+      // list, which is the thing this stopped being.
+      oneScreen: box ? box.right <= innerWidth + 0.5 : null,
       sideways: document.documentElement.scrollWidth > innerWidth + 1,
     }
   })
-  check(style.rows.length >= 2, 'a row for each slot the piece is missing', style.rows)
-  check(style.rows.every(r => r.n > 0), 'and every row has pieces in it')
-  check(style.named > 0, 'each one named, not a bare thumbnail', { named: style.named })
+  check(style.pieces.length >= 2, 'one piece for each slot the garment is missing', style.pieces)
+  check(style.pieces.every(p => p.slot && p.name), 'each named and labelled with its slot')
+  check(new Set(style.pieces.map(p => p.slot)).size === style.pieces.length,
+    'and no slot appears twice — this is a look, not a list')
+  check(style.oneScreen === true, 'the whole look fits across without scrolling')
   check(style.fits === true, 'the panel stays on the screen and clear of the dock')
   check(!style.sideways, 'and nothing pushes the page sideways')
   await shoot(page, `e2e-${screen.name}-5b-style`)

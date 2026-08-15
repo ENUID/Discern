@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { infer } from '@/lib/ai/infer'
 import { groqChat, FAST_MODEL } from '@/lib/groq'
 import { BoundedCache } from '@/lib/boundedCache'
 import { makeIpRateLimiter } from '@/lib/rateLimit'
@@ -62,15 +63,13 @@ export async function POST(req: NextRequest) {
       .map((it, i) => `${i + 1}. ${it.title}${it.type ? ` [type: ${it.type}]` : ''}`)
       .join('\n')
 
-    const msg = await groqChat(
-      [{ role: 'user', content: userMsg }],
-      SYSTEM,
-      undefined,
-      { max_tokens: 40 * need.length + 60, temperature: 0.2, model: FAST_MODEL }
-    )
+    // The shared ladder, not the OpenRouter default. A caption arriving from
+    // whichever provider is up beats no caption because one pool was capped.
+    const msg = await infer('fast', [{ role: 'user', content: userMsg }], SYSTEM,
+      { max_tokens: 40 * need.length + 60, temperature: 0.2 })
 
     // "3. Striped half-sleeve shirt" -> need[2]
-    for (const line of (msg?.content ?? '').split('\n')) {
+    for (const line of (msg.text ?? '').split('\n')) {
       const m = line.match(/^\s*(\d+)\s*[.)]\s*(.+?)\s*$/)
       if (!m) continue
       const idx = Number(m[1]) - 1

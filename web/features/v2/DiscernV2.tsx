@@ -1845,21 +1845,18 @@ export default function DiscernV2({
                   open piece's own colour and formality. Falls back to the
                   pieces already on the page while that is in flight, so the
                   panel is never empty. */}
+              {/* One piece per slot, laid out as the look reads: the trouser,
+                  the shoe, the layer. Not a row of ten each — that is a search
+                  result, and the shopper already had one of those. */}
               {styleRows && styleRows.length > 0 ? (
-                <div className="v2-style-rows">
-                  {styleRows.map(row => (
-                    <div className="v2-style-row" key={row.title}>
-                      <span className="v2-style-row-t">{row.title}</span>
-                      <div className="v2-style-strip">
-                        {row.products.map(p => (
-                          <button key={p.id} className="v2-style-cell" onClick={() => openProduct(p)}>
-                            <Img src={p.image} alt={p.title} loading="lazy" />
-                            <em>{p.title}</em>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+                <div className="v2-look">
+                  {styleRows.map(row => row.products[0] ? (
+                    <button key={row.title} className="v2-look-piece" onClick={() => openProduct(row.products[0])}>
+                      <Img src={row.products[0].image} alt={row.products[0].title} loading="lazy" />
+                      <span className="v2-look-slot">{row.title}</span>
+                      <span className="v2-look-name">{row.products[0].title}</span>
+                    </button>
+                  ) : null)}
                 </div>
               ) : styleBusy || styleWith.length > 0 ? (
                 <>
@@ -2717,17 +2714,18 @@ export default function DiscernV2({
         /* One row per slot: trousers, shoes, a layer. Each scrolls sideways
            on its own so ten options cost one row of height rather than five,
            and the panel stays a panel rather than becoming a second page. */
-        .v2-style-rows{display:flex;flex-direction:column;gap:16px;}
-        .v2-style-row-t{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
-          color:${V2.ink45};margin-bottom:8px;}
-        .v2-style-strip{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;
-          padding-bottom:2px;scroll-snap-type:x proximity;}
-        .v2-style-strip::-webkit-scrollbar{display:none;}
-        .v2-style-strip .v2-style-cell{flex:0 0 92px;aspect-ratio:3/4;scroll-snap-align:start;}
-        .v2-style-cell em{position:absolute;left:0;right:0;bottom:0;padding:14px 6px 5px;
-          font-style:normal;font-size:9.5px;line-height:1.25;color:#fff;text-align:left;
-          display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-          background:linear-gradient(to top,rgba(0,0,0,.68),transparent);}
+        /* The look: one piece per slot, side by side, read left to right the
+           way it would be worn. Three tiles fit a phone without scrolling,
+           which is the point — a look you have to scroll is a list. */
+        .v2-look{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;}
+        .v2-look-piece{position:relative;padding:0;border:none;background:none;cursor:pointer;
+          color:inherit;text-align:left;display:flex;flex-direction:column;gap:6px;}
+        .v2-look-piece img,.v2-look-piece .v2-img-ph{width:100%;aspect-ratio:3/4;object-fit:cover;
+          display:block;border-radius:6px;background:rgba(255,255,255,.5);}
+        .v2-look-slot{font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;opacity:.55;}
+        .v2-look-name{font-size:11px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;
+          -webkit-box-orient:vertical;overflow:hidden;margin-top:-3px;}
+        @media(min-width:760px){.v2-look{grid-template-columns:repeat(3,minmax(0,150px));}}
         .v2-style-wait{font-size:12px;color:${V2.ink45};margin:0 0 10px;}
         .v2-style-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
         .v2-style-cell{position:relative;padding:0;border:none;cursor:pointer;background:rgba(255,255,255,.55);

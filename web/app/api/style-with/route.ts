@@ -5,7 +5,7 @@ import {
   GARMENT_VOCAB, type SlotCategory,
 } from '@/lib/queryParser'
 import { palettesFor, paletteCached, goesWith } from '@/lib/fashion/palette'
-import { pieceFormality } from '@/lib/fashion/outfitKnowledge'
+import { pieceFormality, composeOutfit } from '@/lib/fashion/outfitKnowledge'
 import { makeIpRateLimiter } from '@/lib/rateLimit'
 
 /**
@@ -25,9 +25,11 @@ import { makeIpRateLimiter } from '@/lib/rateLimit'
  * looking at: colour families that agree, formality within a step, and the
  * quiet over the loud.
  *
- * It is NOT an outfit builder. It returns each slot as its own row of options,
- * the same shape the results page uses, because the shopper picks — this only
- * has to make every option on the row a defensible one.
+ * ONE PIECE PER SLOT. Not ten options a slot: open a shirt and you get the
+ * trouser, the shoe and the layer — the best single answer for each, chosen
+ * TOGETHER rather than three separate winners. A row of ten trousers is a
+ * search result; one trouser that goes with the shirt in front of you is an
+ * opinion, and the opinion is the product.
  */
 
 export const maxDuration = 60
@@ -36,33 +38,12 @@ export const dynamic = 'force-dynamic'
 const isRateLimited = makeIpRateLimiter(20, 60_000)
 
 /** What completes what. Order is wear order, not importance. */
-const COMPLEMENTS: Record<string, { slot: SlotCategory; key: string; label: string }[]> = {
-  top:    [
-    { slot: 'bottom', key: 'trouser', label: 'Trousers' },
-    { slot: 'bottom', key: 'jean',    label: 'Jeans' },
-    { slot: 'shoes',  key: 'sneaker', label: 'Shoes' },
-    { slot: 'outer',  key: 'jacket',  label: 'Layer over it' },
-  ],
-  bottom: [
-    { slot: 'top',    key: 'shirt',   label: 'Shirts' },
-    { slot: 'top',    key: 'tshirt',  label: 'T-shirts' },
-    { slot: 'shoes',  key: 'sneaker', label: 'Shoes' },
-    { slot: 'outer',  key: 'jacket',  label: 'Layer over it' },
-  ],
-  outer:  [
-    { slot: 'top',    key: 'shirt',   label: 'Under it' },
-    { slot: 'bottom', key: 'trouser', label: 'Trousers' },
-    { slot: 'shoes',  key: 'sneaker', label: 'Shoes' },
-  ],
-  shoes:  [
-    { slot: 'bottom', key: 'trouser', label: 'Trousers' },
-    { slot: 'top',    key: 'shirt',   label: 'Shirts' },
-    { slot: 'outer',  key: 'jacket',  label: 'Layer' },
-  ],
-  dress:  [
-    { slot: 'outer',  key: 'jacket',  label: 'Layer over it' },
-    { slot: 'shoes',  key: 'sneaker', label: 'Shoes' },
-  ],
+const COMPLEMENTS: Record<string, { key: string; label: string }[]> = {
+  top:    [{ key: 'trouser', label: 'Trousers' }, { key: 'sneaker', label: 'Shoes' }, { key: 'jacket', label: 'Layer over it' }],
+  bottom: [{ key: 'shirt', label: 'Shirt' }, { key: 'sneaker', label: 'Shoes' }, { key: 'jacket', label: 'Layer over it' }],
+  outer:  [{ key: 'shirt', label: 'Under it' }, { key: 'trouser', label: 'Trousers' }, { key: 'sneaker', label: 'Shoes' }],
+  shoes:  [{ key: 'trouser', label: 'Trousers' }, { key: 'shirt', label: 'Shirt' }, { key: 'jacket', label: 'Layer' }],
+  dress:  [{ key: 'jacket', label: 'Layer over it' }, { key: 'sneaker', label: 'Shoes' }],
 }
 
 /** The slot the opened piece occupies, so we never offer it more of itself. */
@@ -97,7 +78,7 @@ export async function POST(req: NextRequest) {
   const subject = await paletteCached(product.image || product.image_url || '')
   const subjectFormality = pieceFormality(`${product.title} ${product.description ?? ''}`)
 
-  const wanted = COMPLEMENTS[mine].slice(0, 4)
+  const wanted = COMPLEMENTS[mine].slice(0, 3)
 
   try {
     const groups = await Promise.all(wanted.map(async ({ key, label }) => {
@@ -132,11 +113,23 @@ export async function POST(req: NextRequest) {
         return { p, score: colour * 0.55 + formality * 0.3 + quiet * 0.15 }
       }).sort((a, b) => b.score - a.score)
 
-      return { label, query: q, products: scored.slice(0, 10).map(s => s.p) }
+      // The shortlist, kept for the composer below rather than shown.
+      return { label, query: q, products: scored.slice(0, 4).map(s => s.p) }
     }))
 
+    // Chosen TOGETHER. Each slot has offered its best few; this picks the
+    // combination that reads as one outfit rather than three separately
+    // excellent pieces, and promotes that combination's piece to the front of
+    // its slot. Then only the front one is returned — one trouser, one shoe,
+    // one layer, and they agree with each other.
+    const alive = groups.filter(gr => gr.products.length > 0)
+    const composed = composeOutfit(
+      alive,
+      (p: any) => `${p?.title ?? ''} ${(p?.tags ?? []).join(' ')}`,
+    ) as typeof alive
+
     return NextResponse.json({
-      groups: groups.filter(gr => gr.products.length > 0),
+      groups: composed.map(gr => ({ ...gr, products: gr.products.slice(0, 1) })),
       subject: subject ? { families: subject.families, plain: subject.plain } : null,
       slot: mine,
     })
