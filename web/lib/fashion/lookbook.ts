@@ -256,6 +256,227 @@ export function lookbookStats() {
   }
 }
 
+// ── What goes UNDER what, and ON what ───────────────────────────────────────
+/** The lookbook read as a pairing table.
+ *
+ *  HOW TO STYLE used to search the catalogue for "men trousers" whatever piece
+ *  the shopper had open, so every shirt in the catalogue was offered the same
+ *  trousers and the same jacket — the piece on screen never entered the query,
+ *  only the re-ranking of an identical pool. The colour of the thing you are
+ *  looking at is the single most useful fact for deciding what goes with it,
+ *  and it was being measured and thrown away.
+ *
+ *  These are counted off LOOKS, not written by hand: for every look, the top's
+ *  leading colour is paired with the bottom's and the shoe's. Sixteen outfits
+ *  is a small sample and it is honest about that — a colour the lookbook has
+ *  never seen falls back to what the set does most, which is a cream bottom
+ *  and a white shoe. Adding a batch moves these without anyone editing prose.
+ */
+/** The colour a written look-line leads with.
+ *
+ *  Not the first word. "light blue linen overshirt" leads with light blue, and
+ *  taking the first token gave "light" — which is not a colour, cannot be
+ *  searched for, and made every layer resolve to the same non-word. Two-word
+ *  colours are matched before one-word ones, and a wash is kept whole because
+ *  "mid-wash" means denim. */
+const COLOUR_WORDS = [
+  'light blue', 'pale blue', 'mid-blue', 'light indigo', 'denim blue', 'off-white',
+  'light-wash', 'mid-wash', 'dark-wash', 'light wash', 'mid wash', 'dark wash',
+  'cream', 'ivory', 'ecru', 'stone', 'sand', 'taupe', 'tan', 'khaki', 'oat',
+  'white', 'black', 'charcoal', 'grey', 'silver',
+  'navy', 'indigo', 'blue', 'teal',
+  'olive', 'sage', 'green', 'forest',
+  'brown', 'chocolate', 'rust', 'burgundy', 'maroon', 'red', 'pink',
+  'mustard', 'yellow', 'purple', 'lilac', 'beige',
+]
+const LEAD = (s: string): string => {
+  const t = ` ${(s || '').toLowerCase()} `
+  // Earliest in the SENTENCE, not earliest in the list above. Scanning the
+  // list turned "brown leather loafers with a cream sole" into cream, because
+  // cream is written earlier here — the look said brown and the table learned
+  // the wrong shoe. Ties go to the longer word so "light blue" beats "blue".
+  let best = '', bestAt = Infinity
+  for (const w of COLOUR_WORDS) {
+    const m = new RegExp(`\\b${w.replace(/[-\s]/g, '[-\\s]')}\\b`).exec(t)
+    if (!m) continue
+    if (m.index < bestAt || (m.index === bestAt && w.length > best.length)) {
+      bestAt = m.index
+      best = /wash$/.test(w) ? w.replace(/\s/g, '-') : w
+    }
+  }
+  return best
+}
+
+export function pairingsFromLooks(): Map<string, { bottom: string[]; shoes: string[] }> {
+  const out = new Map<string, { bottom: Map<string, number>; shoes: Map<string, number> }>()
+  for (const l of LOOKS) {
+    if (l.verdict !== 'yes') continue
+    // The innermost layer is the garment actually on the torso; the outermost
+    // is the coat. A shopper opening a shirt is asking about the shirt.
+    const top = LEAD(l.layers[l.layers.length - 1] || '')
+    if (!top) continue
+    const rec = out.get(top) ?? { bottom: new Map(), shoes: new Map() }
+    const b = LEAD(l.bottom), s = LEAD(l.shoes)
+    if (b) rec.bottom.set(b, (rec.bottom.get(b) ?? 0) + 1)
+    if (s) rec.shoes.set(s, (rec.shoes.get(s) ?? 0) + 1)
+    out.set(top, rec)
+  }
+  const rank = (m: Map<string, number>) =>
+    Array.from(m.entries()).sort((a, b) => b[1] - a[1]).map(([k]) => k)
+  const final = new Map<string, { bottom: string[]; shoes: string[] }>()
+  for (const [k, v] of Array.from(out.entries())) {
+    final.set(k, { bottom: rank(v.bottom), shoes: rank(v.shoes) })
+  }
+  return final
+}
+
+/** What the set puts on TOP of everything, when it puts anything there.
+ *
+ *  The layer had been searching the same tone as the trousers, so every shirt
+ *  in the catalogue was offered the same off-white jacket sitting above the
+ *  same off-white trousers — one colour, three garments, no outfit. The looks
+ *  that wear an outer layer do not do that: the layer is where the set puts
+ *  its darker or earthier tone. Counted off the looks with two or more layers. */
+export function outerTones(): string[] {
+  const m = new Map<string, number>()
+  for (const l of LOOKS) {
+    if (l.verdict !== 'yes' || l.layers.length < 2) continue
+    const o = LEAD(l.layers[0])
+    if (o) m.set(o, (m.get(o) ?? 0) + 1)
+  }
+  const ranked = Array.from(m.entries()).sort((a, b) => b[1] - a[1]).map(([k]) => k)
+  // The set is small; these are the tones it reaches for when it has no
+  // second layer to learn from, and every one of them appears in it somewhere.
+  return ranked.length ? ranked : ['navy', 'brown', 'charcoal', 'olive']
+}
+
+/** Roughly how light each tone reads, 0 black to 1 white. Only needs to be
+ *  ordinally right — it decides which direction the layer moves, not a shade. */
+const LIGHTNESS: Record<string, number> = {
+  black: 0.05, charcoal: 0.2, navy: 0.2, indigo: 0.25, burgundy: 0.25, brown: 0.3,
+  olive: 0.35, forest: 0.3, teal: 0.35, rust: 0.4, blue: 0.4, green: 0.4, red: 0.4,
+  grey: 0.5, taupe: 0.5, purple: 0.4, khaki: 0.55, tan: 0.55, mustard: 0.6,
+  sage: 0.62, stone: 0.65, 'mid-blue': 0.5, sand: 0.7, pink: 0.75, silver: 0.78,
+  ecru: 0.82, 'light blue': 0.78, 'pale blue': 0.8, beige: 0.8,
+  cream: 0.88, ivory: 0.9, 'off-white': 0.92, white: 0.96,
+}
+const lightnessOf = (t: string) => LIGHTNESS[t.toLowerCase()] ?? 0.5
+
+/** The layer's tone: never the trousers', never the piece's own, and moving in
+ *  the direction that leaves the outfit readable.
+ *
+ *  Walking a fixed list gave every piece in the catalogue the same layer — the
+ *  first tone that was not already taken, which is the same tone every time.
+ *  A layer is the one garment with a job beyond matching: it separates the
+ *  outfit from itself. Over a pale piece it goes dark; over a dark one it goes
+ *  soft; over a mid one it goes to the quiet end. That is what the looks do,
+ *  and it also happens to be why the outfit stops looking like one colour. */
+export function layerTone(subject: string | null, bottom: string): string {
+  const taken = new Set([bottom.toLowerCase(), (subject ?? '').toLowerCase()])
+  for (const kin of KIN[bottom.toLowerCase()] ?? []) taken.add(kin)
+
+  const subjectL = subject ? lightnessOf(subject) : 0.5
+  const want = subjectL > 0.66 ? 'dark' : subjectL < 0.32 ? 'soft' : 'quiet'
+
+  const pool = outerTones().concat(['navy', 'brown', 'olive', 'charcoal', 'taupe', 'burgundy'])
+    .filter(t => !taken.has(t))
+  if (pool.length === 0) return 'navy'
+
+  const score = (t: string) => {
+    const l = lightnessOf(t)
+    if (want === 'dark') return 1 - l          // pale piece: the darker the better
+    if (want === 'soft') return l              // dark piece: lift it
+    return 1 - Math.abs(l - 0.4)               // mid piece: stay in the low-middle
+  }
+  return pool.slice().sort((a, b) => score(b) - score(a))[0]
+}
+
+/** What the set does when it has no opinion about a specific colour — the
+ *  most-used bottom tone and the most-used shoe across every look. */
+export function houseDefault(): { bottom: string; shoes: string } {
+  const bottoms = new Map<string, number>(), shoes = new Map<string, number>()
+  for (const l of LOOKS) {
+    if (l.verdict !== 'yes') continue
+    const b = LEAD(l.bottom), s = LEAD(l.shoes)
+    if (b) bottoms.set(b, (bottoms.get(b) ?? 0) + 1)
+    if (s) shoes.set(s, (shoes.get(s) ?? 0) + 1)
+  }
+  const top = (m: Map<string, number>, fallback: string) =>
+    Array.from(m.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? fallback
+  return { bottom: top(bottoms, 'cream'), shoes: top(shoes, 'white') }
+}
+
+/** Colours that read as the same tone to a shopper, so a lookup for one can
+ *  answer with another's row. Keeps a sixteen-look table from being empty for
+ *  most of the catalogue. */
+const KIN: Record<string, string[]> = {
+  cream: ['ecru', 'ivory', 'off-white', 'sand', 'stone', 'oat', 'beige'],
+  ecru: ['cream', 'ivory', 'sand', 'stone'],
+  white: ['cream', 'ecru', 'ivory'],
+  black: ['charcoal'],
+  charcoal: ['black', 'grey'],
+  grey: ['charcoal', 'black', 'silver', 'stone'],
+  navy: ['indigo', 'blue'],
+  blue: ['navy', 'indigo', 'light blue'],
+  'light blue': ['blue', 'pale'],
+  olive: ['sage', 'khaki', 'green'],
+  sage: ['olive', 'green'],
+  green: ['olive', 'sage'],
+  brown: ['tan', 'taupe', 'rust', 'chocolate'],
+  tan: ['brown', 'sand', 'taupe'],
+  taupe: ['brown', 'stone', 'tan'],
+  burgundy: ['rust', 'red'],
+}
+
+/** What to put below, and on the feet, given the colour of the piece on
+ *  screen. Its own row first, then a kindred colour's row, then the house
+ *  default — so the answer is always specific enough to search for. */
+/** A denim wash is not a colour word — nobody's catalogue has a "light-wash
+ *  trouser" — but it is exactly the right instruction once it says denim. */
+function searchable(tone: string): string {
+  const m = /^(light|mid|dark)-?wash$/.exec(tone)
+  return m ? `${m[1]} wash denim` : tone
+}
+
+export function partnersFor(colour: string | null):
+  { bottom: string; shoes: string; source: 'own' | 'kin' | 'default' } {
+  const table = pairingsFromLooks()
+  const fallback = houseDefault()
+  if (!colour) return { ...fallback, source: 'default' }
+  const key = colour.toLowerCase()
+
+  const take = (r: { bottom: string[]; shoes: string[] }, source: 'own' | 'kin') => ({
+    bottom: searchable(r.bottom[0] ?? fallback.bottom),
+    shoes: r.shoes[0] ?? fallback.shoes,
+    source,
+  })
+
+  const row = table.get(key)
+  if (row && (row.bottom.length || row.shoes.length)) return take(row, 'own')
+  for (const kin of KIN[key] ?? []) {
+    const r = table.get(kin)
+    if (r && (r.bottom.length || r.shoes.length)) return take(r, 'kin')
+  }
+  return { ...fallback, source: 'default' }
+}
+
+/** The house does wear a colour against itself — five of the sixteen looks are
+ *  tonal, and black on black is one of them. So this only steps sideways when
+ *  the pairing came from the DEFAULT rather than from a look: repeating a
+ *  colour the lookbook chose is taste, repeating one nobody chose is an
+ *  accident. */
+export function avoidSameAs(
+  colour: string | null, partner: string, source: 'own' | 'kin' | 'default' = 'default',
+): string {
+  if (!colour || source === 'own') return partner
+  const a = colour.toLowerCase(), b = partner.toLowerCase()
+  if (a !== b && !(KIN[a] ?? []).includes(b)) return partner
+  // Cream is the set's workhorse below the waist; when the top IS cream, the
+  // looks reach for a mid-wash denim or a navy instead.
+  if (a === 'cream' || a === 'ecru' || a === 'white') return 'navy'
+  return houseDefault().bottom
+}
+
 /** The house eye, as the judge reads it.
  *
  *  Deliberately short. It sits alongside four blocks of general fashion

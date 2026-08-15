@@ -91,6 +91,87 @@ export function familyOf(c: Rgb): Family {
   return l < 0.4 ? 'jewel' : 'pastel'                             // purples
 }
 
+// ── naming a colour ─────────────────────────────────────────────────────────
+/** The six families are the right grain for "do these fight", and the wrong
+ *  grain for everything else. An olive shirt measures rgb(57,59,49) and a
+ *  charcoal one rgb(57,57,58); both are desaturated and dark, so both land in
+ *  'neutral' and become indistinguishable — which is why HOW TO STYLE offered
+ *  the same trousers for every shirt in the catalogue. A family cannot be put
+ *  into a search query either: nobody sells "a neutral trouser".
+ *
+ *  So a colour also gets a NAME, by nearest neighbour against the words the
+ *  lookbook itself uses and stores actually print. A name survives into a
+ *  query, and two shirts that differ get different names even when they share
+ *  a family. */
+const NAMED: [string, Rgb][] = [
+  ['black',    { r: 26,  g: 26,  b: 28  }],
+  ['charcoal', { r: 62,  g: 64,  b: 68  }],
+  ['grey',     { r: 138, g: 140, b: 143 }],
+  ['silver',   { r: 198, g: 200, b: 203 }],
+  ['white',    { r: 246, g: 246, b: 244 }],
+  ['cream',    { r: 236, g: 226, b: 203 }],
+  ['ecru',     { r: 214, g: 205, b: 184 }],
+  ['sand',     { r: 200, g: 180, b: 146 }],
+  ['stone',    { r: 176, g: 168, b: 152 }],
+  ['taupe',    { r: 146, g: 133, b: 118 }],
+  ['tan',      { r: 176, g: 137, b: 94  }],
+  ['brown',    { r: 108, g: 78,  b: 54  }],
+  ['rust',     { r: 158, g: 78,  b: 44  }],
+  ['burgundy', { r: 106, g: 40,  b: 50  }],
+  ['red',      { r: 186, g: 48,  b: 44  }],
+  ['pink',     { r: 226, g: 166, b: 176 }],
+  ['mustard',  { r: 200, g: 160, b: 56  }],
+  ['khaki',    { r: 158, g: 148, b: 104 }],
+  ['olive',    { r: 96,  g: 98,  b: 62  }],
+  ['sage',     { r: 156, g: 168, b: 140 }],
+  ['green',    { r: 74,  g: 118, b: 74  }],
+  ['teal',     { r: 56,  g: 118, b: 118 }],
+  ['light blue', { r: 168, g: 196, b: 222 }],
+  ['blue',     { r: 58,  g: 102, b: 170 }],
+  ['navy',     { r: 38,  g: 48,  b: 78  }],
+  ['indigo',   { r: 62,  g: 72,  b: 118 }],
+  ['purple',   { r: 106, g: 76,  b: 140 }],
+]
+
+/** The nearest name to a measured colour. Plain nearest-neighbour in RGB is
+ *  crude, but the anchors are spaced by how stores talk rather than evenly
+ *  through the cube, which is what makes it land on the right word. */
+export function nameOf(c: Rgb): string {
+  let best = NAMED[0][0], bestD = Infinity
+  for (const [name, ref] of NAMED) {
+    const d = dist(c, ref)
+    if (d < bestD) { bestD = d; best = name }
+  }
+  return best
+}
+
+/** What to call this garment's colour, preferring what the store WROTE over
+ *  what the photograph measures.
+ *
+ *  A title that says "Olive" is ground truth: the brand chose the word and the
+ *  shopper reads the same word. The photograph is the fallback for the two
+ *  thirds of this catalogue that name no colour at all — lighting, shadow and
+ *  a grey backdrop all push a measured colour around, and a stated one has
+ *  none of those problems. */
+export function colourNameFor(title: string, p: Palette | null): string | null {
+  const hay = ` ${(title || '').toLowerCase()} `
+  // Longest first, so "light blue" wins over "blue" and "off-white" over "white".
+  const words = NAMED.map(n => n[0]).concat(['off-white', 'ivory', 'beige', 'maroon', 'lilac'])
+    .sort((a, b) => b.length - a.length)
+  for (const w of words) {
+    if (new RegExp(`\\b${w.replace(/[-\s]/g, '[-\\s]')}\\b`).test(hay)) {
+      // Fold the synonyms onto a name the pairing table knows.
+      if (w === 'off-white' || w === 'ivory') return 'cream'
+      if (w === 'beige') return 'ecru'
+      if (w === 'maroon') return 'burgundy'
+      if (w === 'lilac') return 'purple'
+      return w
+    }
+  }
+  if (p?.colours?.length) return nameOf(p.colours[0])
+  return null
+}
+
 // ── the read ────────────────────────────────────────────────────────────────
 /** Shopify serves any width from the same URL, so ask for a thumbnail rather
  *  than a 2048px photograph we immediately throw away. */

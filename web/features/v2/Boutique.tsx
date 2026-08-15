@@ -123,6 +123,11 @@ function toProduct(p: any): V2Product {
       ? p.description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 520)
       : undefined,
     materials: (p?.tags ?? []).filter((t: string) => /cotton|linen|wool|silk|cashmere|leather|denim|suede|velvet/i.test(t)).join(', ') || undefined,
+    // Not displayed. Carried so /api/style-with can place the piece in a slot
+    // when the title is just a name.
+    tags: Array.isArray(p?.tags) ? p.tags.slice(0, 40).map((t: any) => String(t)) : undefined,
+    categories: Array.isArray(p?.categories) ? p.categories.map((c: any) => String(c?.id ?? c)) : undefined,
+    productType: typeof p?.product_type === 'string' ? p.product_type : undefined,
   }
 }
 
@@ -481,7 +486,19 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          product: { id: p.id, title: p.title, image: p.image, description: p.description },
+          product: {
+            id: p.id,
+            // The catalogue's own name, not the short caption written for the
+            // grid — "Olive Cotton Shirt" states a colour and "Olive shirt"
+            // rewritten to "Shirt" does not.
+            title: p.fullTitle || p.title,
+            image: p.image,
+            description: p.description,
+            tags: p.tags,
+            categories: p.categories,
+            productType: p.productType,
+            colorName: p.colorName,
+          },
           gender: context.shopperGender,
           country: context.buyerCountry,
           currency: context.buyerCurrency,

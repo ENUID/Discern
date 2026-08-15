@@ -64,6 +64,14 @@ export type V2Product = {
   materials?: string
   howToStyle?: string
   details?: string
+  /** The store's own words for what this is. Nothing renders them — they exist
+   *  so HOW TO STYLE can work out which slot the piece occupies. A great many
+   *  listings are titled "RONALD" or "OLBIA" and say "Men > Shirts" only in
+   *  their tags, and dropping the tags here is why those pieces got no styling
+   *  answer at all. */
+  tags?: string[]
+  categories?: string[]
+  productType?: string
 }
 /** One exchange. The answer and the products it produced are one object,
  *  because they are one response — the reply used to be sliced to 90 characters
