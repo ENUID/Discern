@@ -8,6 +8,7 @@ import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/store
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
 import { outfitPlan, composeOutfit } from '@/lib/fashion/outfitKnowledge'
+import { outfitTones } from '@/lib/fashion/lookbook'
 import { wantsProducts, routeReason } from '@/lib/fashion/intentRouter'
 import { cerebrasChat, cerebrasVisionChat, CEREBRAS_VISION_CONFIGURED } from '@/lib/cerebras'
 import { nvidiaChat, nvidiaVisionChat, NVIDIA_CONFIGURED } from '@/lib/nvidia'
@@ -276,31 +277,83 @@ async function multiCategorySearch(
   ).filter(Boolean) as string[]
   const shared = sharedBits.join(' ')
 
+  /** A colour for each slot, so the four searches describe ONE outfit.
+   *
+   *  This is where the sixteen reference looks were failing to land. They are
+   *  encoded, counted and injected — into the JUDGE's prompt, which ranks. And
+   *  ranking can only reorder what the stores already sent back. Every slot
+   *  asked its ninety brands for a bare garment ("men wool blazer"), got
+   *  whatever that brand's own search box returned, and the house eye then
+   *  picked the least bad of them. Ask for nothing in particular and the best
+   *  of what arrives is a coincidence.
+   *
+   *  So the colour story goes into the QUESTION. The occasion names a palette;
+   *  its first tone leads, and the lookbook's own counted pairings decide the
+   *  rest — a cream trouser under an olive top because look l02 does that, a
+   *  layer that moves away from both so the outfit is not one note. Same
+   *  machinery that took HOW TO STYLE from one repeated outfit to seven
+   *  distinct ones; it simply was never wired to the path that answers "build
+   *  me an outfit".
+   *
+   *  Only when the shopper named no colour of their own. Their word always
+   *  wins over the table's. */
+  const tones = plan && decomp.colors.length === 0
+    ? outfitTones(plan.palette, plan.formality) : null
+  const toneForSlot = (key: string): string => {
+    if (!tones) return ''
+    switch (GARMENT_CATEGORY[key]) {
+      case 'top':    return tones.top
+      case 'bottom': return tones.bottom
+      case 'outer':  return tones.outer
+      case 'shoes':  return tones.shoes
+      default:       return ''
+    }
+  }
+
   const groups = await Promise.all(
     keys.map(async (key) => {
       const garmentTerm = GARMENT_VOCAB[key]?.query[0] || key
-      const subQuery = cleanSubQuery([shared, garmentTerm].filter(Boolean).join(' ')) || garmentTerm
+      // The occasion's cloth belongs on the clothes, not on the feet. `shared`
+      // carries the season's fibre, and prepending it to every slot asked
+      // ninety stores for a "linen loafer" and a "wool derby" — garments that
+      // do not exist, so the strip came back on whatever the store guessed.
+      const isFootwear = GARMENT_CATEGORY[key] === 'shoes'
+      const base = isFootwear ? (decomp.gender ?? profileGender ?? '') : shared
+      const subQuery = cleanSubQuery([base, toneForSlot(key), garmentTerm].filter(Boolean).join(' ')) || garmentTerm
       const cat = GARMENT_CATEGORY[key] as SlotCategory | undefined
-      const concepts = buildMandatoryConcepts(subQuery)
       const label = garmentLabel(key)
+      // A named colour is a real constraint and some are genuinely not stocked
+      // — "green loafers" is a thin shelf. Rather than hand back an empty
+      // strip, drop the colour and let the ranking choose. It is a preference
+      // here, not a promise; the first rung that returns anything wins.
+      const plain = cleanSubQuery([base, garmentTerm].filter(Boolean).join(' ')) || garmentTerm
+      const rungs = [subQuery, plain].filter((v, i, a) => a.indexOf(v) === i)
       try {
-        const found = await GlobalCatalogService.search(
-          subQuery, budgetMax, [], countryCode, true, concepts,
-          'relevance', buyerCurrency,
-          { fastFirstPage: true, onProgress: onProgress ? (e => onProgress({ ...e, label })) : undefined },
-          [], tasteProfile, subQuery, sizeForQuery(subQuery),
-        )
-        // Filter by the SPECIFIC garment, not its broad slot — t-shirt and shirt
-        // both live in the 'top' slot, so a slot-level filter let button-up
-        // shirts flood the "T-Shirts" strip (the reported bug). Garment-key
-        // matching keeps each strip pure to exactly what it's labelled.
-        const filtered = found.filter(p => productMatchesGarmentKey(p, key))
-        // Category purity: keep ONLY matching products, even if that leaves the
-        // group empty (an empty group is dropped below). Falling back to the
-        // unfiltered results was the exact bug that put a shirt into the wrong strip.
-        const chosen = dedupeById(filtered).slice(0, MULTI_CATEGORY_PER_GROUP_CAP)
-        // subQuery is what this strip's "See more" re-runs on the frontend.
-        return { label, products: chosen, query: subQuery }
+        let chosen: any[] = []
+        let used = subQuery
+        for (const rung of rungs) {
+          const found = await GlobalCatalogService.search(
+            rung, budgetMax, [], countryCode, true, buildMandatoryConcepts(rung),
+            'relevance', buyerCurrency,
+            { fastFirstPage: true, onProgress: onProgress ? (e => onProgress({ ...e, label })) : undefined },
+            [], tasteProfile, rung, sizeForQuery(rung),
+          )
+          // Filter by the SPECIFIC garment, not its broad slot — t-shirt and shirt
+          // both live in the 'top' slot, so a slot-level filter let button-up
+          // shirts flood the "T-Shirts" strip (the reported bug). Garment-key
+          // matching keeps each strip pure to exactly what it's labelled.
+          const filtered = found.filter(p => productMatchesGarmentKey(p, key))
+          // Category purity: keep ONLY matching products, even if that leaves the
+          // group empty (an empty group is dropped below). Falling back to the
+          // unfiltered results was the exact bug that put a shirt into the wrong strip.
+          chosen = dedupeById(filtered).slice(0, MULTI_CATEGORY_PER_GROUP_CAP)
+          used = rung
+          if (chosen.length > 0) break
+        }
+        // `used` is what this strip's "See more" re-runs on the frontend, so it
+        // must be the query that actually produced these, not the one we hoped
+        // would.
+        return { label, products: chosen, query: used }
       } catch (e) {
         console.error('[stylist] multi-category search error:', e)
         return { label, products: [], query: subQuery }
@@ -316,12 +369,35 @@ async function multiCategorySearch(
     return { ...g, products }
   })
   const nonEmpty = deduped.filter(g => g.products.length > 0)
+
+  // Chosen TOGETHER, not four times separately.
+  //
+  // Four slots ran four independent searches and each returned its own best
+  // six, and that was called an outfit. It is not one: it is four search
+  // results stacked, and whether the trouser at the top of strip two goes with
+  // the shirt at the top of strip one was nobody's job. Asked to "build me an
+  // outfit", the app was answering "here are four things".
+  //
+  // composeOutfit scores whole combinations — colour agreement, formality
+  // within a step, the lookbook's own preference for one loud piece at most —
+  // and promotes the winning combination to the front of each strip. So the
+  // first piece in every strip belongs with the first piece in every other,
+  // and the rest stay behind them as alternatives.
+  //
+  // This function already existed and was already imported here. It was
+  // running in HOW TO STYLE and had never been called on the path that answers
+  // the question it was written for.
+  const composed = composeOutfit(
+    nonEmpty,
+    (p: any) => `${p?.title ?? ''} ${(p?.tags ?? []).join(' ')}`,
+  ) as typeof nonEmpty
+
   // Return whatever categories actually produced results — even just one. The
   // caller's fallback re-searches the compiler's single lead garment, which may
   // be the EMPTY category ("shirts and boots" where only boots exist → fallback
   // searches shirts → nothing), throwing away results we already have. One real
   // strip beats discarding it.
-  return nonEmpty.length >= 1 ? nonEmpty : null
+  return composed.length >= 1 ? composed : null
 }
 
 // Reply line for a multi-category result — names every category shown ("tops,

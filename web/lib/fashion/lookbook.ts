@@ -477,6 +477,79 @@ export function avoidSameAs(
   return houseDefault().bottom
 }
 
+/** A colour for each slot of a whole outfit, from the occasion's own palette.
+ *
+ *  NOT the pairing table above. That is counted off sixteen looks which are,
+ *  every one of them, casual — knitwear, wide trousers, canvas shoes — and it
+ *  is exactly right for "what goes with this olive overshirt" and exactly
+ *  wrong for an interview. Applied there it asked for a light blue blazer,
+ *  cream trousers and white derbies, which is not what anyone wears to be
+ *  interviewed. A table learned from one register does not transfer to
+ *  another, and pretending otherwise is how a system with taste produces
+ *  answers with none.
+ *
+ *  Each occasion already carries a palette written for it. This orders that
+ *  palette by lightness and assigns by the job each garment does:
+ *
+ *    the shirt is the light piece      — it sits under everything else
+ *    the trousers are the mid piece    — the anchor you see most of
+ *    the layer is the darkest          — it frames the other two
+ *    the shoes answer to formality     — leather darkens as the room does,
+ *                                        and no palette word can tell you that
+ */
+export function outfitTones(
+  palette: string[], formality: number,
+): { top: string; bottom: string; outer: string; shoes: string } {
+  const known = palette.filter(c => c && LIGHTNESS[c.toLowerCase()] !== undefined)
+  const byLight = (known.length ? known : palette).slice()
+    .sort((a, b) => lightnessOf(b) - lightnessOf(a))            // lightest first
+
+  const lightest = byLight[0] ?? 'white'
+  const darkest = byLight[byLight.length - 1] ?? 'navy'
+  // The middle of the run, so a four-tone palette does not put its lightest
+  // tone on both halves of the body.
+  const mid = byLight[Math.min(byLight.length - 1, Math.floor(byLight.length / 2))] ?? darkest
+
+  // Footwear is the one slot a colour palette cannot answer. A cream palette
+  // does not mean cream shoes; it means shoes that suit the room, and the room
+  // is what formality measures. 5 is black tie, 1 is a gym.
+  const shoes = formality >= 4 ? 'black' : formality === 3 ? 'brown' : formality <= 1 ? 'white' : 'white'
+
+  // Trousers hold the outfit still. At any formality worth dressing for, that
+  // means a neutral: the wedding palette's [navy, sage, dusty rose, burgundy]
+  // sorted by lightness put BURGUNDY on the legs, which is a statement nobody
+  // asked this app to make on their behalf. An accent belongs on a tie or a
+  // knit, not on the largest surface in the outfit.
+  const NEUTRAL = new Set(['black', 'charcoal', 'grey', 'navy', 'stone', 'taupe',
+    'ecru', 'cream', 'white', 'sand', 'khaki', 'silver', 'beige', 'tan'])
+  const midCandidate = mid === lightest && byLight.length > 1 ? byLight[1] : mid
+  const bottom = formality >= 3
+    ? (byLight.find(c => NEUTRAL.has(c.toLowerCase()) && c !== lightest) ?? midCandidate)
+    : midCandidate
+
+  // A formal palette lists the tones that make the outfit and takes the shirt
+  // for granted. The funeral palette is black, charcoal, navy — so "lightest"
+  // was charcoal, and the app asked ninety brands for a charcoal shirt to wear
+  // to a funeral. The shirt is the light piece; when nothing in the palette is
+  // actually light, that means white, not the least dark thing on the list.
+  const top = lightnessOf(lightest) < 0.55 && formality >= 3 ? 'white' : lightest
+  // A blazer and a trouser in one tone is a suit. It may be a good suit, but it
+  // is not what "a blazer and trousers" means, and buying them separately from
+  // two brands is the one way to get a suit that does not match.
+  const bottomClear = bottom === darkest
+    // Another NEUTRAL first. Stepping off black straight onto the palette's
+    // accent put burgundy trousers under a black blazer for a night out —
+    // avoiding one problem by walking into a louder one.
+    // …and if the palette holds no other neutral, MATCHING the layer is the
+    // better answer. Black trousers under a black blazer on a night out is
+    // ordinary; burgundy ones are a decision the shopper did not make.
+    ? (byLight.find(c => c !== darkest && c !== top && NEUTRAL.has(c.toLowerCase()))
+       ?? darkest)
+    : bottom
+
+  return { top, bottom: bottomClear, outer: darkest, shoes }
+}
+
 /** The house eye, as the judge reads it.
  *
  *  Deliberately short. It sits alongside four blocks of general fashion
