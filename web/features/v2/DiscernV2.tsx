@@ -237,6 +237,20 @@ function HeroVideo({ src, poster }: { src: string; poster?: string }) {
       if (p && typeof p.catch === 'function') p.catch(() => { /* refused; poster stands */ })
     }
     resume()
+    // Autoplay can be refused outright, and the commonest reason on a phone is
+    // Low Power Mode rather than anything we did — iOS simply will not start a
+    // video below the battery threshold, and it draws its own play button over
+    // the frame to say so. A user gesture lifts that ban, so the first touch
+    // or scroll anywhere on the page starts the film, once.
+    const kick = () => {
+      resume()
+      for (const ev of ['pointerdown', 'touchstart', 'scroll', 'keydown'] as const) {
+        window.removeEventListener(ev, kick)
+      }
+    }
+    for (const ev of ['pointerdown', 'touchstart', 'scroll', 'keydown'] as const) {
+      window.addEventListener(ev, kick, { passive: true, once: false })
+    }
     const onPause = () => { if (!el.ended) resume() }
     el.addEventListener('pause', onPause)
     el.addEventListener('stalled', resume)
@@ -245,6 +259,9 @@ function HeroVideo({ src, poster }: { src: string; poster?: string }) {
       (ev === 'visibilitychange' ? document : window).addEventListener(ev, resume)
     }
     return () => {
+      for (const ev of ['pointerdown', 'touchstart', 'scroll', 'keydown'] as const) {
+        window.removeEventListener(ev, kick)
+      }
       el.removeEventListener('pause', onPause)
       el.removeEventListener('stalled', resume)
       el.removeEventListener('loadeddata', resume)
@@ -1032,7 +1049,12 @@ export default function DiscernV2({
 
   useEffect(() => {
     const el = taRef.current; if (!el) return
-    el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 76) + 'px'
+    // 76px is three lines. A paragraph typed into it was clipped with its top
+    // out of reach and no way to scroll back, which is what "it gets stuck"
+    // meant. It grows to a third of the screen and scrolls inside itself after
+    // that, the way every other composer does.
+    const cap = Math.max(76, Math.min(200, Math.round(window.innerHeight * 0.3)))
+    el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, cap) + 'px'
   }, [input, focused])
 
   // The wait is narrated as a sequence, not one frozen label: the phrases
@@ -1534,14 +1556,12 @@ export default function DiscernV2({
         </button>
       </header>
 
-      {/* Mini-bag chips — the pieces you've added, stacked top-right */}
-      {cart.length > 0 && view === 'product' && (
-        <div className="v2-minibag">
-          {cart.slice(-2).map((l, i) => (
-            <button key={i} onClick={() => setBagOpen(true)}><Img src={l.product.image} /></button>
-          ))}
-        </div>
-      )}
+      {/* The mini-bag used to sit here: thumbnails of the last two things
+          bagged, floating over the top-right of the product page. It showed
+          the wrong thing at the wrong moment — you open a piece to look at it
+          and the corner shows two OTHER pieces — and the bag in the drawer
+          already carries the count. Removed rather than fixed; there was no
+          question it answered. */}
 
       {/* ── Scroller ───────────────────────────────────────────────────────── */}
       <div className="v2-scroll" ref={scrollRef} onScroll={onScroll} data-surface="light">
@@ -2517,12 +2537,6 @@ export default function DiscernV2({
         .v2-hist li button:hover{background:rgba(255,255,255,.1);}
         .v2-hist-empty{font-size:13px;color:rgba(255,255,255,.55);margin:10px 0 4px;}
 
-        .v2-minibag{position:absolute;z-index:46;top:calc(env(safe-area-inset-top,0px) + 62px);right:12px;
-          display:flex;gap:6px;padding:6px;border-radius:12px;background:${V2.glassDark};
-          backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);animation:v2-rise .4s ${V2.ease};}
-        .v2-minibag button{width:44px;height:56px;padding:0;border:none;border-radius:12px;overflow:hidden;cursor:pointer;
-          background:none;box-shadow:inset 0 0 0 1px ${V2.glassEdge};}
-        .v2-minibag img{width:100%;height:100%;object-fit:cover;display:block;}
 
         .v2-scroll{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;
           scrollbar-width:none;overscroll-behavior-y:contain;scroll-behavior:smooth;}
@@ -2548,6 +2562,17 @@ export default function DiscernV2({
           padding-bottom:calc(var(--bar) + 96px);padding-top:calc(env(safe-area-inset-top,0px) + 74px);}
         .v2-hero-media{position:absolute;inset:0;overflow:hidden;}
         .v2-hero-media img,.v2-hero-media video{width:100%;height:100%;object-fit:cover;display:block;}
+        /* iOS draws a start-playback button over any video it has refused to
+           autoplay — and the commonest reason is Low Power Mode, nothing we
+           did. Android draws its own controls. Neither belongs on a backdrop:
+           this is scenery, not a player, and a play button over it reads as
+           something broken. */
+        .v2-hero-media video::-webkit-media-controls,
+        .v2-hero-media video::-webkit-media-controls-start-playback-button,
+        .v2-hero-media video::-webkit-media-controls-play-button,
+        .v2-hero-media video::-webkit-media-controls-panel,
+        .v2-hero-media video::-webkit-media-controls-overlay-play-button{
+          display:none !important;-webkit-appearance:none;appearance:none;opacity:0;}
         /* Weighted to the foot of the frame, under the copy. */
         .v2-veil{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(20,17,14,.40) 0%,rgba(20,17,14,.06) 26%,rgba(20,17,14,.30) 55%,rgba(20,17,14,.68) 82%,rgba(20,17,14,.80) 100%);}
         .v2-hero-copy{position:relative;z-index:2;text-align:center;color:#fff;padding:0 22px;max-width:640px;margin:0 auto;}
@@ -3274,7 +3299,8 @@ export default function DiscernV2({
         @keyframes v2-pulse{0%,100%{opacity:1}50%{opacity:.35}}
         .v2-field{position:relative;flex:1;min-width:0;overflow:hidden;}
         .v2-field textarea{width:100%;border:none;background:none;outline:none;resize:none;font-family:${V2.sans};
-          font-size:16px;line-height:1.42;max-height:76px;overflow-y:auto;display:block;}
+          font-size:16px;line-height:1.42;max-height:min(200px,30svh);overflow-y:auto;display:block;
+          -webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
         .v2-ph{position:absolute;left:0;top:0;pointer-events:none;font-size:16px;line-height:1.42;}
         /* Idle prompt drifts continuously, matching the reference ticker. */
         .v2-marquee{position:absolute;left:0;right:0;top:0;pointer-events:none;overflow:hidden;
@@ -3386,7 +3412,7 @@ export default function DiscernV2({
             inset 0 0 0 1px rgba(255,255,255,.18),
             inset 0 1.2px 0 rgba(255,255,255,.34),
             inset 0 -1px 0 rgba(255,255,255,.10);}
-        .v2-cart,.v2-tray,.v2-minibag button{
+        .v2-cart,.v2-tray{
           box-shadow:
             0 14px 44px rgba(0,0,0,.34),
             0 2px 8px rgba(0,0,0,.16),
@@ -3533,7 +3559,6 @@ export default function DiscernV2({
           .v2-lookpage{padding-top:150px;}
           .v2-rail-item{width:clamp(260px,21vw,320px);}
           .v2-eyebrow{left:26px;top:150px;}
-          .v2-minibag{right:26px;top:86px;}
         }
       `}</style>
     </div>

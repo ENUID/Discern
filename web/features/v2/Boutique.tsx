@@ -13,7 +13,7 @@ import DiscernV2, { type V2Product, type V2Section } from '@/features/v2/Discern
 import type { V2Msg } from '@/features/v2/DiscernV2'
 import { askStylist } from '@/features/stylist/askStylist'
 import { useStylistContext } from '@/features/stylist/useStylistContext'
-import { productSlotCategories } from '@/lib/queryParser'
+import { productSlotCategories, productMatchesGarmentKey, GARMENT_VOCAB } from '@/lib/queryParser'
 
 /** The word a slot goes by in a heading. Plural, because a section holds
  *  several — and "Outerwear" rather than "Outer", which is a database column. */
@@ -291,9 +291,25 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
 
     const titleFor = (products: V2Product[], label?: string): string => {
       // What is genuinely on the page, in the order the sections run.
+      //
+      // Named at GARMENT level, not slot level. Slots are an internal idea —
+      // "tops", "outerwear", "bottoms" — and a heading that says Tops over a
+      // page of shirts tells a shopper nothing they could not already see, in
+      // a word they would never use. The garment word is what they call it.
+      // Slot words remain as the fallback for anything unrecognised, because a
+      // vague heading still beats none.
       const kinds: string[] = []
       for (const pr of products.slice(0, 24)) {
-        for (const k of Array.from(productSlotCategories({ title: pr.title, tags: [], description: pr.description }))) {
+        const text = { title: pr.title, tags: [] as string[], description: pr.description }
+        let named = false
+        for (const key of Object.keys(GARMENT_VOCAB)) {
+          if (!productMatchesGarmentKey(text, key)) continue
+          const word = GARMENT_VOCAB[key]?.query[0]
+          if (word && !kinds.includes(word)) { kinds.push(word); named = true }
+          break                      // one garment per piece, the first it matches
+        }
+        if (named) continue
+        for (const k of Array.from(productSlotCategories(text))) {
           const word = SLOT_WORDS[k]
           if (word && !kinds.includes(word)) kinds.push(word)
         }
