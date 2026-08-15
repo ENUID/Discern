@@ -331,6 +331,26 @@ export async function groqChat(
   }
 }
 
+/** Groq's own API, with no OpenRouter hop in front of it.
+ *
+ *  `groqChat` is OpenRouter-first by design and falls back to Groq only when
+ *  OpenRouter throws. That is the wrong shape for the provider ladder in
+ *  lib/ai/infer.ts, which already has its own OpenRouter rung at the bottom:
+ *  the "groq" rung was spending a round trip on a key production reports as
+ *  `quota` before reaching the provider it named. Same request, one hop. */
+export async function groqDirectChat(
+  messages: ChatMessage[],
+  system?: string,
+  opts?: { max_tokens?: number; temperature?: number; model?: string; extraPayload?: Record<string, unknown> },
+): Promise<any> {
+  if (!GROQ_DIRECT_API_KEY) throw new Error('GROQ_API_KEY is not set')
+  return chatCompletion(
+    GROQ_DIRECT_BASE, GROQ_DIRECT_API_KEY, opts?.model ?? GROQ_DIRECT_SMART_MODEL,
+    messages, system, undefined,
+    { max_tokens: opts?.max_tokens, temperature: opts?.temperature, extraPayload: opts?.extraPayload },
+  )
+}
+
 // Diagnostic seams — call ONE provider in isolation, bypassing the automatic
 // fallback in groqChat, so /api/ai/stylist/health can report exactly which
 // provider is failing instead of the fallback silently masking it.

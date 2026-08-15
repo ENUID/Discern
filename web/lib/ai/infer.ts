@@ -36,7 +36,7 @@
  * then says try again".
  */
 
-import { groqChat, GROQ_DIRECT_SMART_MODEL, GROQ_DIRECT_FAST_MODEL, GROQ_DIRECT_CONFIGURED } from '../groq'
+import { groqChat, groqDirectChat, GROQ_DIRECT_SMART_MODEL, GROQ_DIRECT_FAST_MODEL, GROQ_DIRECT_CONFIGURED } from '../groq'
 import { cerebrasChat, CEREBRAS_CONFIGURED, CEREBRAS_MODEL } from '../cerebras'
 import { nvidiaChat, NVIDIA_CONFIGURED } from '../nvidia'
 import { geminiChat } from '../gemini'
@@ -115,7 +115,11 @@ export async function infer(
       name: 'groq',
       ready: GROQ_DIRECT_CONFIGURED,
       fits: always,
-      run: () => groqChat(messages, system, undefined, {
+      // Groq's own API, not groqChat — that wrapper tries OpenRouter first and
+      // only falls back here, so this rung was paying a round trip to a key
+      // production reports as `quota` before reaching the provider it names.
+      // OpenRouter still gets its own rung at the bottom of this ladder.
+      run: () => groqDirectChat(messages, system, {
         max_tokens: maxTokens, temperature,
         model: tier === 'fast' ? GROQ_DIRECT_FAST_MODEL : GROQ_DIRECT_SMART_MODEL,
       }),
