@@ -110,9 +110,34 @@ type CacheEntry = {
 }
 const lruCache = new Map<string, CacheEntry>()
 
+/** How long a query that came back with NOTHING stays remembered.
+ *
+ *  A search that finished having found nothing is cached exactly like one that
+ *  found ninety pieces, and for the same fifteen minutes. So a single bad
+ *  minute — stores slow, a fan-out that timed out, a deploy mid-flight —
+ *  becomes a quarter of an hour of "nothing found" for that query, and the
+ *  shopper cannot tell the difference between an empty shelf and a bad moment.
+ *
+ *  That is how the Sneaker strip vanished out of every "give me some outfits"
+ *  answer: "men sneaker" returned zero once, and was then served from cache as
+ *  zero. "men sneakers" — a different key — returned twelve the whole time.
+ *
+ *  Not zero, because a genuinely empty query ("hand knitted balaclava in
+ *  vicuna") would then re-fan-out over ninety stores on every keystroke. A
+ *  minute is long enough to protect against that and short enough that nobody
+ *  meets the same bad minute twice. */
+const EMPTY_TTL_MS = 60 * 1000
+
 function cacheGet(key: string): CacheEntry | null {
   const e = lruCache.get(key)
   if (!e || Date.now() - e.timestamp > CACHE_TTL_MS) {
+    lruCache.delete(key)
+    return null
+  }
+  // Finished, and found nothing. `pending` still holding domains means the
+  // fan-out is mid-flight and a concurrent request should share it, so only a
+  // FULLY spent entry counts as a real answer of "none".
+  if (e.products.length === 0 && e.pending.length === 0 && Date.now() - e.timestamp > EMPTY_TTL_MS) {
     lruCache.delete(key)
     return null
   }
