@@ -451,6 +451,38 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
    *  screen, and returns only what it has not sent — so the page extends rather
    *  than repeating itself. It needs no model, which is why it keeps working
    *  when the stylist is degraded. */
+  /** What to wear with the piece on screen.
+   *
+   *  Lives here rather than in the interface because the answer depends on who
+   *  is asking — their gender, their country, their currency — and that
+   *  context is held here. The endpoint does the real work: reads the piece's
+   *  colour off its photograph, works out which slots are missing, searches
+   *  every brand for them, and ranks by whether the result actually sits
+   *  beside it. */
+  const onStyleWith = useCallback(async (p: V2Product): Promise<V2Section[]> => {
+    try {
+      const res = await fetch('/api/style-with', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product: { id: p.id, title: p.title, image: p.image, description: p.description },
+          gender: context.shopperGender,
+          country: context.buyerCountry,
+          currency: context.buyerCurrency,
+        }),
+      })
+      if (!res.ok) return []
+      const data = await res.json()
+      const groups = Array.isArray(data?.groups) ? data.groups : []
+      return groups.map((g: any) => {
+        const products = (g?.products ?? []).map(toProduct).filter((x: V2Product) => x.image)
+        return { title: String(g?.label ?? ''), hero: undefined, products, query: g?.query }
+      }).filter((sec: V2Section) => sec.products.length > 0)
+    } catch {
+      return []
+    }
+  }, [context])
+
   const onLoadMore = useCallback(async (query: string, excludeIds: string[]): Promise<V2Product[]> => {
     try {
       const res = await fetch('/api/ai/stylist', {
@@ -477,6 +509,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
     <DiscernV2
       onQuery={onQuery}
       onLoadMore={onLoadMore}
+      onStyleWith={onStyleWith}
       onFeatured={onFeatured}
       onSearched={remember}
       onSavedChange={onSavedChange}

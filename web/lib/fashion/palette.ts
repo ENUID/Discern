@@ -1,0 +1,256 @@
+/**
+ * What colour a garment actually is, read from its photograph.
+ *
+ * WHY THIS EXISTS. Outfit coherence — whether the pieces on a page go together
+ * — was decided by reading colour words out of product titles. Measured across
+ * 592 products from five brands, only 33% of titles name a colour at all. The
+ * rest are "Rare Rabbit Men's Dream-26 Dusky P…", "KUNAL", "GUDDU", "X Lows
+ * CHESTNUT". So on two thirds of the catalogue the thing deciding what goes
+ * with what was simply blind, and blind in a way nothing reported.
+ *
+ * The photograph is right there and it is not ambiguous. This reads it.
+ *
+ * NO MODEL. This is arithmetic on pixels, which matters for two reasons: it
+ * costs nothing per product, and it works whether or not any provider is
+ * answering — unlike everything else that was supposed to be handling taste.
+ *
+ * THE BACKGROUND IS THE HARD PART. A product shot is mostly backdrop, so the
+ * naive answer to "what colour is this shirt" is always "white". The corners
+ * are sampled to learn the backdrop, every pixel close to it is discarded, and
+ * what remains is the garment (plus, on model shots, some skin and hair — hence
+ * the skin filter below).
+ */
+
+import sharp from 'sharp'
+import { BoundedCache } from '../boundedCache'
+
+export type Rgb = { r: number; g: number; b: number }
+export type Family = 'neutral' | 'earth' | 'cool' | 'warm' | 'jewel' | 'pastel'
+
+export type Palette = {
+  /** Most-covering first. Usually one or two on a plain garment. */
+  colours: Rgb[]
+  /** The families those colours belong to, deduped, most-covering first. */
+  families: Family[]
+  /** How many distinct hues carry real area. A plain shirt is 1; a paisley
+   *  print is 4 or 5, which is a usable print detector on its own. */
+  variety: number
+  /** True when the garment reads as a single flat colour — the shape most of
+   *  the reference lookbook is made of. */
+  plain: boolean
+}
+
+// ── colour space ────────────────────────────────────────────────────────────
+function toHsl({ r, g, b }: Rgb): { h: number; s: number; l: number } {
+  const R = r / 255, G = g / 255, B = b / 255
+  const max = Math.max(R, G, B), min = Math.min(R, G, B)
+  const l = (max + min) / 2
+  if (max === min) return { h: 0, s: 0, l }
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  const h = (max === R ? ((G - B) / d + (G < B ? 6 : 0))
+    : max === G ? (B - R) / d + 2
+    : (R - G) / d + 4) * 60
+  return { h, s, l }
+}
+
+const dist = (a: Rgb, b: Rgb) =>
+  Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2)
+
+/** Skin, roughly. Model shots are half arms and face, and a tan forearm reads
+ *  as "earth" and quietly makes every outfit look coordinated. Deliberately
+ *  generous — losing a genuinely skin-toned garment costs less than treating
+ *  every model's arms as the product. */
+function looksLikeSkin(c: Rgb): boolean {
+  const { h, s, l } = toHsl(c)
+  return h >= 5 && h <= 45 && s > 0.15 && s < 0.72 && l > 0.28 && l < 0.82
+}
+
+/** Which family a measured colour belongs to. The same six the written
+ *  vocabulary uses, so a colour read from a photograph and one read from a
+ *  title are interchangeable downstream. */
+export function familyOf(c: Rgb): Family {
+  const { h, s, l } = toHsl(c)
+  // Anything this desaturated is a neutral whatever its hue says — black,
+  // white, grey, stone, charcoal, ecru.
+  if (s < 0.12 || l < 0.08 || l > 0.94) return 'neutral'
+  // Cream, ivory, bone, oat. Measured, these carry a real warm hue and enough
+  // saturation to escape the test above — a cream sneaker came back "warm",
+  // which would have it fighting a rust trouser it actually sits beside
+  // perfectly. Very light and only faintly coloured IS a neutral.
+  if (l > 0.80 && s < 0.45) return 'neutral'
+  // The same at the other end: near-black with a cast to it is still black.
+  if (l < 0.18 && s < 0.50) return 'neutral'
+  if (s < 0.28 && l > 0.62) return 'pastel'
+  if (h < 20 || h >= 330) return s > 0.55 ? 'warm' : 'earth'      // reds
+  if (h < 45) return l < 0.45 ? 'earth' : 'warm'                  // orange / tan
+  if (h < 70) return s > 0.5 && l > 0.5 ? 'warm' : 'earth'        // mustard / khaki
+  if (h < 165) return l < 0.35 ? 'jewel' : 'earth'                // greens: forest vs olive
+  if (h < 200) return 'jewel'                                     // teal
+  if (h < 260) return 'cool'                                      // blues, navy, indigo
+  return l < 0.4 ? 'jewel' : 'pastel'                             // purples
+}
+
+// ── the read ────────────────────────────────────────────────────────────────
+/** Shopify serves any width from the same URL, so ask for a thumbnail rather
+ *  than a 2048px photograph we immediately throw away. */
+function small(src: string, px = 64): string {
+  try {
+    const u = new URL(src.startsWith('//') ? `https:${src}` : src)
+    if (/cdn\.shopify|shopifycdn/.test(u.hostname) || u.pathname.includes('/cdn/shop/')) {
+      u.searchParams.set('width', String(px))
+      u.searchParams.delete('height')
+    }
+    return u.toString()
+  } catch { return src }
+}
+
+export async function paletteOf(imageUrl: string, timeoutMs = 6000): Promise<Palette | null> {
+  if (!imageUrl) return null
+  let buf: Buffer
+  try {
+    const res = await fetch(small(imageUrl), { signal: AbortSignal.timeout(timeoutMs) })
+    if (!res.ok) return null
+    buf = Buffer.from(await res.arrayBuffer())
+  } catch { return null }
+
+  let px: Buffer, w: number, h: number
+  try {
+    // Down to a postage stamp on purpose. Colour survives; JPEG noise, weave
+    // and stitching do not, and 48x48 is 2,304 pixels to walk instead of four
+    // million.
+    const out = await sharp(buf).resize(48, 48, { fit: 'inside' }).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    px = out.data; w = out.info.width; h = out.info.height
+  } catch { return null }
+
+  const at = (x: number, y: number): Rgb => {
+    const i = (y * w + x) * 3
+    return { r: px[i], g: px[i + 1], b: px[i + 2] }
+  }
+
+  // The backdrop, learned from the corners rather than assumed to be white —
+  // plenty of these brands shoot on grey, sand or black.
+  const corners = [at(0, 0), at(w - 1, 0), at(0, h - 1), at(w - 1, h - 1)]
+  const bg: Rgb = {
+    r: Math.round(corners.reduce((s, c) => s + c.r, 0) / 4),
+    g: Math.round(corners.reduce((s, c) => s + c.g, 0) / 4),
+    b: Math.round(corners.reduce((s, c) => s + c.b, 0) / 4),
+  }
+  // Only treat the corners as a backdrop if they agree with each other. On a
+  // flat-lay that fills the frame they will not, and then nothing is dropped.
+  const backdropIsFlat = corners.every(c => dist(c, bg) < 34)
+
+  // Quantise into coarse bins. Fine enough to keep navy apart from black,
+  // coarse enough that a gradient across a sleeve stays one colour.
+  const BIN = 32
+  const bins = new Map<string, { sum: Rgb; n: number }>()
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const c = at(x, y)
+      if (backdropIsFlat && dist(c, bg) < 40) continue
+      if (looksLikeSkin(c)) continue
+      const key = `${Math.round(c.r / BIN)}|${Math.round(c.g / BIN)}|${Math.round(c.b / BIN)}`
+      const e = bins.get(key) ?? { sum: { r: 0, g: 0, b: 0 }, n: 0 }
+      e.sum.r += c.r; e.sum.g += c.g; e.sum.b += c.b; e.n++
+      bins.set(key, e)
+    }
+  }
+
+  const total = Array.from(bins.values()).reduce((s, e) => s + e.n, 0)
+  // Almost everything was backdrop or skin: a packshot of something tiny, or a
+  // photograph we cannot read. Saying nothing beats guessing.
+  if (total < 60) return null
+
+  const ranked = Array.from(bins.values())
+    .map(e => ({
+      colour: { r: Math.round(e.sum.r / e.n), g: Math.round(e.sum.g / e.n), b: Math.round(e.sum.b / e.n) },
+      share: e.n / total,
+    }))
+    .sort((a, b) => b.share - a.share)
+
+  // A colour has to hold an eighth of the garment to count as one of its
+  // colours. At a twelfth, a shadow under a collar and a hair fall counted,
+  // and every plain shirt on a model came back with four colours — which
+  // would make "is this a print" useless. Below this it is a button, a label
+  // or a shadow.
+  const real = ranked.filter(c => c.share >= 0.12).slice(0, 5)
+  const colours = (real.length ? real : ranked.slice(0, 1)).map(c => c.colour)
+
+  const families: Family[] = []
+  for (const c of colours) {
+    const f = familyOf(c)
+    if (!families.includes(f)) families.push(f)
+  }
+
+  return {
+    colours,
+    families,
+    variety: real.length,
+    // One dominant colour holding more than half the garment is what "plain"
+    // means to a person looking at it.
+    plain: ranked[0].share >= 0.42 && real.length <= 2,
+  }
+}
+
+
+// ── remembering ─────────────────────────────────────────────────────────────
+/** A garment's colour does not change, so this is read once per photograph and
+ *  then never again. That is what makes it affordable to do at all: the cost
+ *  is per PRODUCT, not per search, and the second time a shirt appears it is
+ *  free. `null` is cached too — an unreadable photograph stays unreadable, and
+ *  retrying it on every search would be the whole expense with none of the
+ *  benefit. */
+const cache = new BoundedCache<string, Palette | null>(6000)
+
+export async function paletteCached(imageUrl: string): Promise<Palette | null> {
+  if (!imageUrl) return null
+  if (cache.has(imageUrl)) return cache.get(imageUrl) ?? null
+  const pal = await paletteOf(imageUrl)
+  cache.set(imageUrl, pal)
+  return pal
+}
+
+/** Several at once, bounded so a page of candidates cannot open sixty sockets.
+ *  Order is preserved so callers can zip the result back onto their products. */
+export async function palettesFor(urls: string[], concurrency = 8): Promise<(Palette | null)[]> {
+  const out: (Palette | null)[] = new Array(urls.length).fill(null)
+  let next = 0
+  const worker = async () => {
+    for (;;) {
+      const i = next++
+      if (i >= urls.length) return
+      out[i] = await paletteCached(urls[i]).catch(() => null)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, urls.length) }, worker))
+  return out
+}
+
+// ── does it go with it ──────────────────────────────────────────────────────
+/** How well two garments sit together, 0–1, from what they actually look like.
+ *
+ *  The rules are the lookbook's, counted rather than invented: neutrals go with
+ *  anything, one accent against neutrals is the classic, two accents from the
+ *  same family still reads deliberate, and two unrelated accents is where an
+ *  outfit stops being one. The echo — a colour repeated between the two pieces
+ *  — is the bonus, because thirteen of the sixteen reference looks do it. */
+export function goesWith(a: Palette | null, b: Palette | null): number {
+  if (!a || !b) return 0.5                       // unknown is not wrong
+  const accentsA = a.families.filter(f => f !== 'neutral')
+  const accentsB = b.families.filter(f => f !== 'neutral')
+
+  let score: number
+  if (accentsA.length === 0 || accentsB.length === 0) score = 1        // one side neutral
+  else if (accentsA.some(f => accentsB.includes(f))) score = 0.9       // same family
+  else if (accentsA.length + accentsB.length <= 2) score = 0.65        // one each, different
+  else score = 0.35                                                     // several, unrelated
+
+  // Something repeated between the two pieces, colour for colour.
+  const echo = a.colours.some(c1 => b.colours.some(c2 => dist(c1, c2) < 60))
+  if (echo) score = Math.min(1, score + 0.1)
+
+  // Two busy pieces together is the one combination the lookbook never makes.
+  if (!a.plain && !b.plain && a.variety >= 3 && b.variety >= 3) score -= 0.2
+
+  return Math.max(0, Math.min(1, +score.toFixed(3)))
+}

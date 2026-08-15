@@ -264,6 +264,20 @@ async function journey(browser, screen) {
   await page.route('**/api/featured', r => json(r, { products: [] }))
   await page.route('**/api/product-names', r => json(r, { names: {} }))
   await page.route('**/api/image-order', r => json(r, { order: [] }))
+  // HOW TO STYLE. The real endpoint reads the open piece's colour off its
+  // photograph and searches every brand for the slots it is missing; this is
+  // the shape it answers with.
+  await page.route('**/api/style-with', async r => {
+    await sleep(600)
+    return json(r, {
+      slot: 'top',
+      subject: { families: ['earth'], plain: true },
+      groups: [
+        { label: 'Trousers', query: 'men trousers', products: TROUSERS },
+        { label: 'Shoes', query: 'men shoes', products: SHIRTS.slice(0, 3) },
+      ],
+    })
+  })
   await page.route('**/api/product-images**', r => json(r, {
     images: [1, 2, 3, 4, 5, 6, 7, 8].map(n => plate(`gallery ${n}`, n % 2 ? '#39424f' : '#5c5c62')),
     colors: COLOURWAYS.map(c => c.name), byColor: {},
@@ -469,6 +483,41 @@ async function journey(browser, screen) {
   check(pdp.materials.length === 0 || pdp.materials.every(m => !/[_{}]|^[a-z]+[A-Z]/.test(m)),
     'materials read as facts, not as keys out of a database', pdp.materials.slice(0, 3))
   await shoot(page, `e2e-${screen.name}-5-pdp`)
+
+  // ── 7b · HOW TO STYLE names what goes with THIS piece ─────────────────────
+  // It used to offer whatever happened to be in the current search results —
+  // open a shirt after searching shirts and it suggested more shirts, or
+  // nothing. It asks the real question now, so the panel has to fill.
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.v2-acc-pill')].find(x => /STYLE/i.test(x.textContent))
+    b?.click()
+  })
+  await sleep(400)
+  const waiting = await page.evaluate(() => document.querySelector('.v2-style-wait')?.textContent ?? null)
+  check(!!waiting, 'the panel says it is looking rather than sitting empty', { line: waiting })
+  await page.waitForSelector('.v2-style-rows', { timeout: 20000 })
+  await sleep(500)
+  const style = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.v2-style-row')]
+    const panel = document.querySelector('.v2-panel')?.getBoundingClientRect()
+    return {
+      rows: rows.map(r => ({ t: r.querySelector('.v2-style-row-t')?.textContent, n: r.querySelectorAll('.v2-style-cell').length })),
+      named: [...document.querySelectorAll('.v2-style-cell em')].length,
+      fits: panel ? panel.right <= innerWidth + 0.5 && panel.bottom <= innerHeight + 1 : null,
+      sideways: document.documentElement.scrollWidth > innerWidth + 1,
+    }
+  })
+  check(style.rows.length >= 2, 'a row for each slot the piece is missing', style.rows)
+  check(style.rows.every(r => r.n > 0), 'and every row has pieces in it')
+  check(style.named > 0, 'each one named, not a bare thumbnail', { named: style.named })
+  check(style.fits === true, 'the panel stays on the screen and clear of the dock')
+  check(!style.sideways, 'and nothing pushes the page sideways')
+  await shoot(page, `e2e-${screen.name}-5b-style`)
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.v2-acc-pill')].find(x => /STYLE/i.test(x.textContent))
+    b?.click()
+  })
+  await sleep(400)
 
   // ── 8 · colour lives in the dock, and it changes the pictures ─────────────
   const colourPill = pdp.pills.find(p => COLOURWAYS.some(c => new RegExp(c.name, 'i').test(p)))

@@ -366,7 +366,7 @@ function SaidBody({ text, refs, photos, onOpen }: {
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function DiscernV2({
-  heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onLoadMore, onFeatured, onSearched, onSavedChange, heroCopy = 0,
+  heroMedia = '/v2/hero.mp4', heroPoster, onQuery, onLoadMore, onStyleWith, onFeatured, onSearched, onSavedChange, heroCopy = 0,
   buyerCountry,
   buyerCurrency,
   renames,
@@ -379,6 +379,9 @@ export default function DiscernV2({
   }>
   /** The next page of one strip: the query, and everything already shown. */
   onLoadMore?: (query: string, excludeIds: string[]) => Promise<V2Product[]>
+  /** What to wear with the open piece, decided by its own colour and cut
+   *  rather than by whatever happened to be in the last search. */
+  onStyleWith?: (product: V2Product) => Promise<V2Section[]>
   /** Real catalogue imagery for the three hero cards. Supplying this is what
    *  keeps the opening screen from depending on hand-placed jpgs. */
   onFeatured?: () => Promise<string[]>
@@ -575,6 +578,10 @@ export default function DiscernV2({
   const [menuView, setMenuView] = useState<'nav' | 'profile'>('nav')
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [acc, setAcc] = useState<'materials' | 'style' | null>(null)
+  /** Rows of pieces that go with the open one. Fetched the first time the
+   *  panel is opened for a piece and held while that piece is open. */
+  const [styleRows, setStyleRows] = useState<V2Section[] | null>(null)
+  const [styleBusy, setStyleBusy] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [descOpen, setDescOpen] = useState(true)
   const [showScroll, setShowScroll] = useState(true)
@@ -971,6 +978,29 @@ export default function DiscernV2({
   /** The newest turn's results — what "the current results" meant before turns
    *  existed. */
   const sections = useMemo(() => turns[0]?.sections ?? [], [turns])
+
+  // Asked for once per piece, and only when the panel is actually opened —
+  // it searches every brand for three or four garments and reads the colour
+  // off each photograph, which is not work to do speculatively for a shopper
+  // who never taps it.
+  //
+  // The guard is a ref rather than the state itself, and that is the whole
+  // trick. Keyed on `styleBusy`, this effect re-ran the moment it set that
+  // flag, its cleanup fired, and the in-flight request was discarded as stale
+  // before it could ever land — the panel sat on "Looking for what goes with
+  // it…" for ever. A ref changes without re-running anything.
+  const styleFor = useRef<string | null>(null)
+  useEffect(() => { setStyleRows(null); styleFor.current = null }, [product?.id])
+  useEffect(() => {
+    if (acc !== 'style' || !product || !onStyleWith) return
+    if (styleFor.current === product.id) return
+    styleFor.current = product.id
+    setStyleBusy(true)
+    onStyleWith(product)
+      .then(rows => setStyleRows(rows))
+      .catch(() => setStyleRows([]))
+      .finally(() => setStyleBusy(false))
+  }, [acc, product, onStyleWith])
 
   /** What to wear it WITH.
    *
@@ -1810,15 +1840,39 @@ export default function DiscernV2({
                 <span>HOW TO STYLE</span>
                 <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
               </div>
-              {styleWith.length > 0 ? (
-                <div className="v2-style-grid">
-                  {styleWith.map(p => (
-                    <button key={p.id} className="v2-style-cell" onClick={() => openProduct(p)}>
-                      <Img src={p.image} alt={p.title} />
-                      <i aria-hidden>+</i>
-                    </button>
+              {/* A row per slot, each one a real answer to "what goes with
+                  THIS" — searched across every brand and ranked against the
+                  open piece's own colour and formality. Falls back to the
+                  pieces already on the page while that is in flight, so the
+                  panel is never empty. */}
+              {styleRows && styleRows.length > 0 ? (
+                <div className="v2-style-rows">
+                  {styleRows.map(row => (
+                    <div className="v2-style-row" key={row.title}>
+                      <span className="v2-style-row-t">{row.title}</span>
+                      <div className="v2-style-strip">
+                        {row.products.map(p => (
+                          <button key={p.id} className="v2-style-cell" onClick={() => openProduct(p)}>
+                            <Img src={p.image} alt={p.title} loading="lazy" />
+                            <em>{p.title}</em>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
+              ) : styleBusy || styleWith.length > 0 ? (
+                <>
+                  {styleBusy && <p className="v2-style-wait">Looking for what goes with it…</p>}
+                  <div className="v2-style-grid">
+                    {styleWith.map(p => (
+                      <button key={p.id} className="v2-style-cell" onClick={() => openProduct(p)}>
+                        <Img src={p.image} alt={p.title} />
+                        <i aria-hidden>+</i>
+                      </button>
+                    ))}
+                  </div>
+                </>
               ) : (
                 /* No invented styling advice about a garment this app has
                    not seen. Either there are real pieces to pair it with or
@@ -2644,7 +2698,13 @@ export default function DiscernV2({
           backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);}
         .v2-acc-pill i{font-style:normal;font-size:12px;opacity:.85;}
         .v2-acc-pill.on{background:rgba(28,27,25,.85);}
-        .v2-panel{max-height:42vh;overflow-y:auto;
+        /* 42vh fitted the old two-by-two grid. Three rows of pieces is taller
+           than that, so the last one sat behind the dock — the row a shopper
+           is least likely to have thought of, which is the one worth showing.
+           It scrolls inside itself and stops short of the dock rather than
+           under it. */
+        .v2-panel{max-height:min(56vh,calc(100dvh - var(--bar) - 150px));overflow-y:auto;
+          overscroll-behavior:contain;
           padding:16px 18px;border-radius:24px;color:#fff;background:${V2.glassDark};
           backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
           box-shadow:0 14px 44px rgba(0,0,0,.3);animation:v2-rise .3s ${V2.ease};}
@@ -2654,6 +2714,21 @@ export default function DiscernV2({
         .v2-panel p{font-size:13px;line-height:1.62;font-weight:400;margin:0;}
         /* HOW TO STYLE lifts a light card instead of the dark one. */
         .v2-panel.light{color:${V2.ink};background:${V2.glassLight};border:1px solid rgba(255,255,255,.5);max-height:38vh;}
+        /* One row per slot: trousers, shoes, a layer. Each scrolls sideways
+           on its own so ten options cost one row of height rather than five,
+           and the panel stays a panel rather than becoming a second page. */
+        .v2-style-rows{display:flex;flex-direction:column;gap:16px;}
+        .v2-style-row-t{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+          color:${V2.ink45};margin-bottom:8px;}
+        .v2-style-strip{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;
+          padding-bottom:2px;scroll-snap-type:x proximity;}
+        .v2-style-strip::-webkit-scrollbar{display:none;}
+        .v2-style-strip .v2-style-cell{flex:0 0 92px;aspect-ratio:3/4;scroll-snap-align:start;}
+        .v2-style-cell em{position:absolute;left:0;right:0;bottom:0;padding:14px 6px 5px;
+          font-style:normal;font-size:9.5px;line-height:1.25;color:#fff;text-align:left;
+          display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+          background:linear-gradient(to top,rgba(0,0,0,.68),transparent);}
+        .v2-style-wait{font-size:12px;color:${V2.ink45};margin:0 0 10px;}
         .v2-style-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
         .v2-style-cell{position:relative;padding:0;border:none;cursor:pointer;background:rgba(255,255,255,.55);
           aspect-ratio:1/1;overflow:hidden;border-radius:4px;}
