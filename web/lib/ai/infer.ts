@@ -136,14 +136,11 @@ export async function infer(
       fits: always,
       run: () => geminiChat(messages, system, { max_tokens: maxTokens, temperature }),
     },
-    {
-      name: 'openrouter',
-      ready: !!process.env.OPENROUTER_API_KEY,
-      fits: always,
-      // No model named: groqChat falls back to its own default, which IS
-      // openrouter/free. Deliberate — this is the rung of last resort.
-      run: () => groqChat(messages, system, undefined, { max_tokens: maxTokens, temperature }),
-    },
+    // OpenRouter was the rung of last resort here. Its free tier is capped
+    // account-wide at 50 requests a day across every ":free" model combined,
+    // and production reported it `quota` — so it was a rung that always
+    // failed, costing a round trip on the way past. Removed; the four above
+    // are four independent free tiers and three of them report healthy.
   ]
 
   const skipped: string[] = []

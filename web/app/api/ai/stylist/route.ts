@@ -1996,7 +1996,7 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
       }
       const visionAttempts: { name: string; run: () => Promise<string> }[] = []
       if (CEREBRAS_VISION_CONFIGURED) visionAttempts.push({ name: 'cerebras-vision', run: () => cerebrasVisionChat(visionSystemFull, visionPrompt, images, { max_tokens: 1100, temperature: 0.3 }) })
-      visionAttempts.push({ name: 'gemini-openrouter-or-groq-vision', run: () => wardrobeVisionChat(visionSystemFull, visionPrompt, images, { max_tokens: 1100, temperature: 0.3 }) })
+      visionAttempts.push({ name: 'gemini-cerebras-or-groq-vision', run: () => wardrobeVisionChat(visionSystemFull, visionPrompt, images, { max_tokens: 1100, temperature: 0.3 }) })
       if (NVIDIA_CONFIGURED) visionAttempts.push({ name: 'nvidia-vision', run: () => nvidiaVisionChat(visionSystemFull, visionPrompt, images, { max_tokens: 1100, temperature: 0.3 }) })
       let visionThrew: any = null
       let visionProvider = ''
@@ -2182,7 +2182,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
         noteModelSuccess()
         logAiUsage({ path: heavy ? 'llm-heavy' : 'llm-light', provider: msg.provider, estPromptTokens: estimateTokens(promptTextForEstimate), estCompletionTokensCap: replyMaxTokens, ok: !!raw })
       } catch (err) {
-        logAiUsage({ path: heavy ? 'llm-heavy' : 'llm-light', provider: 'openrouter-or-groq', estPromptTokens: estimateTokens(promptTextForEstimate), estCompletionTokensCap: replyMaxTokens, ok: false })
+        logAiUsage({ path: heavy ? 'llm-heavy' : 'llm-light', provider: 'groq', estPromptTokens: estimateTokens(promptTextForEstimate), estCompletionTokensCap: replyMaxTokens, ok: false })
         console.error('[stylist] model call failed:', err)
         console.error('[stylist] all models failed:', (err as Error).message)
         noteModelFailure()

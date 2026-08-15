@@ -1,78 +1,47 @@
 // ── AI text/vision client ────────────────────────────────────────────────────
-// PRIMARY: OpenRouter (free-tier models — see below). FALLBACK: Groq direct,
-// for when OpenRouter's free tier hits its request cap. Two independent
-// providers so one running dry never takes text chat down.
+// Groq direct, with Cerebras and NVIDIA alongside it in the provider ladder
+// (see lib/ai/infer.ts). Groq periodically retires hosted open models on short
+// notice — everything this file called before 2026-06-17 was deprecated in one
+// go — so every model ID below is env-overridable and none is load-bearing in
+// code. Check https://console.groq.com/docs/models if a call starts 404ing.
 //
-// We moved the primary off Groq because it periodically retires hosted open
-// models on short notice — llama-3.1-8b-instant, llama-3.3-70b-versatile and
-// llama-4-scout-17b-16e-instruct (everything this file used to call) were all
-// deprecated by Groq on 2026-06-17. OpenRouter proxies the same kind of open
-// models (DeepSeek, Qwen, Llama, etc.) behind one stable OpenAI-compatible API,
-// so when a model gets retired again it's an env var change, not a rewrite.
-// Groq is kept as a SECOND, independent free tier behind it (Groq's own
-// current model lineup — NOT the deprecated ones — see GROQ_SMART_MODEL /
-// GROQ_FAST_MODEL below), so the two free tiers' request caps don't share a
-// pool: if OpenRouter's free 50-100/day cap is exhausted, Groq picks up.
-//
-// Function/constant names below (groqChat, CHAT_MODEL, ...) are kept as-is on
-// purpose — a dozen routes import them, and renaming would touch every call
+// Function and constant names (groqChat, CHAT_MODEL, ...) are kept as-is on
+// purpose: a dozen routes import them, and renaming would touch every call
 // site for a cosmetic win. Only this file and the env vars matter if a
 // provider or model changes again.
+
+// ── OpenRouter is gone ──────────────────────────────────────────────────────
+// It was the PRIMARY provider for every call in this file, with Groq behind it
+// as a fallback. Production reported it `quota` — the free tier is capped
+// account-wide at 50 requests a day across every ":free" model combined, which
+// this app exhausts before breakfast — so in practice every request paid a
+// round trip to a dead provider before reaching a live one. Removed at the
+// owner's instruction rather than left in as a rung that always fails.
 //
-// Requires OPENROUTER_API_KEY (https://openrouter.ai/keys — no card needed for
-// the free models below). GROQ_API_KEY / GROQ_BASE_URL are optional — reuses
-// whatever was already configured before the OpenRouter migration; if unset,
-// the Groq fallback is simply skipped and OpenRouter is the only provider.
+// What was load-bearing about it, and where that went:
+//   the auto-router never going stale  → Groq's own lineup, pinned but
+//                                        overridable via GROQ_SMART_MODEL /
+//                                        GROQ_FAST_MODEL / GROQ_VISION_MODEL
+//   four free vision models in a chain → Gemini first, Groq direct behind it
+//                                        (two independent pools, unchanged)
+//   being a free tier at all           → Groq, Cerebras and NVIDIA all have
+//                                        one, and all three report healthy
 //
-// Defaulted to OpenRouter's own auto-router, openrouter/free (launched Feb
-// 2026) — zero cost, and it picks a live free model per-request rather than
-// pinning one hardcoded slug. This directly fixes a real recurring failure
-// mode: this file used to default to a specific free model ID (first Groq's
-// own lineup, then deepseek/deepseek-chat-v3.1:free), and BOTH were
-// unilaterally pulled from free tier by their provider with no warning —
-// health-checked in production as a live HTTP 404 ("This model is
-// unavailable for free"). openrouter/free routes around exactly that: it
-// filters live for whatever a request actually needs (tool calling, image
-// understanding, structured output) and never goes stale as individual
-// free models rotate in/out upstream. Override via the env vars below if a
-// specific pinned model is ever genuinely preferred over the auto-router.
-//
-// Tradeoff: OpenRouter's free tier is capped account-wide (across every
-// ":free" model combined, openrouter/free included) at 20 req/min and 50
-// req/day with no credit purchased, or 1000/day once you've bought $10 of
-// credit (one-time, doesn't need to be spent — it just raises the ceiling).
-// Once that's exhausted, this file falls back to Groq's own current lineup
-// automatically, then Cerebras (see cerebras.ts) behind that.
+// The names below are kept because a dozen callers pass them; they now hold
+// Groq model IDs. Nothing in this file talks to openrouter.ai any more.
 import { isOnCooldown, markRateLimited } from './providerCooldown'
 
-const AI_BASE = process.env.OPENROUTER_BASE_URL ?? 'https://openrouter.ai/api/v1'
-const AI_API_KEY = process.env.OPENROUTER_API_KEY ?? ''
 // "Smart" tier — tool-calling capable, used for search planning + the Fabrics
-// stylist's heavy path. Override with OPENROUTER_SMART_MODEL.
-export const CHAT_MODEL = process.env.OPENROUTER_SMART_MODEL ?? 'openrouter/free'
-export const STYLIST_MODEL = process.env.OPENROUTER_SMART_MODEL ?? 'openrouter/free'
-// "Fast" tier — chitchat routing, rerank judging, descriptions, shipping
-// parsing, memory compression. Defaults to the same model as the smart tier
-// for safety (one fewer unverified model ID); point it at something cheaper/
-// quicker via OPENROUTER_FAST_MODEL once you've picked one from the catalog.
-export const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL ?? CHAT_MODEL
-// Vision FALLBACK only — Gemini is primary (see wardrobeVisionChat below);
-// this only fires when Gemini is rate-limited or GOOGLE_AI_API_KEY is unset.
-// openrouter/free's live capability filtering covers image understanding
-// too, so the same "never goes stale" reasoning applies here.
-export const VISION_MODEL = process.env.OPENROUTER_VISION_MODEL ?? 'openrouter/free'
-// A LIST of free OpenRouter vision models tried in order (broadening the chain
-// so a single model being deprecated/down doesn't drop the whole OpenRouter
-// tier). They share OpenRouter's one free pool, so a 429 on the first
-// short-circuits the rest via the base cooldown — but on a MODEL-specific
-// failure (bad slug, refuses the image), the next model still gets a shot.
-export const OPENROUTER_VISION_MODELS: string[] = (process.env.OPENROUTER_VISION_MODELS
-  ?? 'openrouter/free,google/gemini-2.0-flash-exp:free,meta-llama/llama-3.2-11b-vision-instruct:free,qwen/qwen2.5-vl-72b-instruct:free')
-  .split(',').map(s => s.trim()).filter(Boolean)
+// stylist's heavy path.
+export const CHAT_MODEL = process.env.GROQ_SMART_MODEL ?? 'openai/gpt-oss-120b'
+export const STYLIST_MODEL = CHAT_MODEL
+// "Fast" tier — chitchat routing, descriptions, shipping parsing, memory
+// compression. A genuinely smaller model now, rather than an alias of the
+// smart one: these calls are short and somebody is waiting on them.
+export const FAST_MODEL = process.env.GROQ_FAST_MODEL ?? 'openai/gpt-oss-20b'
 
-// ── Groq direct — second-line fallback when OpenRouter's free tier is dry ──
-// Reuses GROQ_API_KEY / GROQ_BASE_URL from before the migration (they were
-// never removed from Vercel). Deliberately does NOT reuse the old
+// ── Groq, the provider this file talks to ───────────────────────────────────
+// Deliberately does NOT reuse the old
 // GROQ_CHAT_MODEL — that almost certainly still holds a now-dead model string
 // (llama-3.3-70b-versatile). These are Groq's own current replacements for
 // the deprecated models, as recommended in Groq's 2026-06-17 deprecation
@@ -84,9 +53,7 @@ export const GROQ_DIRECT_SMART_MODEL = process.env.GROQ_SMART_MODEL ?? 'openai/g
 export const GROQ_DIRECT_FAST_MODEL = process.env.GROQ_FAST_MODEL ?? 'openai/gpt-oss-20b'
 export const GROQ_DIRECT_CONFIGURED = !!GROQ_DIRECT_API_KEY
 // Groq's current vision-capable model (GPT-OSS above is text-only). The
-// text chain gets 3 fallback tiers (Gemini/OpenRouter → OpenRouter → Groq
-// direct); vision only ever had 2 (Gemini → OpenRouter's vision model) with
-// no Groq-direct tier at all — this closes that gap.
+// vision chain is Gemini → Cerebras → Groq direct, three independent pools.
 // Llama 4 Maverick (the original default here) was deprecated by Groq on
 // 2026-02-20; Llama 4 Scout (its usual replacement) was ALSO deprecated on
 // 2026-06-17 — Groq's free/dev tier has no Llama 4 vision model left at
@@ -197,12 +164,6 @@ function headersFor(base: string, apiKey: string) {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${apiKey}`,
   }
-  // OpenRouter uses these for attribution + per-app rate-limit tiering.
-  // Optional, but recommended — a harmless no-op against Groq's own API.
-  if (base.includes('openrouter.ai')) {
-    headers['HTTP-Referer'] = process.env.OPENROUTER_SITE_URL ?? 'https://discern.enuid.com'
-    headers['X-Title'] = 'Discern'
-  }
   return headers
 }
 
@@ -301,63 +262,40 @@ export async function chatCompletion(
 }
 
 /**
- * Chat completion with automatic provider fallback: OpenRouter first, then
- * Groq direct (if configured) on ANY OpenRouter failure — rate limit, out of
- * credits, network error, whatever. This is what makes hitting OpenRouter's
- * free-tier cap a non-event instead of an outage.
+ * Chat completion against Groq.
+ *
+ * This used to try OpenRouter first and fall back to Groq on any failure. With
+ * OpenRouter's free tier permanently spent, that fallback fired on every single
+ * call — so every request in the app paid a round trip to a dead provider
+ * before reaching a live one. There is no fallback here now because there is
+ * nothing to fall back FROM; the real redundancy lives one level up, in the
+ * ladder in lib/ai/infer.ts, which has Cerebras and NVIDIA either side of this.
  */
 export async function groqChat(
   messages: ChatMessage[],
   system?: string,
   tools?: any[],
-  opts?: { max_tokens?: number; temperature?: number; model?: string },
-): Promise<any> {
-  const requestedModel = opts?.model ?? CHAT_MODEL
-  if (!AI_API_KEY) {
-    throw new Error('OPENROUTER_API_KEY is not set. Get one at https://openrouter.ai/keys and add it to .env.local / Vercel.')
-  }
-
-  try {
-    return await chatCompletion(AI_BASE, AI_API_KEY, requestedModel, messages, system, tools, opts)
-  } catch (primaryErr: any) {
-    if (!GROQ_DIRECT_API_KEY) throw primaryErr
-    const fallbackModel = requestedModel === FAST_MODEL ? GROQ_DIRECT_FAST_MODEL : GROQ_DIRECT_SMART_MODEL
-    console.warn(`[ai] OpenRouter failed (${primaryErr.message}) — falling back to Groq direct (${fallbackModel})`)
-    try {
-      return await chatCompletion(GROQ_DIRECT_BASE, GROQ_DIRECT_API_KEY, fallbackModel, messages, system, tools, opts)
-    } catch (fallbackErr: any) {
-      throw new Error(`OpenRouter: ${primaryErr.message} | Groq: ${fallbackErr.message}`)
-    }
-  }
-}
-
-/** Groq's own API, with no OpenRouter hop in front of it.
- *
- *  `groqChat` is OpenRouter-first by design and falls back to Groq only when
- *  OpenRouter throws. That is the wrong shape for the provider ladder in
- *  lib/ai/infer.ts, which already has its own OpenRouter rung at the bottom:
- *  the "groq" rung was spending a round trip on a key production reports as
- *  `quota` before reaching the provider it named. Same request, one hop. */
-export async function groqDirectChat(
-  messages: ChatMessage[],
-  system?: string,
   opts?: { max_tokens?: number; temperature?: number; model?: string; extraPayload?: Record<string, unknown> },
 ): Promise<any> {
-  if (!GROQ_DIRECT_API_KEY) throw new Error('GROQ_API_KEY is not set')
+  if (!GROQ_DIRECT_API_KEY) {
+    throw new Error('GROQ_API_KEY is not set. Get one at https://console.groq.com/keys and add it to .env.local / Vercel.')
+  }
   return chatCompletion(
-    GROQ_DIRECT_BASE, GROQ_DIRECT_API_KEY, opts?.model ?? GROQ_DIRECT_SMART_MODEL,
-    messages, system, undefined,
-    { max_tokens: opts?.max_tokens, temperature: opts?.temperature, extraPayload: opts?.extraPayload },
+    GROQ_DIRECT_BASE, GROQ_DIRECT_API_KEY, opts?.model ?? CHAT_MODEL,
+    messages, system, tools, opts,
   )
 }
 
-// Diagnostic seams — call ONE provider in isolation, bypassing the automatic
-// fallback in groqChat, so /api/ai/stylist/health can report exactly which
-// provider is failing instead of the fallback silently masking it.
-export async function pingOpenRouter(model: string = CHAT_MODEL): Promise<any> {
-  if (!AI_API_KEY) throw new Error('OPENROUTER_API_KEY is not set')
-  return chatCompletion(AI_BASE, AI_API_KEY, model, [{ role: 'user', content: 'Reply with the single word ok.' }], undefined, undefined, { max_tokens: 10 })
-}
+/** Kept as a separate name because the provider ladder names this rung
+ *  explicitly and reads better for it. Same call. */
+export const groqDirectChat = (
+  messages: ChatMessage[],
+  system?: string,
+  opts?: { max_tokens?: number; temperature?: number; model?: string; extraPayload?: Record<string, unknown> },
+): Promise<any> => groqChat(messages, system, undefined, opts)
+
+// Diagnostic seam — calls the provider in isolation so
+// /api/ai/stylist/health can report exactly what it is doing.
 export async function pingGroqDirect(model: string = GROQ_DIRECT_SMART_MODEL): Promise<any> {
   if (!GROQ_DIRECT_API_KEY) throw new Error('GROQ_API_KEY is not set — Groq-direct fallback is not configured')
   return chatCompletion(GROQ_DIRECT_BASE, GROQ_DIRECT_API_KEY, model, [{ role: 'user', content: 'Reply with the single word ok.' }], undefined, undefined, { max_tokens: 10 })
@@ -522,23 +460,27 @@ export type VisionMessage = {
   content: string | VisionPart[]
 }
 
+/** Vision against Groq. The name is older than the routing: this called
+ *  OpenRouter until that provider was removed, and kept its name because
+ *  imageClassifier.ts and the wardrobe scan both import it. */
 export async function groqVisionChat(
   messages: VisionMessage[],
   system: string,
   opts?: { max_tokens?: number; temperature?: number; model?: string },
   retryCount = 0
 ): Promise<any> {
+  if (!GROQ_DIRECT_API_KEY) throw new Error('GROQ_API_KEY is not set')
   const allMessages: VisionMessage[] = [{ role: 'system', content: system }, ...messages]
   const payload = {
-    model: opts?.model ?? VISION_MODEL,
+    model: opts?.model ?? GROQ_DIRECT_VISION_MODEL,
     messages: allMessages,
     temperature: opts?.temperature ?? 0.2,
     max_tokens: opts?.max_tokens ?? 700,
   }
   try {
-    const res = await fetch(`${AI_BASE}/chat/completions`, {
+    const res = await fetch(`${GROQ_DIRECT_BASE}/chat/completions`, {
       method: 'POST',
-      headers: headersFor(AI_BASE, AI_API_KEY),
+      headers: headersFor(GROQ_DIRECT_BASE, GROQ_DIRECT_API_KEY),
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(30_000),
     })
@@ -691,19 +633,22 @@ export async function wardrobeVisionChat(
   }))
   const visionMessages: VisionMessage[] = [{ role: 'user', content: [{ type: 'text', text: question }, ...imageParts] }]
 
-  // Several concrete free vision models on OpenRouter, tried in order — not just
-  // the auto-router. If one model is deprecated/down/refuses the image, the next
-  // is tried; a 429 on the shared pool short-circuits the rest via the cooldown.
-  // Env-overridable so the list can be retuned without a deploy.
-  for (const model of OPENROUTER_VISION_MODELS) {
+  // A chain of four free OpenRouter vision models used to sit here. It is gone
+  // with the rest of OpenRouter; Cerebras takes its place as the independent
+  // second pool, so vision still never rests on one provider.
+  if (process.env.CEREBRAS_API_KEY) {
     try {
-      const msg = await groqVisionChat(visionMessages, systemPrompt, { ...opts, model })
-      const content = stripSafetyLabels(stripAiDashes(stripThinkTags((msg?.content ?? '').trim())))
+      // Imported here rather than at the top: cerebras.ts imports
+      // chatCompletion from this file, and a top-level import would close the
+      // cycle at module-init time. Deferring it keeps the two files honest.
+      const { cerebrasVisionChat } = await import('./cerebras')
+      const raw = await cerebrasVisionChat(systemPrompt, question, imageDataUrls, opts)
+      const content = stripSafetyLabels(stripAiDashes(stripThinkTags(raw.trim())))
       if (!content) throw new Error('empty content')
       if (looksLikeLeakedReasoning(content)) throw new Error('leaked reasoning')
       return content
     } catch (err: any) {
-      errors.push({ name: `openrouter(${model})`, err })
+      errors.push({ name: 'cerebras', err })
     }
   }
 

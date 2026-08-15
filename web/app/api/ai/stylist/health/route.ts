@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { geminiChat } from '@/lib/gemini'
 import {
   CHAT_MODEL, FAST_MODEL, GROQ_DIRECT_SMART_MODEL, GROQ_DIRECT_FAST_MODEL, GROQ_DIRECT_VISION_MODEL, GROQ_DIRECT_CONFIGURED,
-  pingOpenRouter, pingGroqDirect,
+  pingGroqDirect,
 } from '@/lib/groq'
 import { CEREBRAS_MODEL, CEREBRAS_CONFIGURED, CEREBRAS_VISION_MODEL, pingCerebras } from '@/lib/cerebras'
 import { NVIDIA_MODEL, NVIDIA_CONFIGURED, pingNvidia } from '@/lib/nvidia'
@@ -33,11 +33,10 @@ export async function GET(req: NextRequest) {
   const out: Record<string, unknown> = {
     env: {
       GOOGLE_AI_API_KEY_set: !!process.env.GOOGLE_AI_API_KEY,
-      OPENROUTER_API_KEY_set: !!process.env.OPENROUTER_API_KEY,
       GROQ_DIRECT_configured: GROQ_DIRECT_CONFIGURED,
       gemini_model: process.env.GEMINI_STYLIST_MODEL ?? 'gemini-2.0-flash (default)',
-      openrouter_smart_model: CHAT_MODEL,
-      openrouter_fast_model: FAST_MODEL,
+      smart_model: CHAT_MODEL,
+      fast_model: FAST_MODEL,
       groq_direct_smart_model: GROQ_DIRECT_SMART_MODEL,
       groq_direct_fast_model: GROQ_DIRECT_FAST_MODEL,
       groq_direct_vision_model: GROQ_DIRECT_VISION_MODEL,
@@ -57,21 +56,7 @@ export async function GET(req: NextRequest) {
     out.gemini = { ok: false, error: (e as Error).message?.slice(0, 300) ?? 'unknown' }
   }
 
-  // OpenRouter test — smart tier, isolated (no fallback)
-  try {
-    const r = await pingOpenRouter(CHAT_MODEL)
-    out.openrouter_smart = { ok: true, model: CHAT_MODEL, reply: (r?.content ?? '').slice(0, 60) }
-  } catch (e) {
-    out.openrouter_smart = { ok: false, model: CHAT_MODEL, error: (e as Error).message?.slice(0, 300) ?? 'unknown' }
-  }
 
-  // OpenRouter test — fast tier, isolated (no fallback)
-  try {
-    const r = await pingOpenRouter(FAST_MODEL)
-    out.openrouter_fast = { ok: true, model: FAST_MODEL, reply: (r?.content ?? '').slice(0, 60) }
-  } catch (e) {
-    out.openrouter_fast = { ok: false, model: FAST_MODEL, error: (e as Error).message?.slice(0, 300) ?? 'unknown' }
-  }
 
   // Groq-direct test — smart tier (second-line fallback, only if configured)
   if (GROQ_DIRECT_CONFIGURED) {

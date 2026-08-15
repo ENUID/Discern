@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { geminiChat } from '@/lib/gemini'
-import { CHAT_MODEL, FAST_MODEL, GROQ_DIRECT_CONFIGURED, GROQ_DIRECT_SMART_MODEL, pingOpenRouter, pingGroqDirect } from '@/lib/groq'
+import { GROQ_DIRECT_CONFIGURED, GROQ_DIRECT_SMART_MODEL, pingGroqDirect } from '@/lib/groq'
 import { CEREBRAS_CONFIGURED, pingCerebras } from '@/lib/cerebras'
 import { NVIDIA_CONFIGURED, pingNvidia } from '@/lib/nvidia'
 import { makeIpRateLimiter } from '@/lib/rateLimit'
@@ -62,16 +62,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'checked too often — wait a minute' }, { status: 429 })
   }
 
-  const [gemini, openrouter, groq, cerebras, nvidia] = await Promise.all([
+  const [gemini, groq, cerebras, nvidia] = await Promise.all([
     probe(!!process.env.GOOGLE_AI_API_KEY, () =>
       geminiChat([{ role: 'user', content: 'ok' }], undefined, { max_tokens: 4 })),
-    probe(!!process.env.OPENROUTER_API_KEY, () => pingOpenRouter(FAST_MODEL)),
     probe(GROQ_DIRECT_CONFIGURED, () => pingGroqDirect(GROQ_DIRECT_SMART_MODEL)),
     probe(CEREBRAS_CONFIGURED, () => pingCerebras()),
     probe(NVIDIA_CONFIGURED, () => pingNvidia()),
   ])
 
-  const providers = { gemini, openrouter, groq, cerebras, nvidia }
+  const providers = { gemini, groq, cerebras, nvidia }
   const working = Object.entries(providers).filter(([, k]) => k === 'ok').map(([n]) => n)
 
   return NextResponse.json({
