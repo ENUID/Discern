@@ -63,7 +63,12 @@ async function hit(method, path, body, { timeout = 45000 } = {}) {
  *  this file exists to find. */
 function speaks(json) {
   if (!json || typeof json !== 'object') return false
-  for (const k of ['reason', 'error', 'message', 'detail', 'judge', 'judgeDetail']) {
+  // NOT `judge` or `judgeDetail`. Those ride on every search response whether
+  // or not anything went wrong, so counting them as an explanation made the
+  // silent-empty check structurally incapable of firing on the exact routes it
+  // was written for. A harness that cannot fail is worse than no harness: it
+  // reports green and teaches you to stop looking.
+  for (const k of ['reason', 'error', 'message', 'detail']) {
     if (json[k] !== undefined && json[k] !== null && json[k] !== '') return true
   }
   return false
@@ -96,9 +101,13 @@ const PROBES = [
   ['/api/style-with', 'POST', { product: { title: 'Silver Bracelet', tags: ['jewellery'] } }, 'how to style, unplaceable'],
   ['/api/product-names', 'POST', { titles: ['RONALD', 'KEDAR'] }, 'nicer captions'],
   ['/api/product-names', 'POST', {}, 'captions, nothing asked'],
-  ['/api/product-images', 'POST', { productId: 'x', images: [] }, 'gallery ordering'],
-  ['/api/sizeguide', 'POST', { vendor: 'x', title: 'shirt' }, 'size guide'],
-  ['/api/shipping', 'POST', { storeUrl: 'https://example.com', country: 'IN' }, 'shipping read'],
+  // These three are GET, not POST. The first run of this file reported three
+  // 405s and I nearly went looking for a routing bug: the harness was wrong,
+  // not the app. A probe that calls a route the way nothing calls it tests
+  // nothing, and worse, it manufactures findings.
+  ['/api/product-images?handle=x&store=example.com', 'GET', null, 'gallery ordering'],
+  ['/api/sizeguide?url=https%3A%2F%2Fexample.com', 'GET', null, 'size guide'],
+  ['/api/shipping?url=https%3A%2F%2Fexample.com&country=IN', 'GET', null, 'shipping read'],
   ['/api/description', 'POST', { title: 'Oxford shirt', vendor: 'x' }, 'written description'],
   ['/api/feedback', 'POST', { message: 'audit probe, please ignore', email: 'audit@example.com' }, 'feedback'],
   ['/api/ai/stylist/status', 'GET', null, 'which providers are up'],
@@ -125,6 +134,24 @@ const GUARDED = [
 
 async function main() {
   console.log(`\nAUDIT  ${BASE}\n${'─'.repeat(74)}`)
+
+  // Two dev servers sharing one .next overwrite each other's chunks, and the
+  // result is a page that renders and never hydrates, endpoints answering from
+  // whichever build won the race, and timings that mean nothing. It cost most
+  // of a day of chasing product bugs that were mine. Refuse to run rather than
+  // hand back numbers gathered from two different builds at once.
+  if (BASE.includes('localhost')) {
+    try {
+      const { execSync } = require('child_process')
+      const n = Number(execSync('pgrep -c -f next-server || true').toString().trim()) || 0
+      if (n > 1) {
+        console.log(`\n  ${n} dev servers are running. They share one .next and overwrite`)
+        console.log('  each other, so nothing measured here would mean anything.')
+        console.log('  Stop them (pkill -f next-server), start one, and run this again.\n')
+        process.exit(98)
+      }
+    } catch { /* not a machine where this can be checked; carry on */ }
+  }
 
   console.log('\nTHE SHOPPER-FACING SURFACE')
   for (const [path, method, body, what] of PROBES) {
@@ -155,7 +182,7 @@ async function main() {
     } else if (r.status === 429) {
       verdict = 'rate limited'
     }
-    if (speaks(r.json) && !extra) extra = Object.entries(r.json).filter(([k]) => ['reason', 'error', 'judge'].includes(k)).map(([k, v]) => `${k}=${v}`).join(' ')
+    if (!extra && r.json) extra = Object.entries(r.json).filter(([k]) => ['reason', 'error', 'judge'].includes(k)).map(([k, v]) => `${k}=${v}`).join(' ')
     if (r.ms > 20000) note('medium', path, `took ${(r.ms / 1000).toFixed(1)}s`, `${what} — a shopper is waiting on this`)
 
     record(path, what, r, verdict, extra)

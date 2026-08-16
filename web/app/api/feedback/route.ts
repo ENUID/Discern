@@ -66,9 +66,27 @@ export async function POST(req: NextRequest) {
     const path = String(body?.path ?? '').trim().slice(0, 200)
     const agent = (req.headers.get('user-agent') ?? '').slice(0, 200)
 
+    /** Somebody took the trouble to write in. Losing that because of an
+     *  environment variable is the worst trade in this codebase.
+     *
+     *  This used to answer 500 "Feedback is not configured yet." and drop the
+     *  message on the floor. The key is set in production and missing
+     *  everywhere else, so the failure is invisible until the day it isn't —
+     *  and on that day every bug report and every piece of praise goes in the
+     *  bin while the shopper is told, truthfully but uselessly, that something
+     *  is not configured.
+     *
+     *  So the message is written to the log in a shape that can be grepped and
+     *  recovered, and the shopper is told it landed. Which is true: it reached
+     *  the company. That it reached a log rather than an inbox is our problem
+     *  to fix, not theirs to absorb. */
+    const keep = (why: string) => {
+      console.error(`[feedback:UNSENT ${why}] ${JSON.stringify({ kind, from, path, message, agent })}`)
+    }
+
     if (!process.env.RESEND_API_KEY) {
-      console.error('[feedback] RESEND_API_KEY is not set; nothing was sent')
-      return NextResponse.json({ error: 'Feedback is not configured yet.' }, { status: 500 })
+      keep('no-key')
+      return NextResponse.json({ ok: true, delivered: false })
     }
 
     const resend = new Resend(process.env.RESEND_API_KEY)
@@ -99,8 +117,12 @@ export async function POST(req: NextRequest) {
     })
 
     if (error) {
+      // Same reasoning as the missing key above: the send failed, the message
+      // must not. Asking somebody to retype a paragraph because our mail
+      // provider had a bad minute is how feedback stops arriving at all.
       console.error('[feedback] Resend error:', error)
-      return NextResponse.json({ error: 'That did not send. Try again in a moment.' }, { status: 502 })
+      keep('send-failed')
+      return NextResponse.json({ ok: true, delivered: false })
     }
     return NextResponse.json({ ok: true })
   } catch (err) {
