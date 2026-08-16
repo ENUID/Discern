@@ -193,7 +193,18 @@ export async function POST(req: NextRequest) {
       // time. A worse order is a far better answer than none.
       () => runSearch({ fastFirstPage: true, sort: 'trust_desc' as never }),
     )
-    return NextResponse.json({ products: found.slice(0, 12), groups: [], query: term, judge: lastJudgeOutcome, judgeDetail: lastJudgeDetail })
+    // An empty page has to say WHICH empty it is. Without this the response is
+    // `{products: []}` and nothing else — indistinguishable, from the outside,
+    // from a catalogue that genuinely stocks nothing for this question. That
+    // ambiguity is the single most expensive thing in this codebase: it is how
+    // a strip that had quietly started failing looked exactly like a strip
+    // with nothing to show, for days.
+    const page = found.slice(0, 12)
+    return NextResponse.json({
+      products: page, groups: [], query: term,
+      judge: lastJudgeOutcome, judgeDetail: lastJudgeDetail,
+      ...(page.length === 0 ? { reason: 'no-matches' } : {}),
+    })
   } catch (e) {
     console.error('[catalog/search] failed:', e)
     return NextResponse.json({ products: [], groups: [], reason: 'search-failed' }, { status: 200 })

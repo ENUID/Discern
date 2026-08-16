@@ -64,10 +64,10 @@ function toGalleryUrl(src: string): string {
 export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get('url')
   const productId = (req.nextUrl.searchParams.get('id') || '').trim()
-  if (!raw) return NextResponse.json({ images: [], colors: [], byColor: {} })
+  if (!raw) return NextResponse.json({ images: [], colors: [], byColor: {}, reason: 'no-store-url' })
 
   const parsed = safeParseStoreUrl(raw)
-  if (!parsed) return NextResponse.json({ images: [], colors: [], byColor: {} })
+  if (!parsed) return NextResponse.json({ images: [], colors: [], byColor: {}, reason: 'unreadable-store-url' })
 
   if (cache.has(raw)) return NextResponse.json(cache.get(raw))
 
@@ -102,7 +102,7 @@ export async function GET(req: NextRequest) {
 
   // Extract the product handle from the URL
   const handleMatch = raw.match(/\/products\/([^/?#]+)/)
-  if (!handleMatch) return NextResponse.json({ images: [], colors: [], byColor: {} })
+  if (!handleMatch) return NextResponse.json({ images: [], colors: [], byColor: {}, reason: 'not-a-product-url' })
 
   const { protocol, hostname } = parsed
   const jsonUrl = `${protocol}//${hostname}/products/${handleMatch[1]}.json`
@@ -143,7 +143,11 @@ export async function GET(req: NextRequest) {
       // cache.set turned one slow store response into "this product has no
       // images" for the life of the process.
       if (res.status === 404 || res.status === 410) cache.set(raw, empty)
-      return NextResponse.json(empty)
+      // Which empty this is. "The store has no gallery for this product" and
+      // "the store was briefly unwell" produce the same array, and the caller
+      // was given no way to tell them apart — so a transient 503 looked
+      // exactly like a product with no photographs.
+      return NextResponse.json({ ...empty, reason: `store-said-${res.status}` })
     }
 
     const data = await res.json()
@@ -229,6 +233,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(gallery)
   } catch {
     // Network error / abort — transient by definition, never cached.
-    return NextResponse.json(empty)
+    return NextResponse.json({ ...empty, reason: 'store-unreachable' })
   }
 }

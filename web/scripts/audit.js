@@ -143,7 +143,21 @@ async function main() {
   if (BASE.includes('localhost')) {
     try {
       const { execSync } = require('child_process')
-      const n = Number(execSync('pgrep -c -f next-server || true').toString().trim()) || 0
+      // -x (exact process NAME), not -f (full command line). With -f this
+      // matched its own shell — the command being run contains the string it
+      // searches for — so it counted itself and reported two servers when
+      // there was one. The same self-match had already broken a wait loop and
+      // a liveness check earlier today, each time by making something absent
+      // look present.
+      // ANCHORED. Plain `-f next-server` matched its own shell, because the
+      // command being run contains the string it searches for — so it counted
+      // itself and reported two servers when there was one. `-x` was worse: the
+      // process is named "next-server (v15.5.19)", so an exact-name match found
+      // nothing and the guard could never fire at all. `^next-server` requires
+      // the command line to START with it, which is true of the server and of
+      // nothing else. Measured: 1 with one server up, and it does not see this
+      // process.
+      const n = Number(execSync("pgrep -c -f '^next-server' || true").toString().trim()) || 0
       if (n > 1) {
         console.log(`\n  ${n} dev servers are running. They share one .next and overwrite`)
         console.log('  each other, so nothing measured here would mean anything.')
