@@ -885,9 +885,32 @@ function parseProduct(raw: any, sourceDomain?: string): UcpProduct | null {
       store_url = `https://${store_url}`
     }
 
+    /** Tags stripped out of a description's HTML, so a brand that sent only
+     *  the rich form still gets read. */
+    const fromHtml = (h: unknown): string | undefined => {
+      if (typeof h !== 'string' || !h.trim()) return undefined
+      const t = h
+        .replace(/<\s*(br|\/p|\/li|\/div|\/h[1-6])\s*\/?>/gi, ' ')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
+        .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
+        .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+        .replace(/\s+/g, ' ')
+        .trim()
+      return t.length > 0 ? t : undefined
+    }
+
+    // UCP gives a description as `{ plain, html }` and this read `plain` only.
+    // Plenty of stores send ONLY `html` — kartikresearch.com among them — so
+    // for every product from those brands the description came out undefined,
+    // and the product page said "this brand does not publish a fabric
+    // composition" about a piece whose brand had written three paragraphs. The
+    // words were in the payload the whole time, under the other key.
     const descCandidates = [
       raw.description?.plain,
       variant.description?.plain,
+      fromHtml(raw.description?.html),
+      fromHtml(variant.description?.html),
       raw.metadata?.tech_specs,
     ].filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
     const description = descCandidates.length

@@ -1034,7 +1034,33 @@ export default function DiscernV2({
     return clean.length ? clean.slice(0, 6) : []
   }, [product])
 
-  // The reference leads the MATERIALS panel with the composition in caps.
+  /** The brand's own words, cut to the ones that carry a fact.
+   *
+   *  A catalogue description is mostly written to sell: "an ode to slow
+   *  mornings", "crafted for the modern man", "a piece you will reach for
+   *  again and again". None of that tells a shopper anything they cannot see
+   *  in the photograph. What they cannot see is the cloth, the cut, the
+   *  weight, where it was made and how it is washed — and that is usually one
+   *  or two sentences buried in the middle.
+   *
+   *  So sentences are scored on whether they contain a fact and the best two
+   *  are kept IN THEIR ORIGINAL ORDER, which reads as the brand's writing
+   *  rather than a shuffled summary. Nothing is invented or rewritten: if the
+   *  brand only wrote poetry, the opening line stands as it is, because a
+   *  wrong fact would be far worse than a soft one. */
+  const toThePoint = (raw: string): string => {
+    const text = String(raw || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    if (!text) return ''
+    const sentences = text.split(/(?<=[.!?])\s+/).map(x => x.trim()).filter(x => x.length > 12)
+    if (sentences.length <= 2) return text.slice(0, 240)
+    const FACT = /\b(\d{1,3}\s*%|cotton|linen|wool|silk|cashmere|leather|denim|suede|velvet|corduroy|viscose|nylon|polyester|hemp|jersey|twill|poplin|oxford|canvas|gsm|oz|weave|woven|knit|hand[- ]?(?:woven|loomed|block|painted|embroidered)|made in|milled|fit|cut|relaxed|regular|slim|oversized|tapered|straight|wide|collar|cuff|placket|hem|lined|unlined|pocket|button|zip|dry ?clean|machine wash|hand wash|iron)\b/i
+    const scored = sentences.map((x, i) => ({ x, i, n: (x.match(new RegExp(FACT, 'gi')) || []).length }))
+    const keep = scored.filter(o => o.n > 0).sort((a, b) => b.n - a.n).slice(0, 2).sort((a, b) => a.i - b.i)
+    const out = (keep.length ? keep.map(o => o.x) : [sentences[0]]).join(' ')
+    return out.length > 240 ? out.slice(0, 237).replace(/\s+\S*$/, '') + '…' : out
+  }
+
+  // The reference leads the DESCRIPTION panel with the composition in caps.
   const composition = useMemo(() => {
     const m = (product?.materials || product?.description || '').match(/\d{1,3}\s*%\s*[A-Za-z][A-Za-z\s]*/g)
     return m?.length ? m.map(s => s.replace(/\s+/g, ' ').trim()).slice(0, 3).join(', ').toUpperCase() : ''
@@ -1896,19 +1922,19 @@ export default function DiscernV2({
           {acc === 'materials' && (
             <div className="v2-panel">
               <div className="v2-panel-head">
-                <span>MATERIALS</span>
+                <span>DESCRIPTION</span>
                 <button onClick={() => setAcc(null)} aria-label="Collapse">−</button>
               </div>
               {composition && <span className="v2-comp">{composition}</span>}
-              {/* The cleaned lines, not the raw tag list — see detailLines.
-                  When a store publishes no composition at all, say that;
-                  the placeholder that used to sit here claimed a provenance
-                  and a care instruction nobody here has verified. */}
-              {detailLines.length > 0
-                ? <ul className="v2-mat-list">{detailLines.map(d => <li key={d}>{d}</li>)}</ul>
-                : <p>{product.description
-                      ? product.description
-                      : 'This brand does not publish a fabric composition for this piece.'}</p>}
+              {/* The brand's own description, trimmed to the sentences that
+                  carry a fact. This panel used to show `materials` — a string
+                  built by grepping the tag list for fabric words — so a brand
+                  that tags nothing got "this brand does not publish a fabric
+                  composition", which is a sentence about our data rather than
+                  about the trousers. The description was sitting right there
+                  the whole time. */}
+              <p>{toThePoint(product.description || product.materials || '')
+                || 'This brand has not written anything about this piece.'}</p>
             </div>
           )}
           {acc === 'style' && (
@@ -1959,7 +1985,7 @@ export default function DiscernV2({
           <div className="v2-acc">
             {(['materials', 'style'] as const).map(k => (
               <button key={k} className={`v2-acc-pill ${acc === k ? 'on' : ''}`} onClick={() => setAcc(acc === k ? null : k)}>
-                {k === 'materials' ? 'MATERIALS' : 'HOW TO STYLE'}<i aria-hidden>{acc === k ? '−' : '+'}</i>
+                {k === 'materials' ? 'DESCRIPTION' : 'HOW TO STYLE'}<i aria-hidden>{acc === k ? '−' : '+'}</i>
               </button>
             ))}
           </div>
