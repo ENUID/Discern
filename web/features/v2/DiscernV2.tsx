@@ -1961,24 +1961,29 @@ export default function DiscernV2({
                     </button>
                   ) : null)}
                 </div>
-              ) : styleBusy || styleWith.length > 0 ? (
-                <>
-                  {styleBusy && <p className="v2-style-wait">Looking for what goes with it…</p>}
-                  <div className="v2-style-grid">
-                    {styleWith.map(p => (
-                      <button key={p.id} className="v2-style-cell" onClick={() => openProduct(p)}>
-                        <Img src={p.image} alt={p.title} />
-                        <i aria-hidden>+</i>
-                      </button>
-                    ))}
-                  </div>
-                </>
+              ) : styleBusy ? (
+                /* A wait, not a stand-in.
+                 *
+                 * This used to fill the panel with pieces taken from the eight
+                 * already on the page while the real search ran. They arrive
+                 * instantly and they look exactly like an answer, so for the
+                 * ten-odd seconds the catalogue takes, HOW TO STYLE was
+                 * confidently showing the shopper the same products they were
+                 * already looking at — and if the search came back empty, it
+                 * kept showing them.
+                 *
+                 * The whole point of this panel is that it reaches every brand
+                 * rather than re-arranging the page. A placeholder that cannot
+                 * be told apart from the real thing does not fill a gap, it
+                 * hides one. The pieces from this search still have a home:
+                 * the "More like this" rail below, which says what it is. */
+                <p className="v2-style-wait">Looking through every brand for what goes with it…</p>
               ) : (
                 /* No invented styling advice about a garment this app has
                    not seen. Either there are real pieces to pair it with or
                    there is a way to go and find some. */
                 <p>{product.howToStyle
-                  || 'Nothing in this search to pair it with yet — ask what to wear it with and I’ll pull the pieces.'}</p>
+                  || 'Nothing across the brands pairs cleanly with this one yet. Ask what to wear it with and I’ll go looking properly.'}</p>
               )}
             </div>
           )}
