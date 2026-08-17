@@ -1659,7 +1659,10 @@ async function runStylistRequest(
           searchArgs?.mandatoryConcepts || buildMandatoryConcepts(term),
           searchArgs?.sort || 'relevance', searchArgs?.budgetCurrency || buyerCurrency,
           { fastFirstPage: true, onProgress: onSearchProgress }, [],
-          tasteProfile, question, sizeForQuery(term),
+          // The shopper's own photograph, when they held one up. The vision
+          // model's words got us to the right shelf; this picks off it by
+          // measuring each candidate's photograph against theirs.
+          tasteProfile, question, sizeForQuery(term), images[0] ?? null,
         ), requestDeadline, [] as any[])
         if (found && found.length) {
           return {
@@ -2497,7 +2500,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
             const results = await GlobalCatalogService.search(
               q, undefined, [], countryCode, true, concepts,
               'relevance', buyerCurrency, { fastFirstPage: true }, [],
-              tasteProfile, undefined, sizeForQuery(q),
+              tasteProfile, undefined, sizeForQuery(q), images[0] ?? null,
             )
             const filtered = slotCat ? results.filter(p => productMatchesSlot(p, slotCat)) : results
             return { query: q, label, slotCat, filtered, results }
@@ -2561,7 +2564,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
             const results = await GlobalCatalogService.search(
               q, undefined, [], countryCode, true, buildMandatoryConcepts(q),
               'relevance', buyerCurrency, { fastFirstPage: true }, [],
-              tasteProfile, undefined, sizeForQuery(q),
+              tasteProfile, undefined, sizeForQuery(q), images[0] ?? null,
             )
             const filtered = slotCat ? results.filter(p => productMatchesSlot(p, slotCat)) : results
             return { oi, filtered, results }

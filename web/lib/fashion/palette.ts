@@ -352,3 +352,49 @@ export function goesWith(a: Palette | null, b: Palette | null): number {
 
   return Math.max(0, Math.min(1, +score.toFixed(3)))
 }
+
+/** How much two garments LOOK like each other, 0 to 1.
+ *
+ *  `goesWith` above answers a different question — whether two pieces belong
+ *  in one outfit — and for that, sameness is not the goal: a cream trouser
+ *  under an olive shirt scores well precisely because they differ. Asked "find
+ *  me this jacket", that scoring is actively wrong; it would rank the pieces
+ *  that COMPLEMENT the photograph above the ones that match it.
+ *
+ *  So this is the opposite measure. Same dominant colour, same depth of it,
+ *  same busy-or-plain character, same number of colours in play. It is
+ *  deliberately unforgiving about the leading colour, because that is what a
+ *  person means when they hold up a picture and say "like this".
+ *
+ *  What it cannot do is recognise a cut. Two navy wool coats of different
+ *  shapes score alike here — the words from the vision model carry the
+ *  silhouette, and this carries the look. Neither is sufficient alone, which
+ *  is why the search uses both.
+ */
+export function looksLike(a: Palette | null, b: Palette | null): number {
+  if (!a || !b || !a.colours.length || !b.colours.length) return 0.4  // unknown, not wrong
+
+  // The leading colour, by straight distance in RGB. 0 is identical; ~120 is
+  // "a different colour entirely" for garment photography.
+  const lead = dist(a.colours[0], b.colours[0])
+  const leadScore = Math.max(0, 1 - lead / 140)
+
+  // Any colour in one appearing in the other — catches a navy piece with a
+  // white stripe against a navy piece with a white collar.
+  const shared = a.colours.some(c1 => b.colours.some(c2 => dist(c1, c2) < 55)) ? 1 : 0
+
+  // Plain against plain, print against print. A plain black tee and a printed
+  // black tee are not the same garment however close their leading colour.
+  const character = a.plain === b.plain ? 1 : 0.35
+
+  // How many colours each carries. A two-tone piece is not a five-tone piece.
+  const variety = 1 - Math.min(1, Math.abs(a.variety - b.variety) / 4)
+
+  // Same family as a floor, so a slightly different navy is not punished as
+  // hard as a navy against a rust.
+  const family = a.families.some(f => b.families.includes(f)) ? 1 : 0.3
+
+  const score = leadScore * 0.42 + character * 0.22 + family * 0.16
+    + variety * 0.12 + shared * 0.08
+  return Math.max(0, Math.min(1, +score.toFixed(3)))
+}

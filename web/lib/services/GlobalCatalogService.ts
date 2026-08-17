@@ -18,7 +18,7 @@ import { UCP_REGISTRY, detectBrandsInQuery, BRAND_NAMES, getStoreCountry, GEO_RE
 import { GARMENT_PRODUCT_TERMS, matchesGarmentExclusion, COLOR_VOCAB } from '../queryParser'
 import { getExchangeRates } from '../exchangeRates'
 import { rerankByRelevance, type JudgeOutcome } from './relevanceRerank'
-import { palettesFor } from '../fashion/palette'
+import { palettesFor, paletteCached, looksLike } from '../fashion/palette'
 import { runAfterResponse } from '../afterResponse'
 import { wornGenderFor } from './wornGender'
 
@@ -1159,6 +1159,15 @@ export class GlobalCatalogService {
     /** The shopper's stated size for whichever garment category this query is
      *  (tops/bottoms/shoes) — a soft reorder signal only, see applySizePreference. */
     preferredSize?: string | null,
+    /** A photograph the shopper is holding up: "find me this".
+     *
+     *  The vision model already turns that picture into words and those words
+     *  drive the search. Words carry the silhouette and the material and they
+     *  do not carry the LOOK — "mid-wash denim jacket" describes a hundred
+     *  jackets, and the shopper meant one of them. So the picture also ranks
+     *  what comes back, by measuring every candidate's own photograph against
+     *  it. Words find the right shelf; the picture picks off the shelf. */
+    matchImage?: string | null,
   ): Promise<UcpProduct[]> {
     // The shopper's own gender — read from the FIRST segment of the taste line,
     // which is where the route puts it, and nowhere else.
@@ -1554,6 +1563,33 @@ export class GlobalCatalogService {
     // Size preference — soft reorder only, applied last so it nudges within
     // whatever relevance/geo order already exists rather than overriding it.
     result = applySizePreference(result, preferredSize)
+
+    // The photograph the shopper held up, against the photograph of every
+    // piece we found. This is the difference between "we searched for the
+    // words a model used to describe your picture" and "we looked."
+    //
+    // Weighted hard on purpose. Everywhere else in this file a visual signal
+    // nudges an order that words already decided, because the shopper asked in
+    // words. Here they asked with a picture, and the words are only our
+    // transcription of it — so likeness leads and the existing order breaks
+    // ties beneath it. Boxed and failure-silent like every other read: no
+    // answer inside the box leaves the order exactly as it was.
+    if (matchImage && result.length > 1) {
+      try {
+        const HEAD = Math.min(result.length, 24)
+        const head = result.slice(0, HEAD)
+        const [want, mine] = await Promise.all([
+          paletteCached(matchImage),
+          palettesFor(head.map(p => p.image_url || ''), 12),
+        ])
+        if (want) {
+          const scored = head.map((p, i) => ({
+            p, i, s: looksLike(want, mine[i]),
+          })).sort((a, b) => (b.s - a.s) || (a.i - b.i))
+          result = [...scored.map(x => x.p), ...result.slice(HEAD)]
+        }
+      } catch { /* the order above still stands */ }
+    }
 
     // Who is actually in the photograph.
     //
