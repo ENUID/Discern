@@ -7,7 +7,9 @@ import { matchStyles, vocabPromptBlock } from '@/lib/styleVocabulary'
 import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/stores'
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
-import { outfitPlan, composeOutfit, composeOutfits } from '@/lib/fashion/outfitKnowledge'
+import { outfitPlan, composeOutfit, composeOutfits, composeOutfitsWithProfiles } from '@/lib/fashion/outfitKnowledge'
+import { profilesFor } from '@/lib/services/enrichProduct'
+import { worksWith } from '@/lib/fashion/garmentProfile'
 import { describeGarment } from '@/lib/services/describeGarment'
 import { outfitTones } from '@/lib/fashion/lookbook'
 import { wantsProducts, routeReason } from '@/lib/fashion/intentRouter'
@@ -444,19 +446,38 @@ async function multiCategorySearch(
  *  does not, and composeOutfits declines it by returning nothing when the
  *  slots are not distinct parts of a body.
  */
-function looksFrom(
+async function looksFrom(
   groups: { label: string; products: any[]; query: string }[],
-): { label: string; pieces: { label: string; product: any }[] }[] {
+): Promise<{ label: string; pieces: { label: string; product: any }[] }[]> {
   const bodyParts = groups.filter(g => {
     const cat = classifyQuerySlot(g.label || '')
     return cat === 'top' || cat === 'bottom' || cat === 'shoes' || cat === 'outer' || cat === 'dress'
   })
   if (bodyParts.length < 2) return []
-  const looks = composeOutfits(
-    bodyParts.map(g => ({ label: g.label, products: g.products })),
-    (p: any) => `${p?.title ?? ''} ${(p?.tags ?? []).join(' ')}`,
-    { count: 4, perSlot: 6 },
-  )
+
+  const slots = bodyParts.map(g => ({ label: g.label, products: g.products }))
+  const textOf = (p: any) => `${p?.title ?? ''} ${(p?.tags ?? []).join(' ')}`
+
+  // Read the pieces that are actually candidates for an outfit — the first six
+  // of each slot, which is everything composition will consider. Roughly
+  // eighteen garments, read once each and remembered, so the second search that
+  // meets any of them pays nothing.
+  const candidates = slots.flatMap(s => s.products.slice(0, 6))
+  const profiles = await profilesFor(candidates)
+
+  // Judged on what the garments ARE when we know, on their words when we do
+  // not. The fallback is the old behaviour exactly, so a slow or missing vision
+  // pass costs quality and never an answer.
+  const looks = profiles.size >= 2
+    ? composeOutfitsWithProfiles(
+        slots, textOf,
+        (p: any) => (profiles.get(p?.id) as never) ?? null,
+        worksWith as never,
+        { count: 4, perSlot: 6 },
+      )
+    : composeOutfits(slots, textOf, { count: 4, perSlot: 6 })
+
+  console.log(`[stylist] ${looks.length} looks from ${candidates.length} candidates, ${profiles.size} understood`)
   return looks.map((l, i) => ({ label: `Look ${i + 1}`, pieces: l.pieces }))
 }
 
@@ -1676,7 +1697,7 @@ async function runStylistRequest(
             return {
               foundProducts: dedupeById(groups.flatMap(g => g.products)),
               foundProductGroups: groups,
-              looks: looksFrom(groups),
+              looks: await looksFrom(groups),
               searchQuery: q,
             }
           }
@@ -1943,7 +1964,7 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
               // here (re-slicing it would silently undo the per-group cap).
               foundProducts: dedupeById(multiGroups.flatMap(g => g.products)),
               foundProductGroups: multiGroups,
-              looks: looksFrom(multiGroups),
+              looks: await looksFrom(multiGroups),
               outfitSlots: null,
               searchQuery: compiled.args.searchQuery,
             })
@@ -2762,7 +2783,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
     return finish({
       reply: reply2, comparison: comparison ?? null, foundProducts, foundProductGroups,
       // What leads the page: complete outfits, not three shelves.
-      looks: foundProductGroups ? looksFrom(foundProductGroups) : [],
+      looks: foundProductGroups ? await looksFrom(foundProductGroups) : [],
       outfitSlots, outfitGroups, searchQuery: searchQuery || undefined,
     })
   } catch (e) {

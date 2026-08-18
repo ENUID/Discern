@@ -504,6 +504,83 @@ export function planPromptBlock(query: string, gender?: string | null): string {
  *  would be the four best-scoring combinations, which in practice is one shirt
  *  wearing four different trousers.
  */
+/** The same composition, but judging the pieces on what they ARE.
+ *
+ *  composeOutfits below scores a combination on the words in its titles —
+ *  coherence() reading for colour names and loudness. That was the best
+ *  available while a garment was a title and a colour, and it is the reason
+ *  outfits came out colour-coordinated and wrong: two pieces can share a
+ *  palette and still be a gym short with a dinner jacket.
+ *
+ *  When profiles exist, this replaces that judgement with worksWith() — volume
+ *  balance, formality within a step, pattern scale, cloth weight and season,
+ *  and whether the two garments come from the same wardrobe. Every pair in a
+ *  combination is scored and the WEAKEST pair decides, because an outfit is
+ *  only as good as its worst relationship: three pieces that agree and one that
+ *  fights is not three quarters of an outfit.
+ */
+export function composeOutfitsWithProfiles<T>(
+  slots: Array<{ label?: string; products: T[] }>,
+  textOf: (p: T) => string,
+  profileOf: (p: T) => { formality: number; volume: string; fit: string; pattern: string; patternScale: string; weight: string; season: string; aesthetic: string } | null,
+  worksWith: (a: never, b: never) => number,
+  opts: { count?: number; perSlot?: number; weight?: number } = {},
+): Array<{ pieces: Array<{ label: string; product: T }>; score: number }> {
+  const count = Math.max(1, opts.count ?? 4)
+  const perSlot = Math.max(1, opts.perSlot ?? 6)
+  const weight = opts.weight ?? 0.6
+  const usable = slots.filter(s => s.products.length > 0)
+  if (usable.length < 2 || usable.length > 5) return []
+
+  const options = usable.map(s => s.products.slice(0, perSlot))
+
+  const combos: Array<{ idx: number[]; score: number }> = []
+  const walk = (depth: number, picked: number[]) => {
+    if (depth === options.length) {
+      const chosen = picked.map((idx, i) => options[i][idx])
+      const profiles = chosen.map(profileOf)
+      // Every pair, and the weakest one decides. An outfit is only as good as
+      // its worst relationship.
+      let worst = 1
+      let pairs = 0
+      for (let i = 0; i < profiles.length; i++) {
+        for (let j = i + 1; j < profiles.length; j++) {
+          const a = profiles[i], b = profiles[j]
+          if (!a || !b) continue
+          worst = Math.min(worst, worksWith(a as never, b as never))
+          pairs++
+        }
+      }
+      // Nothing profiled: fall back to the written coherence so a combination
+      // is never scored on nothing at all.
+      const fit = pairs > 0 ? worst : coherence(chosen.map(p => ({ text: textOf(p) })))
+      const relevance = picked.reduce((sum, idx) => sum + (1 - idx * 0.14), 0) / picked.length
+      combos.push({ idx: [...picked], score: relevance * (1 - weight) + fit * weight })
+      return
+    }
+    for (let i = 0; i < options[depth].length; i++) walk(depth + 1, [...picked, i])
+  }
+  walk(0, [])
+  combos.sort((a, b) => b.score - a.score)
+
+  const usedPiece = options.map(() => new Set<string>())
+  const out: Array<{ pieces: Array<{ label: string; product: T }>; score: number }> = []
+  for (const c of combos) {
+    if (out.length >= count) break
+    const ids = c.idx.map((idx, i) => textOf(options[i][idx]).toLowerCase().trim())
+    if (ids.some((id, i) => usedPiece[i].has(id))) continue
+    ids.forEach((id, i) => usedPiece[i].add(id))
+    out.push({
+      score: +c.score.toFixed(3),
+      pieces: c.idx.map((idx, i) => ({
+        label: usable[i].label ?? `Slot ${i + 1}`,
+        product: options[i][idx],
+      })),
+    })
+  }
+  return out
+}
+
 export function composeOutfits<T>(
   slots: Array<{ label?: string; products: T[] }>,
   textOf: (p: T) => string,
