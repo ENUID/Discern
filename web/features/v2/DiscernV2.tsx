@@ -3703,17 +3703,20 @@ export default function DiscernV2({
 
           /* Controls sit left-of-centre over that imagery, larger */
           .v2-acc-pill{font-size:12px;padding:9px 15px;}
-          .v2-panel{max-height:52vh;
-            display:grid;grid-template-columns:1.4fr 1fr;gap:26px;align-items:start;}
-          /* The head spans BOTH columns. Confined to column one it was
-             justify-content:space-between across 1.4fr of a two-column grid,
-             which put the collapse button in the middle of the panel with
-             empty glass either side of it — it reads as a stray dash rather
-             than a control. It belongs at the far edge of the thing it
-             closes. */
-          .v2-panel-head{grid-column:1/-1;}
-          .v2-panel p{grid-column:1;}
-          .v2-sku{grid-column:1;}
+          /* ONE COLUMN.
+             This was a two-column grid — 1.4fr for the text, 1fr for a nested
+             detail block beside it — and .v2-nested is styled in this file and
+             rendered by nothing. It was removed at some point and its layout
+             was not. So every panel's text was confined to 58% of the width
+             with a dead column of glass to the right of it, for content that
+             does not exist. That gap is what a reader sees as the description
+             being written down one side.
+
+             It also produced the two bugs before this one: the collapse button
+             pinned to the middle of the panel because it sat at the right edge
+             of column one, and the how-to-style row auto-flowing into the empty
+             column two. Both were symptoms; this is the cause. */
+          .v2-panel{max-height:52vh;}
           /* Everything in this panel is placed by hand, so anything NOT placed
              auto-flows into column two. HOW TO STYLE has no description text
              beside it — only a heading and its three pieces — so the pieces
@@ -3724,10 +3727,8 @@ export default function DiscernV2({
 
              The look spans the whole width instead, which is what a row of
              garments wants on a wide screen anyway. */
-          .v2-look,.v2-style-wait,.v2-style-grid{grid-column:1/-1;}
-          .v2-comp{grid-column:1;}
-          .v2-nested{grid-column:2;grid-row:1/4;margin-top:0;padding-top:0;border-top:none;
-            border-left:1px dashed ${V2.hairline};padding-left:26px;}
+
+
           .v2-back{left:26px;margin-left:0;top:76px;}
 
           .v2-cart{padding:15px;}

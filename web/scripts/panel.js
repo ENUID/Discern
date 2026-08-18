@@ -32,6 +32,22 @@ const piece = (id, title) => ({ id, title, handle: id, price: 4498, currency: 'I
     await p.waitForTimeout(200); await p.click('.v2-send'); await p.waitForTimeout(3500)
     const tile = await p.$('.v2-tile-btn, .v2-sec-hero .v2-shot')
     if (tile) { await tile.scrollIntoViewIfNeeded(); await tile.click(); await p.waitForTimeout(2500) }
+    // DESCRIPTION first: does its text use the panel, or one column of it?
+    await p.evaluate(() => [...document.querySelectorAll('.v2-acc-pill')].find(x => /DESCRIPTION/i.test(x.textContent))?.click())
+    await p.waitForTimeout(700)
+    const desc = await p.evaluate(() => {
+      const panel = document.querySelector('.v2-panel')
+      const para = panel?.querySelector('p')
+      if (!panel || !para) return null
+      const pr = panel.getBoundingClientRect(), tr = para.getBoundingClientRect()
+      return { used: Math.round((tr.width / pr.width) * 100), gap: Math.round(pr.right - tr.right) }
+    })
+    if (desc) {
+      const wide = desc.used >= 80
+      if (!wide) bad++
+      console.log(`${name.padEnd(12)} description text uses ${desc.used}% of the panel, ${desc.gap}px spare on the right  ${wide ? 'ok' : 'SQUEEZED INTO A COLUMN'}`)
+    }
+
     await p.evaluate(() => [...document.querySelectorAll('.v2-acc-pill')].find(x => /STYLE/i.test(x.textContent))?.click())
     await p.waitForSelector('.v2-look', { timeout: 25000 }).catch(() => {})
     await p.waitForTimeout(1200)
