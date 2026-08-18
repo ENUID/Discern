@@ -2910,7 +2910,12 @@ export default function DiscernV2({
         .v2-look-slot{font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;opacity:.55;}
         .v2-look-name{font-size:11px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;
           -webkit-box-orient:vertical;overflow:hidden;margin-top:-3px;}
-        @media(min-width:760px){.v2-look{grid-template-columns:repeat(3,minmax(0,1fr));max-width:560px;}}
+        /* Supporting, not the hero. These three sit under a heading inside a panel
+           that is already floating over the product's own photograph; at a third
+           of the panel each they competed with it. The garment still reads
+           perfectly at this size and the panel stops looking like a second
+           product page. */
+        @media(min-width:760px){.v2-look{grid-template-columns:repeat(3,minmax(0,118px));max-width:380px;}}
         .v2-style-wait{font-size:12px;color:${V2.ink45};margin:0 0 10px;}
         .v2-style-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
         .v2-style-cell{position:relative;padding:0;border:none;cursor:pointer;background:rgba(255,255,255,.55);
@@ -3700,7 +3705,13 @@ export default function DiscernV2({
           .v2-acc-pill{font-size:12px;padding:9px 15px;}
           .v2-panel{max-height:52vh;
             display:grid;grid-template-columns:1.4fr 1fr;gap:26px;align-items:start;}
-          .v2-panel-head{grid-column:1;}
+          /* The head spans BOTH columns. Confined to column one it was
+             justify-content:space-between across 1.4fr of a two-column grid,
+             which put the collapse button in the middle of the panel with
+             empty glass either side of it — it reads as a stray dash rather
+             than a control. It belongs at the far edge of the thing it
+             closes. */
+          .v2-panel-head{grid-column:1/-1;}
           .v2-panel p{grid-column:1;}
           .v2-sku{grid-column:1;}
           /* Everything in this panel is placed by hand, so anything NOT placed

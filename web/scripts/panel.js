@@ -39,16 +39,27 @@ const piece = (id, title) => ({ id, title, handle: id, price: 4498, currency: 'I
     const g = await p.evaluate(() => {
       const head = document.querySelector('.v2-panel-head')
       const look = document.querySelector('.v2-look')
-      if (!head || !look) return { look: !!look }
+      const panel = document.querySelector('.v2-panel')
+      const minus = head?.querySelector('button')
+      if (!head || !look || !panel) return { look: !!look }
       const h = head.getBoundingClientRect(), l = look.getBoundingClientRect()
+      const pr = panel.getBoundingClientRect()
+      const m = minus?.getBoundingClientRect()
       return { headLeft: Math.round(h.left), lookLeft: Math.round(l.left),
                indent: Math.round(l.left - h.left), lookW: Math.round(l.width),
-               below: l.top >= h.bottom - 2 }
+               tileW: Math.round(l.width / 3),
+               below: l.top >= h.bottom - 2,
+               // The collapse control belongs at the panel's own right edge,
+               // not at the right edge of whichever column it happens to sit in.
+               minusFromRight: m ? Math.round(pr.right - m.right) : null }
     })
     if (!g.look && g.look !== undefined && g.headLeft === undefined) { console.log(`${name.padEnd(12)} NO PANEL`); bad++; await ctx.close(); continue }
-    const ok = g.below && Math.abs(g.indent) <= 24
+    const aligned = g.below && Math.abs(g.indent) <= 24
+    const minusOk = g.minusFromRight !== null && g.minusFromRight <= 40
+    const tileOk = g.tileW <= 200
+    const ok = aligned && minusOk && tileOk
     if (!ok) bad++
-    console.log(`${name.padEnd(12)} head@${g.headLeft}  look@${g.lookLeft}  indent=${g.indent}px  width=${g.lookW}  ${g.below ? 'below the heading' : 'BESIDE THE HEADING'}  ${ok ? 'ok' : 'MISALIGNED'}`)
+    console.log(`${name.padEnd(12)} indent=${String(g.indent).padStart(3)}px  tile=${String(g.tileW).padStart(3)}px  minus ${String(g.minusFromRight).padStart(3)}px from right  ${ok ? 'ok' : [!aligned&&'MISALIGNED', !minusOk&&'MINUS ADRIFT', !tileOk&&'TILES TOO BIG'].filter(Boolean).join(' + ')}`)
     await ctx.close()
   }
   console.log(bad === 0 ? '\nPASS the look sits under its heading at every width' : `\nFAIL ${bad} misaligned`)
