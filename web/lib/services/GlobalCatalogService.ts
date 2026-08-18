@@ -916,8 +916,15 @@ function parseProduct(raw: any, sourceDomain?: string): UcpProduct | null {
     const fromHtml = (h: unknown): string | undefined => {
       if (typeof h !== 'string' || !h.trim()) return undefined
       const t = h
-        .replace(/<\s*(br|\/p|\/li|\/div|\/h[1-6])\s*\/?>/gi, ' ')
-        .replace(/<[^>]+>/g, '')
+        // EVERY tag becomes a space, not just the block-level ones.
+        //
+        // This listed the closers it thought mattered and stripped the rest to
+        // nothing, so a spec table — `Full Sleeve</td><td>SIZE</td>` — came out
+        // as "SleeveSIZEModel height 188cm" on the product page. There is no
+        // case where deleting a tag should weld two words together; whitespace
+        // is collapsed on the next line anyway, so a space is always the safe
+        // substitution and a missing one never is.
+        .replace(/<[^>]+>/g, ' ')
         .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
         .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
         .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')

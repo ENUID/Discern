@@ -2910,7 +2910,7 @@ export default function DiscernV2({
         .v2-look-slot{font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;opacity:.55;}
         .v2-look-name{font-size:11px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;
           -webkit-box-orient:vertical;overflow:hidden;margin-top:-3px;}
-        @media(min-width:760px){.v2-look{grid-template-columns:repeat(3,minmax(0,150px));}}
+        @media(min-width:760px){.v2-look{grid-template-columns:repeat(3,minmax(0,1fr));max-width:560px;}}
         .v2-style-wait{font-size:12px;color:${V2.ink45};margin:0 0 10px;}
         .v2-style-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
         .v2-style-cell{position:relative;padding:0;border:none;cursor:pointer;background:rgba(255,255,255,.55);
@@ -3703,6 +3703,18 @@ export default function DiscernV2({
           .v2-panel-head{grid-column:1;}
           .v2-panel p{grid-column:1;}
           .v2-sku{grid-column:1;}
+          /* Everything in this panel is placed by hand, so anything NOT placed
+             auto-flows into column two. HOW TO STYLE has no description text
+             beside it — only a heading and its three pieces — so the pieces
+             landed in the right-hand column with the heading stranded alone on
+             the left and a column of empty glass between them. On an iPad it
+             read as broken, and it was: a grid built for one panel's contents
+             applied to another panel that has different ones.
+
+             The look spans the whole width instead, which is what a row of
+             garments wants on a wide screen anyway. */
+          .v2-look,.v2-style-wait,.v2-style-grid{grid-column:1/-1;}
+          .v2-comp{grid-column:1;}
           .v2-nested{grid-column:2;grid-row:1/4;margin-top:0;padding-top:0;border-top:none;
             border-left:1px dashed ${V2.hairline};padding-left:26px;}
           .v2-back{left:26px;margin-left:0;top:76px;}
