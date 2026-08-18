@@ -8,6 +8,7 @@ import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/store
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
 import { outfitPlan, composeOutfit, composeOutfits } from '@/lib/fashion/outfitKnowledge'
+import { describeGarment } from '@/lib/services/describeGarment'
 import { outfitTones } from '@/lib/fashion/lookbook'
 import { wantsProducts, routeReason } from '@/lib/fashion/intentRouter'
 import { cerebrasChat, cerebrasVisionChat, CEREBRAS_VISION_CONFIGURED } from '@/lib/cerebras'
@@ -2222,6 +2223,36 @@ Use concrete garment, colour, and material words only, never a brand or product 
         } catch (e) {
           console.error('[stylist] vision token self-heal failed:', e)
           // Keep the original text-only reply — never block the response over this.
+        }
+      }
+
+      // THE FLOOR. A photograph and "find this" must produce a search, whatever
+      // else went wrong above.
+      //
+      // Everything before this depends on a model that is doing several things
+      // at once — reading the picture, judging intent, writing prose, AND
+      // remembering a token grammar — emitting [SEARCH: …] correctly. Measured
+      // on production, uploading a clean product photograph from this app's own
+      // catalogue with "find this exact shirt" returned the reply "What details
+      // can you share about the shirt, colour, style, brand, or any key
+      // features?" and searched for nothing. It asked the shopper to describe
+      // the thing they had just photographed.
+      //
+      // The self-heal above is meant to catch that, and it is gated on having
+      // 16 seconds left — which, after a vision call, it often does not.
+      //
+      // So when the shopper's words say they want the piece and no token
+      // survived, one focused vision call does the only job that matters here:
+      // look at the garment, write the line a person would type into a shop.
+      // No branches and no grammar to forget.
+      const wantsThePiece = /\b(find|get|buy|shop|where|source|similar|like this|this exact|same)\b/i.test(question)
+      if (images.length > 0 && wantsThePiece
+          && !/\[(SEARCH|OUTFIT|COMPARE|WARDROBE|PHOTO):/i.test(raw)
+          && requestDeadline - Date.now() > 12_000) {
+        const line = await describeGarment(images[0])
+        if (line) {
+          console.log(`[stylist] no token after vision — searching the photograph as "${line}"`)
+          raw = `${raw}\n\n[SEARCH: ${line}]`
         }
       }
     } else {
