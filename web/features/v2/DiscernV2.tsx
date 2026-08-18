@@ -91,9 +91,19 @@ export type V2Turn = {
   /** A side-by-side, when the answer was "which of these". */
   comparison?: { rows: { label: string; values: string[] }[]; pick?: { index: number; reason: string } }
   sections: V2Section[]
+  /** Complete outfits, when the answer contained enough of a body to build
+   *  them. These LEAD the page; the sections stay beneath as the shelves. */
+  looks?: V2Look[]
 }
 /** Transcript entry sent back to the stylist so follow-ups have context. */
 export type V2Msg = { role: 'user' | 'assistant'; content: string }
+/** A complete outfit: the pieces that go together, in wear order.
+ *
+ *  Distinct from a Section, which is a shelf of one garment. A page of
+ *  sections asks the shopper to imagine the combination; a page of looks has
+ *  already made it. */
+export type V2Look = { label: string; pieces: Array<{ label: string; product: V2Product }> }
+
 export type V2Section = {
   title: string; subtitle?: string; hero?: V2Product; products: V2Product[]
   /** The query that produced this strip, so "See more" can ask for the next
@@ -440,7 +450,7 @@ export default function DiscernV2({
 }: {
   heroMedia?: string; heroPoster?: string
   onQuery?: (q: string, history: V2Msg[], images: string[], onProgress?: (step: { text: string; icon?: string }) => void, pinned?: V2Product[]) => Promise<{
-    sections: V2Section[]; look?: V2Product[]
+    sections: V2Section[]; look?: V2Product[]; looks?: V2Look[]
     answer?: string; didSearch?: boolean; light?: boolean; failed?: boolean; busy?: boolean
     comparison?: { rows: { label: string; values: string[] }[]; pick?: { index: number; reason: string } }
   }>
@@ -1352,7 +1362,7 @@ export default function DiscernV2({
         id: `${prev.length}-${question.slice(0, 24)}`,
         question, answer: res.answer, didSearch: res.didSearch === true,
         failed: res.failed === true, busy: res.busy === true,
-        comparison: res.comparison, sections,
+        comparison: res.comparison, sections, looks: res.looks,
       }, ...prev].slice(0, 12))
       if (res.look?.length) { setLook(res.look); setLookOpen(true) }
       show = true
@@ -1759,6 +1769,34 @@ export default function DiscernV2({
                   </button>
                 </div>
               )}
+            {/* THE LOOKS.
+                Four complete outfits, each different in every slot, ahead of
+                the shelves. The strips below are still here and still hold
+                everything found — but a page that opens with eight shirts,
+                eight trousers and eight shoes is a shop asking the shopper to
+                do the styling. This is the answer to the question they asked.
+                Nothing is hidden: scroll on and the shelves are exactly where
+                they were. */}
+            {turn.looks && turn.looks.length > 0 && (
+              <div className="v2-looks">
+                {turn.looks.map(lk => (
+                  <section key={lk.label} className="v2-lookcard v2-rise">
+                    <h3>{lk.label}</h3>
+                    <div className="v2-lookrow">
+                      {lk.pieces.map(pc => (
+                        <button key={pc.product.id} className="v2-lookpiece"
+                          onClick={() => openProduct(pc.product)}>
+                          <Img src={pc.product.image} alt={pc.product.title} loading="lazy" />
+                          <span className="v2-lookslot">{pc.label}</span>
+                          <span className="v2-lookname">{pc.product.title}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            )}
+
             {turn.sections.map((s, si) => (
               <React.Fragment key={si}>
                 <div className="v2-sec v2-rise">
@@ -2710,6 +2748,18 @@ export default function DiscernV2({
 
         /* Results */
         .v2-results{padding-bottom:calc(var(--bar) + 44px);}
+        .v2-looks{display:flex;flex-direction:column;gap:34px;padding:clamp(30px,8vw,54px) var(--grid-pad,20px) 0;}
+        .v2-lookcard h3{font-family:${V2.display};font-weight:600;letter-spacing:-.02em;
+          font-size:15px;text-transform:uppercase;margin:0 0 12px;opacity:.62;}
+        .v2-lookrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:10px;}
+        .v2-lookpiece{display:flex;flex-direction:column;gap:6px;padding:0;border:none;
+          background:none;cursor:pointer;text-align:left;min-width:0;}
+        .v2-lookpiece img,.v2-lookpiece .v2-img-ph{width:100%;aspect-ratio:3/4;object-fit:cover;
+          display:block;border-radius:8px;}
+        .v2-lookslot{font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;opacity:.5;}
+        .v2-lookname{font-size:11.5px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;
+          -webkit-box-orient:vertical;overflow:hidden;margin-top:-2px;}
+        @media (min-width:760px){ .v2-looks{max-width:900px;margin:0 auto;} }
         .v2-sec{padding:clamp(60px,15vw,100px) 20px 0;text-align:center;}
         .v2-sec h2{font-family:${V2.display};font-weight:600;letter-spacing:-.03em;font-size:clamp(27px,7.4vw,38px);line-height:1.1;margin:0 0 8px;}
         .v2-sec p{font-size:14px;font-weight:400;color:${V2.ink70};margin:0 0 28px;}

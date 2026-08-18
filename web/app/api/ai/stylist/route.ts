@@ -7,7 +7,7 @@ import { matchStyles, vocabPromptBlock } from '@/lib/styleVocabulary'
 import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/stores'
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
-import { outfitPlan, composeOutfit } from '@/lib/fashion/outfitKnowledge'
+import { outfitPlan, composeOutfit, composeOutfits } from '@/lib/fashion/outfitKnowledge'
 import { outfitTones } from '@/lib/fashion/lookbook'
 import { wantsProducts, routeReason } from '@/lib/fashion/intentRouter'
 import { cerebrasChat, cerebrasVisionChat, CEREBRAS_VISION_CONFIGURED } from '@/lib/cerebras'
@@ -425,6 +425,38 @@ async function multiCategorySearch(
   // searches shirts → nothing), throwing away results we already have. One real
   // strip beats discarding it.
   return composed.length >= 1 ? composed : null
+}
+
+/** The same strips, read as looks.
+ *
+ *  A multi-garment answer already comes back as one strip per garment, and the
+ *  screen draws them as three shelves of eight. That is a shop. What a shopper
+ *  asked for when they typed "outfits" is LOOK 1, LOOK 2, LOOK 3 — a shirt with
+ *  the trousers and the shoes that go with THAT shirt, four times over, each a
+ *  real alternative rather than the same outfit with a different shoe.
+ *
+ *  The strips are not thrown away: they still travel, and "see all shirts" is
+ *  still a tap. This is what leads the page.
+ *
+ *  Only for a genuine outfit — two or more slots that between them clothe a
+ *  person. "Shirts and trousers" qualifies; "black shirts and white shirts"
+ *  does not, and composeOutfits declines it by returning nothing when the
+ *  slots are not distinct parts of a body.
+ */
+function looksFrom(
+  groups: { label: string; products: any[]; query: string }[],
+): { label: string; pieces: { label: string; product: any }[] }[] {
+  const bodyParts = groups.filter(g => {
+    const cat = classifyQuerySlot(g.label || '')
+    return cat === 'top' || cat === 'bottom' || cat === 'shoes' || cat === 'outer' || cat === 'dress'
+  })
+  if (bodyParts.length < 2) return []
+  const looks = composeOutfits(
+    bodyParts.map(g => ({ label: g.label, products: g.products })),
+    (p: any) => `${p?.title ?? ''} ${(p?.tags ?? []).join(' ')}`,
+    { count: 4, perSlot: 6 },
+  )
+  return looks.map((l, i) => ({ label: `Look ${i + 1}`, pieces: l.pieces }))
 }
 
 // Reply line for a multi-category result — names every category shown ("tops,
@@ -1643,6 +1675,7 @@ async function runStylistRequest(
             return {
               foundProducts: dedupeById(groups.flatMap(g => g.products)),
               foundProductGroups: groups,
+              looks: looksFrom(groups),
               searchQuery: q,
             }
           }
@@ -1909,6 +1942,7 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
               // here (re-slicing it would silently undo the per-group cap).
               foundProducts: dedupeById(multiGroups.flatMap(g => g.products)),
               foundProductGroups: multiGroups,
+              looks: looksFrom(multiGroups),
               outfitSlots: null,
               searchQuery: compiled.args.searchQuery,
             })
@@ -2691,7 +2725,12 @@ Use concrete garment, colour, and material words only, never a brand or product 
       }
     }
 
-    return finish({ reply: reply2, comparison: comparison ?? null, foundProducts, foundProductGroups, outfitSlots, outfitGroups, searchQuery: searchQuery || undefined })
+    return finish({
+      reply: reply2, comparison: comparison ?? null, foundProducts, foundProductGroups,
+      // What leads the page: complete outfits, not three shelves.
+      looks: foundProductGroups ? looksFrom(foundProductGroups) : [],
+      outfitSlots, outfitGroups, searchQuery: searchQuery || undefined,
+    })
   } catch (e) {
     console.error('[stylist] error:', e)
     // Not reachable for anything the model did — those are handled above with a

@@ -363,6 +363,18 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       }
     }
 
+    // Complete outfits, when the backend built any. These lead the page: a
+    // shelf of shirts asks the shopper to imagine the combination, a look has
+    // already made it.
+    const looks = (Array.isArray(data?.looks) ? data.looks : [])
+      .map((l: any) => ({
+        label: String(l?.label ?? ''),
+        pieces: (l?.pieces ?? [])
+          .map((pc: any) => ({ label: String(pc?.label ?? ''), product: toProduct(pc?.product) }))
+          .filter((pc: any) => pc.product?.image),
+      }))
+      .filter((l: any) => l.pieces.length >= 2)
+
     // A single search: one section.
     if (!sections.length && Array.isArray(data?.foundProducts) && data.foundProducts.length > 0) {
       const products = data.foundProducts.map(toProduct).filter((p: V2Product) => p.image)
@@ -452,6 +464,7 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
     // actually searched. `searchQuery` is already on the wire.
     return {
       sections,
+      looks,
       look,
       answer: typeof data?.reply === 'string' ? data.reply : undefined,
       // An outfit is a search — four of them, in fact. It carries no

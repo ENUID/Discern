@@ -481,3 +481,76 @@ export function planPromptBlock(query: string, gender?: string | null): string {
   }
   return bits.join('\n')
 }
+
+
+/** Not one outfit — a set of them, the way a lookbook page reads.
+ *
+ *  `composeOutfit` above answers "of everything we found, which single
+ *  combination is best" and promotes it to the front of each strip. Which is
+ *  correct, and invisible: the page draws twenty-four tiles at equal weight, so
+ *  the shopper sees a shirt shelf, a trouser shelf and a shoe shelf and is
+ *  asked to do the styling themselves. Eight by eight by eight is five hundred
+ *  and twelve combinations and only one of them was ever chosen.
+ *
+ *  This returns LOOK 1, LOOK 2, LOOK 3 — each a complete outfit, each scored as
+ *  a whole, and each DIFFERENT IN EVERY SLOT from the ones above it. That last
+ *  rule is what stops four looks that are the same outfit with a different
+ *  shoe: a shopper reading a page of near-identical rows learns nothing, and
+ *  the point of showing four is that they are four real choices.
+ *
+ *  Greedy rather than optimal on purpose. Taking the best combination, then the
+ *  best that shares no piece with it, and so on, gives a spread across the pool
+ *  instead of a cluster around one very good shirt. The globally optimal set
+ *  would be the four best-scoring combinations, which in practice is one shirt
+ *  wearing four different trousers.
+ */
+export function composeOutfits<T>(
+  slots: Array<{ label?: string; products: T[] }>,
+  textOf: (p: T) => string,
+  opts: { count?: number; perSlot?: number; weight?: number } = {},
+): Array<{ pieces: Array<{ label: string; product: T }>; score: number }> {
+  const count = Math.max(1, opts.count ?? 4)
+  const perSlot = Math.max(1, opts.perSlot ?? 6)
+  const weight = opts.weight ?? 0.45
+  const usable = slots.filter(s => s.products.length > 0)
+  if (usable.length < 2) return []
+  // Six to the fifth is 7,776 and each is a cheap string comparison. Bounded
+  // rather than clever, same as its sibling above.
+  if (usable.length > 5) return []
+
+  const options = usable.map(s => s.products.slice(0, perSlot))
+
+  // Every combination, scored once.
+  const combos: Array<{ idx: number[]; score: number }> = []
+  const walk = (depth: number, picked: number[]) => {
+    if (depth === options.length) {
+      const pieces = picked.map((idx, i) => ({ text: textOf(options[i][idx]) }))
+      // Where each piece sat in its own strip. The ranker put the best first,
+      // so reaching further down costs — but never so much that it refuses a
+      // genuinely better-matched combination.
+      const relevance = picked.reduce((sum, idx) => sum + (1 - idx * 0.14), 0) / picked.length
+      combos.push({ idx: [...picked], score: relevance * (1 - weight) + coherence(pieces) * weight })
+      return
+    }
+    for (let i = 0; i < options[depth].length; i++) walk(depth + 1, [...picked, i])
+  }
+  walk(0, [])
+  combos.sort((a, b) => b.score - a.score)
+
+  const used = options.map(() => new Set<number>())
+  const out: Array<{ pieces: Array<{ label: string; product: T }>; score: number }> = []
+  for (const c of combos) {
+    if (out.length >= count) break
+    // Every slot must contribute a piece no earlier look has used.
+    if (c.idx.some((idx, i) => used[i].has(idx))) continue
+    c.idx.forEach((idx, i) => used[i].add(idx))
+    out.push({
+      score: +c.score.toFixed(3),
+      pieces: c.idx.map((idx, i) => ({
+        label: usable[i].label ?? `Slot ${i + 1}`,
+        product: options[i][idx],
+      })),
+    })
+  }
+  return out
+}
