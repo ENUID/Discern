@@ -367,6 +367,27 @@ function productHaystack(p: UcpProduct): string {
     .replace(/[_/|>]+/g, ' ')
 }
 
+/** What the product IS, without what it says to wear alongside it.
+ *
+ *  A pair of shorts whose description reads "versatile enough to pair with a
+ *  range of FOOTWEAR and apparel" was counted as footwear, and turned up in a
+ *  search for party shoes. Not a near miss — a garment from a different half
+ *  of the body, admitted on the strength of a sentence about something else.
+ *
+ *  Every listing describes what to wear a thing WITH. A trouser names shirts,
+ *  a shirt names trousers, a shoe names both. So the description is evidence of
+ *  almost nothing when the question is "what garment is this", while being
+ *  perfectly good evidence for colour, material and gender — which is why only
+ *  the garment group reads this narrower text and the others still read it all.
+ *
+ *  Title, tags and the store's own product type. Three places a brand states
+ *  what a thing is, none of which is a sentence about styling it. */
+function garmentHaystack(p: UcpProduct): string {
+  return `${p.title} ${(p.tags || []).join(' ')} ${p.product_type || ''}`
+    .toLowerCase()
+    .replace(/[_/|>]+/g, ' ')
+}
+
 function conceptHit(haystack: string, group: string[]): boolean {
   return group.some(term => {
     const t = term.toLowerCase().trim()
@@ -405,6 +426,7 @@ function applyConceptRelevance(products: UcpProduct[], concepts: string[][], min
   const garmentIdx = findGarmentGroupIndex(groups)
   const scored = products.map((p, i) => {
     const hay = productHaystack(p)
+    const garmentHay = garmentHaystack(p)
     let hits = 0
     let garmentHit = false
     let score = 0
@@ -413,8 +435,11 @@ function applyConceptRelevance(products: UcpProduct[], concepts: string[][], min
       // A general garment concept must not count a more-specific look-alike as
       // a match — "shirt" must reject "t-shirt"/"polo", "boot" reject "bootcut".
       // Only applied to the garment group (the exclusions are garment-specific).
-      if (isGarment && conceptHit(hay, g) && matchesGarmentExclusion(hay, g)) return
-      if (conceptHit(hay, g)) {
+      // The garment question is asked of the title, tags and product type
+      // only — see garmentHaystack. Everything else still reads the full text.
+      const text = isGarment ? garmentHay : hay
+      if (isGarment && conceptHit(text, g) && matchesGarmentExclusion(text, g)) return
+      if (conceptHit(text, g)) {
         hits++
         // Garment dominates; every extra matched detail (material, color,
         // gender) stacks on top — so a full exact match always outranks a
@@ -1149,6 +1174,28 @@ function applyFiltersAndSort(
       const seen = perDomain.get(dom) ?? 0
       if (seen >= params.perVendorCap!) return false
       perDomain.set(dom, seen + 1)
+      return true
+    })
+  }
+
+  // The same piece, listed twice.
+  //
+  // "Queens Crest Loafer" appeared at positions 8 and 9 — two Shopify products,
+  // queens-crest-loafer-4 and -5, same brand, same price, same name. Almost
+  // certainly two colourways the store chose to list separately. Ids say they
+  // are different; a shopper reading two identical rows says the app is
+  // repeating itself, and is right to.
+  //
+  // Keyed on brand AND name, so two brands may both sell a "Chelsea Boot" and
+  // both appear. The colourway lost here is a real cost, and a smaller one than
+  // a page that looks broken.
+  {
+    const seenPiece = new Set<string>()
+    out = out.filter(p => {
+      const k = `${(p.vendor || '').toLowerCase().trim()}|${(p.title || '').toLowerCase().trim()}`
+      if (k === '|') return true
+      if (seenPiece.has(k)) return false
+      seenPiece.add(k)
       return true
     })
   }
