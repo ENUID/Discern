@@ -21,6 +21,7 @@ import { rerankByRelevance, type JudgeOutcome } from './relevanceRerank'
 import { palettesFor, paletteCached, looksLike } from '../fashion/palette'
 import { runAfterResponse } from '../afterResponse'
 import { wornGenderFor } from './wornGender'
+import { findSameGarment } from './sameGarment'
 
 /** The last search's judge outcome, for the diagnostic endpoint and the
  *  scorecard. A module-level value is enough: it answers "is the taste layer
@@ -1667,6 +1668,28 @@ export class GlobalCatalogService {
             p, i, s: looksLike(want, mine[i]),
           })).sort((a, b) => (b.s - a.s) || (a.i - b.i))
           result = [...scored.map(x => x.p), ...result.slice(HEAD)]
+        }
+
+        // …and then LOOK, rather than only measuring.
+        //
+        // The colour comparison above puts pieces resembling the photograph at
+        // the top; it cannot tell one cream shirt from another cream shirt,
+        // because a colour histogram is all it is. A shopper who screenshotted
+        // a piece from this app and asked for that piece was handed a different
+        // shirt of roughly the right colour — the words were too coarse, and so
+        // was the palette.
+        //
+        // So the photograph and the best few candidates go to the vision model
+        // TOGETHER and it is asked which is the same garment. Not "describe
+        // this and search the description" — a direct comparison, which is the
+        // question actually being asked. When it finds the piece, that piece
+        // leads; when it does not, the order above stands and the only cost is
+        // one model call.
+        const look = await findSameGarment(matchImage, result.slice(0, 6).map(p => p.image_url || ''))
+        if (look.sameIndex !== null && look.sameIndex > 0) {
+          const found = result[look.sameIndex]
+          result = [found, ...result.filter((_, i) => i !== look.sameIndex)]
+          console.log(`[Catalog] the photograph matched "${found.title}" (${look.confidence}%)`)
         }
       } catch { /* the order above still stands */ }
     }

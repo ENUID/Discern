@@ -2012,7 +2012,10 @@ Never expose raw JSON outside the [WARDROBE: {...}] token. Keep the reply natura
 
     const imageNote = hasImages
       ? `The shopper has shared ${images.length} photo${images.length > 1 ? 's' : ''}. READ their message and honour its intent — do NOT default to styling when they asked to shop: ` +
-        `(A) SHOP THE ITEM — if they say anything like "find similar", "show me similar", "something like this", "where can I get this", "find this", "more like this", "other options", "other brands", "cheaper", or name a different type/colour they want instead, identify the garment precisely and emit [SEARCH: garment type + colour + material + key details]. Do NOT include the shown brand's name in the query — the goal is to find the exact piece or close matches across OTHER brands. If they want several categories or a different type per category, use [OUTFIT: ...] instead. ` +
+        `(A) SHOP THE ITEM — if they say anything like "find similar", "show me similar", "something like this", "where can I get this", "find this", "more like this", "other options", "other brands", "cheaper", or name a different type/colour they want instead, identify the garment precisely and emit [SEARCH: garment type + colour + material + key details]. ` +
+        `READ ANY BRAND NAME ON THE GARMENT — a logo, a chest embroidery, a woven label — and put it FIRST in the query when they asked for THIS piece ("find this", "give me this", "where can I get this", "this exact"). A name printed on the cloth is the strongest identifier a photograph carries, and it is the difference between returning the shirt they are pointing at and returning a shirt of roughly that colour. ` +
+        `Leave the brand OUT only when they asked for something LIKE it — "similar", "cheaper", "other brands", "other options" — because there the point is to look elsewhere. ` +
+        `If they want several categories or a different type per category, use [OUTFIT: ...] instead. ` +
         `(B) STYLING ADVICE — only when they ask how to wear it or what goes with it: advise, no token. ` +
         `(C) COMPLETE OUTFIT — build the missing pieces with [OUTFIT: ...]. ` +
         `If they attached a garment photo and the intent is ambiguous, lean towards (A) find similar rather than styling. ` +
