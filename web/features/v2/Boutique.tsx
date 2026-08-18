@@ -307,22 +307,58 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       // a word they would never use. The garment word is what they call it.
       // Slot words remain as the fallback for anything unrecognised, because a
       // vague heading still beats none.
-      const kinds: string[] = []
+      // WHAT THIS PAGE MOSTLY IS, not everything on it.
+      //
+      // This collected every distinct garment word across twenty-four products
+      // and joined them with commas, so asking for party shoes produced the
+      // heading "Shoe, jean, shoes, sneaker, accessories, sandal, dress &
+      // loafer". Eight words to say "shoes". A heading is a NAME — the one
+      // thing a shopper would call this page — and an inventory of everything
+      // the matcher recognised is the opposite of one.
+      //
+      // Two counts: which garment each piece is, and which part of the body it
+      // belongs to. Footwear is why both are needed — a shoe page legitimately
+      // holds sneakers and loafers and sandals, and the honest name for that
+      // page is "Shoes", not a list of three.
+      const perGarment = new Map<string, number>()
+      const perSlot = new Map<string, number>()
+      let counted = 0
       for (const pr of products.slice(0, 24)) {
         const text = { title: pr.title, tags: [] as string[], description: pr.description }
-        let named = false
+        counted++
         for (const key of Object.keys(GARMENT_VOCAB)) {
           if (!productMatchesGarmentKey(text, key)) continue
           const word = GARMENT_VOCAB[key]?.query[0]
-          if (word && !kinds.includes(word)) { kinds.push(word); named = true }
+          if (word) perGarment.set(word, (perGarment.get(word) ?? 0) + 1)
           break                      // one garment per piece, the first it matches
         }
-        if (named) continue
         for (const k of Array.from(productSlotCategories(text))) {
-          const word = SLOT_WORDS[k]
-          if (word && !kinds.includes(word)) kinds.push(word)
+          perSlot.set(k, (perSlot.get(k) ?? 0) + 1)
         }
       }
+      const rank = (m: Map<string, number>) => Array.from(m.entries()).sort((a, b) => b[1] - a[1])
+      const topSlot = rank(perSlot)[0]
+      const topGarment = rank(perGarment)[0]
+
+      /** A section heading is plural — it names a shelf, not a piece. */
+      const plural = (w: string) => /s$/i.test(w) ? w : /(sh|ch|x|z)$/i.test(w) ? `${w}es` : `${w}s`
+
+      const kinds: string[] = []
+      if (counted > 0 && topSlot && topSlot[1] / counted >= 0.6) {
+        // The page has a clear home on the body. Name it by the garment when
+        // that garment is most of it, and by the body part when it is a mix —
+        // which is exactly the sneaker-loafer-sandal case.
+        kinds.push(topGarment && topGarment[1] / counted >= 0.6
+          ? plural(topGarment[0])
+          : (SLOT_WORDS[topSlot[0]] ?? plural(topGarment?.[0] ?? '')))
+      } else if (topGarment && counted > 0 && topGarment[1] / counted >= 0.4) {
+        kinds.push(plural(topGarment[0]))
+      }
+      // Nothing dominates — a page that is genuinely a quarter shirts, a
+      // quarter trousers and a quarter shoes has no honest one-word name, and
+      // picking whichever garment happened to be counted first would label a
+      // mixed page "Shirts". Falling through to the query below is the truthful
+      // answer: name it after what was asked for.
 
       // A group label from the backend is already a garment name — trust it,
       // just tidy the case.
