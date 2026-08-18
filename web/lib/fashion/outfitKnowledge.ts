@@ -537,13 +537,25 @@ export function composeOutfits<T>(
   walk(0, [])
   combos.sort((a, b) => b.score - a.score)
 
-  const used = options.map(() => new Set<number>())
+  // Tracked by what the piece IS, not where it sat.
+  //
+  // This kept a set of used INDICES per slot, and a strip that carries the
+  // same shoe twice — the same product listed under two ids, which this
+  // catalogue does constantly — offers it at two different positions. Two
+  // different positions passed the check, and Look 3 and Look 4 came back
+  // wearing identical slip-ons. Verified against the live catalogue, which is
+  // the only reason it was caught: the fixture pool had no duplicates.
+  const identity = (p: T): string => {
+    const anyP = p as unknown as { title?: string; id?: string }
+    return (anyP?.title || anyP?.id || String(p)).toLowerCase().replace(/\s+/g, ' ').trim()
+  }
+  const used = options.map(() => new Set<string>())
   const out: Array<{ pieces: Array<{ label: string; product: T }>; score: number }> = []
   for (const c of combos) {
     if (out.length >= count) break
     // Every slot must contribute a piece no earlier look has used.
-    if (c.idx.some((idx, i) => used[i].has(idx))) continue
-    c.idx.forEach((idx, i) => used[i].add(idx))
+    if (c.idx.some((idx, i) => used[i].has(identity(options[i][idx])))) continue
+    c.idx.forEach((idx, i) => used[i].add(identity(options[i][idx])))
     out.push({
       score: +c.score.toFixed(3),
       pieces: c.idx.map((idx, i) => ({
