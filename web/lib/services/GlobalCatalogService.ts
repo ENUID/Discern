@@ -460,6 +460,27 @@ function isNonFashion(p: UcpProduct): boolean {
 const WOMEN_GENDER_RE = /\b(women'?s?|womens|ladies?|female)\b/i
 const MEN_GENDER_RE = /\b(men'?s?|mens|male|gentlemen)\b/i
 
+/** Garments whose NAME is the gender.
+ *
+ *  From a screen recording, frame by frame: "Livvy Floral Shirt & Olive Tunic
+ *  Set" — a woman in an olive midi holding sunflowers — sitting between a
+ *  black cotton shirt and a rust linen one in a men's strip.
+ *
+ *  Every filter was working and none could see it. The title says shirt, so
+ *  the garment matcher was right to keep it. Title, tags and the opening of
+ *  the description say nothing about women, so the text filter had nothing to
+ *  read. And it reached the page.
+ *
+ *  Some garments need no department label because the word IS one. A saree is
+ *  not menswear. Neither is a kurti, a lehenga, an anarkali, a bralette, a
+ *  peplum top — or a tunic, which in this catalogue is womenswear every time.
+ *
+ *  Deliberately short and deliberately unambiguous. "Kaftan" and "robe" were
+ *  candidates and are NOT here: they are genuinely worn by everyone, and a
+ *  wrong entry deletes real menswear from a real search. When in doubt it
+ *  stays out — the photograph pass catches what this cannot. */
+const WOMENS_GARMENTS = /\b(saree|sari|lehenga|choli|anarkali|kurti|salwar|churidar|dupatta|ghagra|tunic|bralette|camisole|peplum|bodycon|maxi dress|midi dress|skater dress|wrap dress)\b/i
+
 /** The places a store states who a garment is for, in one string a word-
  *  boundary regex can actually read.
  *
@@ -484,6 +505,11 @@ function genderHaystack(p: UcpProduct): string {
 }
 
 function productGenderSignal(p: UcpProduct): 'men' | 'women' | null {
+  // Checked against the TITLE only, on purpose: a men's shirt whose
+  // description says "wear it over a kurti" is a men's shirt, and reading the
+  // whole haystack would throw it out for a sentence about somebody else's
+  // wardrobe.
+  if (WOMENS_GARMENTS.test(String(p.title || ''))) return 'women'
   const hay = genderHaystack(p)
   const isWomen = WOMEN_GENDER_RE.test(hay)
   const isMen = MEN_GENDER_RE.test(hay)
