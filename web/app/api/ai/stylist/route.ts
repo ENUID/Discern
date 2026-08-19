@@ -2582,6 +2582,8 @@ Use concrete garment, colour, and material words only, never a brand or product 
     }
 
     let outfitSlots: { query: string; slotCategory: string | null; products: any[] }[] | null = null
+    /** Why an outfit came back with no pieces, when one was asked for. */
+    let outfitTrace: string[] | null = null
     if (outfitQueries && outfitQueries.length > 0) {
       send('outfit', 'Assembling the complete look', `outfit.slots([${outfitQueries.join(', ')}])`)
       try {
@@ -2638,7 +2640,24 @@ Use concrete garment, colour, and material words only, never a brand or product 
           (p: any) => `${p?.title ?? ''} ${(p?.tags ?? []).join(' ')}`,
         )
         outfitSlots = composed.length > 0 ? composed as typeof builtSlots : null
+        // WHICH empty this is. The model emitted a perfectly good four-slot
+        // outfit — "men pastel linen kurta | men white linen trousers | men tan
+        // leather loafers" — and the shopper got the paragraph with no clothes
+        // under it. Every one of those slot queries returns twelve to sixteen
+        // pieces when asked of the catalogue on its own, so the loss happened
+        // in here, and nothing recorded where: an outfit that retrieved nothing
+        // and an outfit whose every candidate was filtered out are the same
+        // silence from the outside.
+        //
+        // Same reasoning as the judge's outcome and the provider check's
+        // whatFailed. A count per slot is the whole diagnosis.
+        if (!outfitSlots) {
+          outfitTrace = slotCandidates.map(s =>
+            `${s.query} → ${s.results.length} found, ${s.filtered.length} in slot${s.slotCat ? ` (${s.slotCat})` : ''}`)
+          console.warn(`[stylist] outfit produced no slots — ${outfitTrace.join(' | ')}`)
+        }
       } catch (e) {
+        outfitTrace = [`threw: ${(e as Error)?.message?.slice(0, 200) ?? 'unknown'}`]
         console.error('[stylist] outfit search error:', e)
       }
     }
@@ -2793,6 +2812,10 @@ Use concrete garment, colour, and material words only, never a brand or product 
       // What leads the page: complete outfits, not three shelves.
       looks: foundProductGroups ? await looksFrom(foundProductGroups) : [],
       outfitSlots, outfitGroups, searchQuery: searchQuery || undefined,
+      // Present only when an outfit was requested and produced nothing. The
+      // interface ignores it; it is here so the failure can be read from
+      // outside without the deploy logs.
+      outfitTrace: outfitTrace ?? undefined,
     })
   } catch (e) {
     console.error('[stylist] error:', e)
