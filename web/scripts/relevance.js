@@ -1,0 +1,98 @@
+/**
+ * Does the garment filter keep the wrong garment out, and the right one in?
+ *
+ * Every case below is a real product from a real production response to the
+ * question "what should I wear to a summer wedding in Delhi" (men, INR, IN).
+ * The four marked WRONG were on the page: two sock packs in the Loafers strip,
+ * a womenswear co-ord leading the Blazers strip, and a pair of shorts in the
+ * Trousers strip.
+ *
+ * The RIGHT cases matter more than the wrong ones. An exclusion list is easy to
+ * make strict enough to empty a strip, and an empty strip is a worse bug than a
+ * sock in it — so every real garment that shared the page is asserted to
+ * survive, by name.
+ *
+ * The garment question reads TITLE, TAGS and PRODUCT TYPE only, never the
+ * description; the haystack below is built the same way for that reason.
+ */
+const { matchesGarmentExclusion, GARMENT_VOCAB, decomposeQuery } = require('/home/user/From/web/.vt/qp.cjs')
+
+const hay = p => `${p.title} ${(p.tags || []).join(' ')} ${p.type || ''}`
+  .toLowerCase().replace(/[_/|>]+/g, ' ')
+
+/** The product-term group for a garment key, as the catalogue matcher passes it. */
+const group = key => GARMENT_VOCAB[key].product
+
+// key, product, shouldBeExcluded
+const CASES = [
+  // ── The four that were wrong on the page ───────────────────────────────────
+  ['loafer', { title: 'The Complete Loafer Sock Pack', tags: ['BT'] }, true],
+  ['loafer', { title: 'Black Essentials Loafers (Pack of 3)', tags: ['socks', 'hosiery'] }, true],
+  ['blazer', { title: 'Shanaya Top-Pants & Blazer Set', tags: ['Colour_Maroon', 'cotton', 'Material_Cotton'] }, true],
+  ['trouser', { title: 'Classic Shorts - Navy', tags: ['Filterclass_Shorts', 'Filtersubclass_Shorts', 'Bottomwear_Classic'] }, true],
+
+  // ── Everything else that shared those strips, and must survive ─────────────
+  ['loafer', { title: "Men's Terra Black Loafers", tags: [] }, false],
+  ['loafer', { title: "Men's Black Esparto Loafers", tags: [] }, false],
+  ['loafer', { title: 'RABARI LOAFER', tags: [] }, false],
+  ['loafer', { title: 'Queens Crest Loafer', tags: [] }, false],
+  ['loafer', { title: 'SQUARE LOAFER', tags: [] }, false],
+  ['loafer', { title: 'SOFT NEW BANDED LOAFER', tags: [] }, false],
+  ['blazer', { title: 'The Effortless Blazer Navy', tags: [] }, false],
+  ['blazer', { title: 'Transit Summer Blazer', tags: [] }, false],
+  ['blazer', { title: 'Yacht Club Luxe Linen Blazer', tags: [] }, false],
+  ['blazer', { title: 'CRASH KANTHA BLAZER', tags: [] }, false],
+  ['blazer', { title: 'THREE BUTTON BLAZER', tags: [] }, false],
+  ['trouser', { title: 'Flycatcher Trousers - Navy', tags: ['Filterclass_Trousers'] }, false],
+  ['trouser', { title: 'Vulcan Navy Wool Blend Trousers', tags: [] }, false],
+  ['trouser', { title: 'Lapis European Linen Trouser', tags: [] }, false],
+  ['trouser', { title: 'ASTRA TROUSERS [UNISEX]', tags: [] }, false],
+  ['trouser', { title: 'Navy Blue Pants', tags: [] }, false],
+  ['shirt', { title: 'Stone Grey European Linen Shirt', tags: [] }, false],
+  ['shirt', { title: 'Riverine Shirt - Ivory & Charcoal Embroidered', tags: [] }, false],
+  ['shirt', { title: 'Half Sleeve Shirt - Cotton Linen Classic Fit', tags: ['Filterclass_Shirt', 'Filtersleeve_Half Sleeves'] }, false],
+
+  // ── The shoe-adjacent objects, and the shoes they sit beside ──────────────
+  ['shoe', { title: 'Cedar Shoe Trees', tags: [] }, true],
+  ['shoe', { title: 'Leather Shoe Care Kit', tags: [] }, true],
+  ['sandal', { title: 'Ankle Socks Three Pack', tags: [] }, true],
+  ['shoe', { title: 'Derby Shoes In Brown Leather', tags: [] }, false],
+  ['sandal', { title: 'Woven Leather Sandals', tags: [] }, false],
+  ['heel', { title: 'Block Heel Court Shoes', tags: [] }, false],
+]
+
+// A garment named alongside another garment must not be deleted by the
+// specificity filter. The first four are the ones the new cross-slot
+// exclusions would have broken; the last two are what that filter is FOR.
+const DECOMPOSE = [
+  ['loafers and socks', ['loafer', 'sock']],
+  ['trousers and shorts', ['trouser', 'short']],
+  ['leggings and shoes', ['legging', 'shoe']],
+  ['a blazer and a jumpsuit', ['blazer', 'jumpsuit']],
+  ['men t-shirt', ['tshirt']],
+  ['bootcut jeans', ['jean']],
+]
+
+let bad = 0
+
+console.log('── garment exclusion ' + '─'.repeat(52))
+for (const [key, p, want] of CASES) {
+  const got = matchesGarmentExclusion(hay(p), group(key))
+  const ok = got === want
+  if (!ok) bad++
+  console.log(
+    `${ok ? '  ok  ' : ' FAIL '}${key.padEnd(8)} ${want ? 'excluded' : 'kept    '}  ` +
+    `${got === want ? '' : `(got ${got ? 'excluded' : 'kept'}) `}${p.title}`
+  )
+}
+
+console.log('\n── query decomposition ' + '─'.repeat(50))
+for (const [q, want] of DECOMPOSE) {
+  const got = decomposeQuery(q).garmentKeys
+  const ok = want.every(k => got.includes(k)) && got.length === want.length
+  if (!ok) bad++
+  console.log(`${ok ? '  ok  ' : ' FAIL '}"${q}" → [${got.join(', ')}]${ok ? '' : `  want [${want.join(', ')}]`}`)
+}
+
+console.log('\n' + (bad === 0 ? 'all clear' : `${bad} FAILED`))
+process.exit(bad === 0 ? 0 : 1)

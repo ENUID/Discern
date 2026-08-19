@@ -385,6 +385,34 @@ const SET_PIECE = [
   'co-ord', 'co ord', 'coord', 'co-ords', 'coords',
   'shorts set', 'short set', 'pant set', 'pants set', 'trouser set',
   'shirt set', 'kurta set', 'night set', 'pyjama set', 'pajama set',
+  // The comment above names "Top-pants blazer set" as the thing this list is
+  // for, and the list did not contain a phrase that matches it. So "Shanaya
+  // Top-Pants & Blazer Set" — a womenswear co-ord — led the Blazers strip of a
+  // men's wedding search, as the first piece of the first look on the page.
+  'blazer set', 'top-pants', 'top pants', 'jacket set', 'blouse set',
+  'skirt set', 'two piece set', '2 piece set', 'three piece set', '3 piece set',
+]
+
+/** Socks are not footwear, however much shoe vocabulary they borrow.
+ *
+ *  A "loafer sock" is a sock cut low enough to disappear inside a loafer, and
+ *  "The Complete Loafer Sock Pack" duly turned up in the Loafers strip of a
+ *  wedding search, alongside "Black Essentials Loafers (Pack of 3)" from the
+ *  same hosiery brand. Two of the eight loafers on that page were socks.
+ *
+ *  This is safe to state as bare words because the garment question is asked of
+ *  the TITLE, tags and product type only — never the description. A real
+ *  loafer's description may well say "wear them with no-show socks"; its title
+ *  does not. (That separation is what makes the whole list below possible; a
+ *  full-text exclusion on 'sock' would empty every footwear strip in the shop.)
+ *
+ *  The shoe-adjacent objects are here for the same reason: a shoe tree, an
+ *  insole and a shoe-care kit all live in the footwear aisle and none of them
+ *  is something to put on your feet. */
+const NOT_FOOTWEAR = [
+  'sock', 'socks', 'stocking', 'stockings', 'hosiery', 'legging', 'tights',
+  'shoe tree', 'shoe trees', 'shoe care', 'shoe polish', 'shoe cream',
+  'shoe bag', 'shoe horn', 'insole', 'insoles', 'shoelace', 'shoe lace', 'laces',
 ]
 
 export const GARMENT_EXCLUSIONS: Record<string, string[]> = {
@@ -394,7 +422,7 @@ export const GARMENT_EXCLUSIONS: Record<string, string[]> = {
   shirt:   ['t-shirt', 't shirt', 'tshirt', 'tee', 'tees', 'sweatshirt', 'polo', 'nightshirt', 'undershirt', 'henley',
             'shirt dress', 'shirtdress'],
   polo:    ['polo neck', 'poloneck', 'polo-neck', 'water polo'],
-  boot:    ['bootcut', 'boot cut', 'bootie shorts'],
+  boot:    ['bootcut', 'boot cut', 'bootie shorts', ...NOT_FOOTWEAR],
   // These were PHRASES, and a phrase is the wrong shape for this. "denim dress"
   // never matched "Blue Outline Denim Short Dress" because the words are split
   // by another one, and "Blue Denim Jumpsuit" was not listed at all — so both
@@ -405,7 +433,12 @@ export const GARMENT_EXCLUSIONS: Record<string, string[]> = {
   // words, matched as words, so nothing gets past by having an adjective
   // wedged into the middle.
   jean:    ['denim jacket', 'denim shirt', 'denim jkt', 'dress', ...WHOLE_BODY, ...OTHER_SLOT, ...SET_PIECE],
-  trouser: [...WHOLE_BODY, ...OTHER_SLOT, ...SET_PIECE],
+  // A pair of shorts is not a trouser. "Classic Shorts - Navy" stood in the
+  // Trousers strip of a wedding search, which is wrong twice over — wrong
+  // garment, and wrong for the occasion. Both halves of the bottom slot name
+  // the other in tags often enough that this only became safe when the garment
+  // question stopped reading descriptions.
+  trouser: ['short', 'shorts', ...WHOLE_BODY, ...OTHER_SLOT, ...SET_PIECE],
   short:   ['dress', ...WHOLE_BODY, ...OTHER_SLOT, 'bootie shorts', ...SET_PIECE],
   // A co-ord is a set, not a t-shirt, and it kept arriving as one.
   tshirt:  ['track pant', ...WHOLE_BODY, ...SET_PIECE],
@@ -420,6 +453,23 @@ export const GARMENT_EXCLUSIONS: Record<string, string[]> = {
   // shirt, "dress pants" are trousers, "dress shoes" are footwear — and the
   // sleepwear look-alikes (nightgown, dressing gown).
   dress:   ['dress shirt', 'dress pant', 'dress trouser', 'dress shoe', 'dress sock', 'nightgown', 'dressing gown'],
+  // The outerwear slot had no exclusions at all, so the co-ord rule written for
+  // the shorts strip never protected the one strip whose example is named in
+  // its own comment.
+  blazer:  [...WHOLE_BODY, ...SET_PIECE],
+  jacket:  [...WHOLE_BODY, ...SET_PIECE],
+  coat:    [...WHOLE_BODY, ...SET_PIECE],
+  // The rest of the footwear slot. `sneaker` has carried the sock exclusion
+  // since the day a high-top sock led its strip; every other kind of shoe was
+  // left open, which is how a hosiery brand sold two pairs of loafers.
+  shoe:        [...NOT_FOOTWEAR],
+  loafer:      [...NOT_FOOTWEAR],
+  sandal:      [...NOT_FOOTWEAR],
+  heel:        [...NOT_FOOTWEAR],
+  derby:       [...NOT_FOOTWEAR],
+  espadrille:  [...NOT_FOOTWEAR],
+  clog:        [...NOT_FOOTWEAR],
+  mule:        [...NOT_FOOTWEAR],
 }
 
 // Reverse index: each product term of an excluded garment → that garment's
@@ -741,13 +791,33 @@ export function decomposeQuery(query: string): QueryComponents {
   // and silently disabled their category filter — letting button-ups back into
   // a t-shirt strip. Specificity is already encoded in GARMENT_EXCLUSIONS: if
   // A excludes one of B's product terms, B is the more specific reading.
+  //
+  // "Excluded" and "more specific" are not the same relation, and reading the
+  // first as the second is what this now guards against. An exclusion list
+  // carries two kinds of entry: LOOK-ALIKES, whose name contains this garment's
+  // own name ('t-shirt' contains 'shirt', 'bootcut' contains 'boot') — those
+  // really are the specific reading of an ambiguous word — and REJECTIONS from
+  // another slot entirely ('sock' on a loafer, 'shorts' on a trouser), which
+  // say nothing about specificity at all.
+  //
+  // Treating the second kind as the first deletes the garment the shopper
+  // named: "loafers and socks" would drop `loafer` and search socks alone,
+  // "trousers and shorts" would come back as shorts. The substring test is the
+  // whole difference, and it is exactly the relation the comment above
+  // describes — a name that CONTAINS this one is a narrower reading of it; a
+  // name that does not is simply a different garment.
   const garmentKeys = matchedKeys.filter(key => {
     const ex = GARMENT_EXCLUSIONS[key]
     if (!ex || ex.length === 0) return true
+    const ownTerms = (GARMENT_VOCAB[key]?.product || []).map(t => t.toLowerCase().trim())
     return !matchedKeys.some(other => {
       if (other === key) return false
       const otherTerms = GARMENT_VOCAB[other]?.product || []
-      return otherTerms.some(t => ex.includes(t.toLowerCase().trim()))
+      return otherTerms.some(t => {
+        const term = t.toLowerCase().trim()
+        if (!ex.includes(term)) return false
+        return ownTerms.some(own => own && term !== own && term.includes(own))
+      })
     })
   })
 
