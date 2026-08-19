@@ -1587,8 +1587,16 @@ async function runStylistRequest(
     const countryCode: string | null = (typeof body?.buyerCountry === 'string' && body.buyerCountry.trim()
       ? body.buyerCountry.trim().toUpperCase()
       : req.headers.get('x-vercel-ip-country') || req.headers.get('cf-ipcountry') || null)
+    // Read the field that was tested, not a neighbouring one. This line
+    // checked `memorySummary` and then returned `body.tasteProfile.trim()` —
+    // a key the interface has never sent. So the moment a shopper HAD a
+    // memory, the guard passed, `.trim()` ran on undefined, the TypeError
+    // reached the handler's outer catch, and they were told "That did not get
+    // through. Ask me again." Every message, permanently, for exactly the
+    // returning shoppers the memory exists to serve. Asking again could not
+    // help: the memory was still there the second time.
     const memorySummary: string | undefined = typeof body?.memorySummary === 'string' && body.memorySummary.trim()
-      ? body.tasteProfile.trim()
+      ? body.memorySummary.trim()
       : undefined
     const shopperGender: string | undefined = typeof body?.shopperGender === 'string' && body.shopperGender.trim()
       ? body.shopperGender.trim()
