@@ -827,16 +827,30 @@ async function stylistChat(
   const chain = live.length ? live : attempts
 
   const ATTEMPT_MS = Number(process.env.STYLIST_ATTEMPT_MS ?? 11_000)
+  // What the whole ladder is allowed, matching the caller's own chat deadline
+  // so the two cannot disagree about how long there is.
+  const LADDER_MS = Number(process.env.STYLIST_LADDER_MS ?? 34_000)
+  const ladderStart = Date.now()
   const attemptTimedOut = Symbol('attempt-timeout')
-  for (const a of chain) {
+  for (let i = 0; i < chain.length; i++) {
+    const a = chain[i]
+    // 11 seconds is the right cap when there are five rungs below you and the
+    // wrong one when there is nothing. Two of the four pools are out — cerebras
+    // wants paying, gemini's free tier is spent — so the chain is often groq
+    // then nvidia, and abandoning groq at 11s left twelve seconds of budget
+    // unspent and served the shopper an apology instead of an answer. Give up
+    // on a provider early only when giving up buys another real attempt.
+    const rungsLeft = chain.length - i
+    const budgetLeft = LADDER_MS - (Date.now() - ladderStart)
+    const cap = Math.max(ATTEMPT_MS, Math.floor(budgetLeft / rungsLeft))
     try {
       const result = await Promise.race([
         a.run(),
-        new Promise<typeof attemptTimedOut>(resolve => setTimeout(() => resolve(attemptTimedOut), ATTEMPT_MS)),
+        new Promise<typeof attemptTimedOut>(resolve => setTimeout(() => resolve(attemptTimedOut), cap)),
       ])
       if (result === attemptTimedOut) {
         // Not an error, just too slow to be worth waiting on — try the next pool.
-        console.error(`[stylist] ${a.name}: attempt exceeded ${ATTEMPT_MS}ms, moving on`)
+        console.error(`[stylist] ${a.name}: attempt exceeded ${cap}ms, moving on`)
         errors.push(`${a.name}: timeout`)
         continue
       }
