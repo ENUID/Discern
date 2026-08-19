@@ -413,6 +413,23 @@ const NOT_FOOTWEAR = [
   'sock', 'socks', 'stocking', 'stockings', 'hosiery', 'legging', 'tights',
   'shoe tree', 'shoe trees', 'shoe care', 'shoe polish', 'shoe cream',
   'shoe bag', 'shoe horn', 'insole', 'insoles', 'shoelace', 'shoe lace', 'laces',
+  // Nobody sells three pairs of loafers in a bag.
+  //
+  // "Rust & Tide Loafers (Pack of 3)" and "Black Essentials Loafers (Pack of
+  // 3)" survived the sock rule above because they never say sock where the
+  // garment filter can see it: the titles say Loafers, the tags are ["BT"],
+  // there is no product type. Only the descriptions give it away — "this
+  // loafer sock pack", "these black loafer socks" — and descriptions are
+  // exactly what the garment question must not read, or every real loafer
+  // whose copy mentions socks goes with them.
+  //
+  // The multipack is the tell, and it is structural rather than lexical:
+  // footwear is sold in pairs, one pair at a time. Hosiery is what comes in
+  // threes. At ₹399 for "three pairs of loafers" the price says the same
+  // thing, but a price rule would have to hold across every currency and
+  // market in the catalogue, and this one does not have to hold across
+  // anything.
+  'pack of', 'multipack', 'multi pack', 'pairs pack', 'value pack', 'combo pack',
 ]
 
 export const GARMENT_EXCLUSIONS: Record<string, string[]> = {

@@ -27,7 +27,11 @@ const group = key => GARMENT_VOCAB[key].product
 const CASES = [
   // ── The four that were wrong on the page ───────────────────────────────────
   ['loafer', { title: 'The Complete Loafer Sock Pack', tags: ['BT'] }, true],
-  ['loafer', { title: 'Black Essentials Loafers (Pack of 3)', tags: ['socks', 'hosiery'] }, true],
+  // The two hosiery packs as they REALLY arrive: tagged ["BT"], no product
+  // type, and the word "sock" only ever in the description — which the garment
+  // filter must not read. The multipack in the title is the whole signal.
+  ['loafer', { title: 'Black Essentials Loafers (Pack of 3)', tags: ['BT'] }, true],
+  ['loafer', { title: 'Rust & Tide Loafers (Pack of 3)', tags: ['BT'] }, true],
   ['blazer', { title: 'Shanaya Top-Pants & Blazer Set', tags: ['Colour_Maroon', 'cotton', 'Material_Cotton'] }, true],
   ['trouser', { title: 'Classic Shorts - Navy', tags: ['Filterclass_Shorts', 'Filtersubclass_Shorts', 'Bottomwear_Classic'] }, true],
 
@@ -59,6 +63,10 @@ const CASES = [
   ['shoe', { title: 'Derby Shoes In Brown Leather', tags: [] }, false],
   ['sandal', { title: 'Woven Leather Sandals', tags: [] }, false],
   ['heel', { title: 'Block Heel Court Shoes', tags: [] }, false],
+  // A multipack only disqualifies FOOTWEAR. Socks, tees and underwear are sold
+  // in threes perfectly legitimately, and their own strips must keep them.
+  ['sock', { title: 'Black Essentials Loafers (Pack of 3)', tags: ['BT'] }, false],
+  ['tshirt', { title: 'Crew Neck Tee Pack of 3', tags: [] }, false],
 ]
 
 // A garment named alongside another garment must not be deleted by the
