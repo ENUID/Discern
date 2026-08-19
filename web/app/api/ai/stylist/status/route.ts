@@ -37,13 +37,45 @@ function classify(err: unknown): Kind {
   return 'unknown'
 }
 
-async function probe(configured: boolean, run: () => Promise<unknown>): Promise<Kind> {
-  if (!configured) return 'not-configured'
+/** The failure in the provider's own words, with anything secret taken out.
+ *
+ *  'unknown' means the five patterns above all missed, and the advice for it
+ *  was "see the deploy logs" — which needs a laptop, the Vercel dashboard and
+ *  someone who reads logs, at the exact moment the app is down. That is the
+ *  situation this whole endpoint exists to avoid, and it was the answer for
+ *  the one case that most needed an answer: gemini has been failing for days
+ *  and the check could only say it could not say.
+ *
+ *  A model name retired out from under us, a rejected parameter, a 404 on a
+ *  renamed endpoint — none of those match a keyword and all of them are named
+ *  plainly in the response body. So the body is passed through, minus the
+ *  parts that must never leave the server: bearer tokens, key=… parameters,
+ *  and any long unbroken token that could be a credential. Bounded to a line,
+ *  because this is a diagnosis and not a log tail. */
+function redact(err: unknown): string {
+  const raw = String((err as Error)?.message ?? err ?? '').replace(/\s+/g, ' ').trim()
+  if (!raw) return ''
+  return raw
+    .replace(/(bearer\s+)\S+/gi, '$1[redacted]')
+    .replace(/([?&](?:key|api_?key|access_?token|token)=)[^&\s"']+/gi, '$1[redacted]')
+    .replace(/("(?:api_?key|key|token|authorization)"\s*:\s*")[^"]*/gi, '$1[redacted]')
+    // Anything long enough and dense enough to be a key, whatever it is called.
+    .replace(/\b[A-Za-z0-9_-]{24,}\b/g, '[redacted]')
+    .slice(0, 300)
+}
+
+type Probe = { kind: Kind; detail?: string }
+
+async function probe(configured: boolean, run: () => Promise<unknown>): Promise<Probe> {
+  if (!configured) return { kind: 'not-configured' }
   try {
     await run()
-    return 'ok'
+    return { kind: 'ok' }
   } catch (e) {
-    return classify(e)
+    const kind = classify(e)
+    // Only where the label alone is not the answer. 'quota' and 'auth' say
+    // everything already; 'unknown' says nothing at all.
+    return kind === 'ok' ? { kind } : { kind, detail: redact(e) || undefined }
   }
 }
 
@@ -70,17 +102,24 @@ export async function GET(req: NextRequest) {
     probe(NVIDIA_CONFIGURED, () => pingNvidia()),
   ])
 
-  const providers = { gemini, groq, cerebras, nvidia }
-  const working = Object.entries(providers).filter(([, k]) => k === 'ok').map(([n]) => n)
+  const probes: Record<string, Probe> = { gemini, groq, cerebras, nvidia }
+  const working = Object.entries(probes).filter(([, p]) => p.kind === 'ok').map(([n]) => n)
 
   return NextResponse.json({
     // The one line that matters. If this is false the stylist cannot answer and
     // the app is running on the catalogue alone.
     stylistCanAnswer: working.length > 0,
     working,
-    providers,
+    // Unchanged shape: one word per provider, which is what anything reading
+    // this endpoint already expects.
+    providers: Object.fromEntries(Object.entries(probes).map(([name, p]) => [name, p.kind])),
     whatEachMeans: Object.fromEntries(
-      Object.entries(providers).map(([name, kind]) => [name, ADVICE[kind as Kind]]),
+      Object.entries(probes).map(([name, p]) => [name, ADVICE[p.kind]]),
+    ),
+    // What the provider actually said, for the ones that failed. Absent when
+    // everything is up.
+    whatFailed: Object.fromEntries(
+      Object.entries(probes).filter(([, p]) => p.detail).map(([name, p]) => [name, p.detail]),
     ),
     // The catalogue is a separate system and does not need any of the above.
     catalogueIsIndependent: true,
