@@ -224,12 +224,38 @@ const PLACE_BEATS_PARTY: [RegExp, string][] = [
   [/\b(interview)\b/i, 'interview'],
 ]
 
+/** The same regression as PLACE_BEATS_PARTY, one step further along.
+ *
+ *  A shopper asked for "outfits for a casual party" and the table answered
+ *  blazer, shirt, trouser, loafer — because `party` belongs to cocktail,
+ *  cocktail is formality 4, and it is checked long before weekend. The word
+ *  casual was right there in the sentence and lost to the word party, exactly
+ *  as beach did.
+ *
+ *  A place beats a gathering because it says WHERE. This says HOW DRESSY, which
+ *  is the only thing the slots actually encode, so it beats it for the same
+ *  reason: the shopper stated the formality outright and we overrode it.
+ *
+ *  "Smart casual" and "business casual" are excluded deliberately — they are
+ *  dressier than casual, not versions of it, and a smart-casual party is much
+ *  closer to cocktail than to jeans and a t-shirt. And this only fires against
+ *  a GATHERING word: "casual Friday at the office" is still work, "casual
+ *  dinner" is still dinner. It is only the generic social words that a stated
+ *  formality is allowed to overrule. */
+const UNQUALIFIED_CASUAL = /(?<!\b(?:smart|business|dressy|elevated)[\s-])\bcasual\b/i
+const GENERIC_GATHERING = /\b(part(?:y|ies)|night ?out|nights? out|drinks|get[- ]?together|hang ?out|meet[- ]?up)\b/i
+
 export function readOccasion(query: string): Occasion | null {
   // A named place or event wins outright over a generic social word, whatever
   // the list order says.
   for (const [re, key] of PLACE_BEATS_PARTY) {
     if (!re.test(query)) continue
     const hit = OCCASIONS.find(o => o.key === key)
+    if (hit) return hit
+  }
+  // Then a stated formality, over the gathering word it is describing.
+  if (UNQUALIFIED_CASUAL.test(query) && GENERIC_GATHERING.test(query)) {
+    const hit = OCCASIONS.find(o => o.key === 'weekend')
     if (hit) return hit
   }
   // Otherwise: order matters where a word appears twice ('christmas party' is

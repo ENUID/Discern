@@ -30,6 +30,7 @@ import V2Auth, { type V2AuthReason } from './V2Auth'
 import V2Feedback from './V2Feedback'
 import V2Profile from './V2Profile'
 import { readDeviceGender, writeDeviceGender } from '@/lib/shopperPrefs'
+import { stripEmphasis } from '@/lib/plainText'
 import { buildCartLinks } from './cartLink'
 import { useSyncedShelf } from './useSyncedShelf'
 import { productSlotCategories, type SlotCategory } from '@/lib/queryParser'
@@ -402,10 +403,17 @@ function SaidBody({ text, refs, photos, onOpen }: {
   photos: string[]
   onOpen: (p: V2Product) => void
 }) {
-  const parts = text
+  const parts = stripEmphasis(
     // The model sometimes bolds a token; strip the emphasis off it so the
-    // token still matches whole.
-    .replace(/\*\*\s*(\[(?:PRODUCT|PHOTO):\s*\d{1,2}\])\s*\*\*/gi, '$1')
+    // token still matches whole. This runs first because the general stripper
+    // below would leave the brackets and lose the pairing.
+    text.replace(/\*\*\s*(\[(?:PRODUCT|PHOTO):\s*\d{1,2}\])\s*\*\*/gi, '$1'),
+  )
+    // Everything else the model writes in markdown goes with it. This renders
+    // as plain text, so "a sleek knit **elevated** baseline" reached a
+    // shopper's screen with the asterisks still in it — on the first screen of
+    // the app. Spacing and punctuation survive; the segments below are joined
+    // back into a sentence.
     .split(/(\[(?:PRODUCT|PHOTO):\s*\d{1,2}\])/i)
     .filter(Boolean)
 
@@ -452,6 +460,9 @@ export default function DiscernV2({
   onQuery?: (q: string, history: V2Msg[], images: string[], onProgress?: (step: { text: string; icon?: string }) => void, pinned?: V2Product[]) => Promise<{
     sections: V2Section[]; look?: V2Product[]; looks?: V2Look[]
     answer?: string; didSearch?: boolean; light?: boolean; failed?: boolean; busy?: boolean
+    /** When the answer arrived with nothing to buy: the query it should have
+     *  been, ready to send. See lib/fashion/suggestQuery. */
+    suggest?: string
     comparison?: { rows: { label: string; values: string[] }[]; pick?: { index: number; reason: string } }
   }>
   /** The next page of one strip: the query, and everything already shown. */
@@ -578,6 +589,9 @@ export default function DiscernV2({
    *  the composer until the next question, because a stylist who answers you
    *  out loud and is never heard is indistinguishable from a broken app. */
   const [said, setSaid] = useState<string | null>(null)
+  /** The query that answer should have been, when it came back with nothing to
+   *  buy. Tapping it loads the composer; see the composer's suggestion row. */
+  const [suggested, setSuggested] = useState<string | null>(null)
   /** The pieces that answer is about, so a [PRODUCT:N] inside it can be drawn.
    *  Held beside the words rather than read off `pinned`, which empties the
    *  moment the question is sent. */
@@ -1344,11 +1358,12 @@ export default function DiscernV2({
           // recorded and then immediately hidden behind a blank page.
           show = true
           setInput('')
-          setSaid(null); setSaidRefs([]); setSaidPhotos([])
+          setSaid(null); setSaidRefs([]); setSaidPhotos([]); setSuggested(null)
           return
         }
         setInput('')
         setSaid(words)
+        setSuggested(typeof res.suggest === 'string' && res.suggest ? res.suggest : null)
         // What the reply is talking about. Without these a [PRODUCT:2] the
         // backend deliberately placed has nothing to draw and shows through as
         // the literal characters.
@@ -1356,7 +1371,7 @@ export default function DiscernV2({
         setLoading(false)
         return
       }
-      setSaid(null); setSaidRefs([]); setSaidPhotos([])
+      setSaid(null); setSaidRefs([]); setSaidPhotos([]); setSuggested(null)
 
       setTurns(prev => [{
         id: `${prev.length}-${question.slice(0, 24)}`,
@@ -1428,13 +1443,13 @@ export default function DiscernV2({
   /** Back to the opening screen, keeping everything. Distinct from New chat,
    *  which deliberately throws the turn away. */
   const goHome = useCallback(() => {
-    setProduct(null); setLookOpen(false); setView('home'); setSaid(null); setSaidRefs([]); setSaidPhotos([]); setPinned([])
+    setProduct(null); setLookOpen(false); setView('home'); setSaid(null); setSaidRefs([]); setSaidPhotos([]); setSuggested(null); setPinned([])
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
   }, [])
 
   const newSearch = useCallback(() => {
     setTurns([]); setLook(null); setLookOpen(false); setProduct(null)
-    setInput(''); setPhotos([]); setView('home'); setSaid(null); setSaidRefs([]); setSaidPhotos([]); setPinned([])
+    setInput(''); setPhotos([]); setView('home'); setSaid(null); setSaidRefs([]); setSaidPhotos([]); setSuggested(null); setPinned([])
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0 }))
   }, [])
 
@@ -2504,7 +2519,35 @@ export default function DiscernV2({
               {said && !loading && (
                 <div className="v2-bar-said" role="status" aria-live="polite">
                   <SaidBody text={said} refs={saidRefs} photos={saidPhotos} onOpen={openProduct} />
-                  <button className="v2-bar-said-x" aria-label="Dismiss" onClick={() => { setSaid(null); setSaidRefs([]); setSaidPhotos([]) }}>
+                  {/* The way out of a reply with nothing to buy under it.
+                      Without this the shopper's only route forward was to
+                      press-and-hold the paragraph, drag the selection handles,
+                      copy it, paste it into the field below and send it back.
+                      Somebody actually did that. It worked, and it is not a
+                      thing anyone should have to invent.
+                      Tapping loads the field and clears this away, so the bar
+                      goes back to being the bar and the send is the ordinary
+                      send — deliberately NOT sending on tap, because the query
+                      is a suggestion and they may want to change a word. */}
+                  {suggested && (
+                    <button type="button" className="v2-said-use"
+                      onClick={() => {
+                        setInput(suggested)
+                        setSaid(null); setSaidRefs([]); setSaidPhotos([]); setSuggested(null)
+                        // Focused and with the caret at the end, so it can be
+                        // edited or sent without another tap.
+                        requestAnimationFrame(() => {
+                          const ta = taRef.current
+                          if (!ta) return
+                          ta.focus()
+                          ta.setSelectionRange(suggested.length, suggested.length)
+                        })
+                      }}>
+                      <span className="v2-said-use-q">{suggested}</span>
+                      <span className="v2-said-use-go" aria-hidden>↑</span>
+                    </button>
+                  )}
+                  <button className="v2-bar-said-x" aria-label="Dismiss" onClick={() => { setSaid(null); setSaidRefs([]); setSaidPhotos([]); setSuggested(null) }}>
                     <CloseIcon size={12} />
                   </button>
                 </div>
@@ -2943,8 +2986,11 @@ export default function DiscernV2({
            currentColor, so it inverts with it over paper and never needs a
            second palette. Capped and scrollable: a long answer must not push
            the field it was typed into off the screen. */
-        .v2-bar-said{display:flex;align-items:flex-start;gap:10px;
-          margin:0 2px 4px;padding:0 0 11px;
+        /* Block rather than a flex row, so the suggestion sits UNDER the answer
+           at full width instead of being squeezed beside it, and the dismiss
+           rides in the corner out of the text's way. */
+        .v2-bar-said{position:relative;display:block;
+          margin:0 2px 4px;padding:0 30px 11px 0;
           /* Both stated: the fallback holds where color-mix is not available,
              and it has to be a tint of currentColor so the rule survives the
              bar inverting over paper. */
@@ -2953,6 +2999,26 @@ export default function DiscernV2({
           max-height:30svh;overflow-y:auto;overscroll-behavior:contain;
           animation:v2-fade .26s ${V2.ease};}
         .v2-bar-said p{margin:0;font-size:14px;line-height:1.55;font-weight:400;opacity:.9;}
+        /* The query the answer should have been, offered as one tap.
+           Full-bleed and quiet: it is a suggestion sitting inside the composer,
+           not a call to action shouting out of it. The arrow points at the
+           field below because that is literally where the words are about to
+           go — nothing is sent until the shopper sends it. */
+        .v2-said-use{display:flex;align-items:center;gap:10px;width:100%;
+          margin:10px 0 0;padding:9px 11px;border:none;border-radius:11px;
+          font:inherit;text-align:left;color:inherit;cursor:pointer;
+          background:rgba(255,255,255,.09);
+          background:color-mix(in srgb, currentColor 9%, transparent);
+          transition:background .16s ${V2.ease};}
+        .v2-said-use:hover,.v2-said-use:focus-visible{
+          background:rgba(255,255,255,.16);
+          background:color-mix(in srgb, currentColor 15%, transparent);}
+        .v2-said-use-q{flex:1;min-width:0;font-size:13.5px;line-height:1.4;opacity:.92;}
+        .v2-said-use-go{flex-shrink:0;width:22px;height:22px;display:flex;
+          align-items:center;justify-content:center;border-radius:50%;
+          font-size:13px;line-height:1;opacity:.75;
+          background:rgba(255,255,255,.14);
+          background:color-mix(in srgb, currentColor 14%, transparent);}
         /* What the next question is about. Inside the bar, above the field, in
            the bar's own colours — the same place an attached photo appears,
            because they are the same kind of thing: something travelling with
@@ -2990,7 +3056,7 @@ export default function DiscernV2({
         @media(hover:hover){.v2-said-card:hover span{opacity:.95;}}
         .v2-said-shot{flex:0 0 auto;width:64px;height:80px;object-fit:cover;border-radius:8px;display:block;}
 
-        .v2-bar-said-x{position:relative;flex-shrink:0;width:22px;height:22px;margin-top:1px;
+        .v2-bar-said-x{position:absolute;right:0;top:0;flex-shrink:0;width:22px;height:22px;
           display:flex;align-items:center;justify-content:center;border:none;border-radius:50%;
           color:inherit;cursor:pointer;opacity:.55;transition:opacity .14s;
           background:rgba(255,255,255,.16);

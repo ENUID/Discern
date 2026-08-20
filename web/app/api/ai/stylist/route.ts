@@ -8,6 +8,7 @@ import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/store
 import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@/lib/intentCompiler'
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
 import { outfitPlan, composeOutfit, composeOutfits, composeOutfitsWithProfiles } from '@/lib/fashion/outfitKnowledge'
+import { suggestQuery } from '@/lib/fashion/suggestQuery'
 import { profilesFor } from '@/lib/services/enrichProduct'
 import { worksWith } from '@/lib/fashion/garmentProfile'
 import { describeGarment } from '@/lib/services/describeGarment'
@@ -2821,11 +2822,29 @@ Use concrete garment, colour, and material words only, never a brand or product 
       }
     }
 
+    // A reply with nothing under it leaves the shopper holding a paragraph.
+    //
+    // "outfits for a casual party" came back as three sentences of advice and
+    // no clothes, and the only way forward was to press-and-hold the text,
+    // drag the selection handles, copy it, paste it into the composer and send
+    // it back. They did that. It worked. It is also not a thing anyone should
+    // have to invent, so the reply now carries the query it should have been —
+    // built from the garments the model just named, the occasion table, and
+    // their own words, with no model call and no extra wait.
+    const nothingUnderIt =
+      (!foundProducts || foundProducts.length === 0) &&
+      (!foundProductGroups || foundProductGroups.length === 0) &&
+      !outfitSlots && !outfitGroups
+    const suggest = nothingUnderIt && reply2
+      ? suggestQuery(question, reply2, shopperGender)
+      : null
+
     return finish({
       reply: reply2, comparison: comparison ?? null, foundProducts, foundProductGroups,
       // What leads the page: complete outfits, not three shelves.
       looks: foundProductGroups ? await looksFrom(foundProductGroups) : [],
       outfitSlots, outfitGroups, searchQuery: searchQuery || undefined,
+      suggest: suggest ?? undefined,
       // Present only when an outfit was requested and produced nothing. The
       // interface ignores it; it is here so the failure can be read from
       // outside without the deploy logs.

@@ -516,6 +516,11 @@ export default function Boutique({ buyerCurrency, buyerCountry, heroCopy }: {
       light: data?.light === true,
       comparison: data?.comparison ?? undefined,
       busy: data?.busy === true,
+      // The query this reply should have been, when it came back with nothing
+      // to buy. Built server-side (lib/fashion/suggestQuery) so the garment
+      // vocabulary and the occasion table stay in one place rather than being
+      // shipped to the browser to say the same thing again.
+      suggest: typeof data?.suggest === 'string' && data.suggest ? data.suggest : undefined,
     }
   }, [context])
 
