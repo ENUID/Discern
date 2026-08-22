@@ -24,8 +24,24 @@
  * the claim — it never asserts a match, because no amount of text comparison
  * can settle sameness. A denim clog and a leather clog are both clogs.
  */
+// Builds what it needs, so this is runnable from a clean checkout rather than
+// only after some other command happened to leave a bundle behind.
+const { execFileSync } = require('child_process')
+const fs = require('fs')
+const path = require('path')
+const WEB = '/home/user/From/web'
+function load(tsPath, name) {
+  const out = path.join(WEB, '.vt', name + '.cjs')
+  fs.mkdirSync(path.join(WEB, '.vt'), { recursive: true })
+  execFileSync(path.join(WEB, 'node_modules/.bin/esbuild'), [
+    path.join(WEB, tsPath), '--bundle', '--platform=node', '--format=cjs',
+    '--outfile=' + out, '--log-level=error', '--alias:@=' + WEB,
+  ])
+  return require(out)
+}
+
 const { exactMatchNote, wantsTheExactPiece, nothingIsTheRightGarment, stripUnverifiableClaims } =
-  require('/home/user/From/web/.vt/em.cjs')
+  load('lib/fashion/exactMatch.ts', 'em')
 
 const P = (title, tags) => ({ title, tags: tags || [], description: '' })
 

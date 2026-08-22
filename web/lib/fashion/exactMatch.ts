@@ -89,6 +89,11 @@ const CLAIM = new RegExp([
   'exactly what you', 'exactly the (?:one|piece|pair)', 'just as you described',
   'just like (?:the|your) (?:one|photo|picture|image)',
   'same (?:one|piece|pair) as', 'matches your photo',
+  // Production again, with a verdict of NO sitting right behind it:
+  // "They're the same style you saw". Style, model, product — the noun
+  // changes and the assertion does not.
+  '\\bthe same (?:style|model|product|item|thing|design)\\b',
+  '\\b(?:the one|the pair|the piece) (?:you|in your)\\b',
   'i found', 'we found', 'pulled up the exact', 'pull(?:ing)? up (?:the|that) exact',
   // A subject, a copula, and the claim. The first pass listed the exact
   // wordings it had seen — "this is the exact" — and production immediately

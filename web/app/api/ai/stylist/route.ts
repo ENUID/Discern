@@ -10,6 +10,7 @@ import { selectKnowledgeModules } from '@/lib/knowledgeModules'
 import { outfitPlan, composeOutfit, composeOutfits, composeOutfitsWithProfiles } from '@/lib/fashion/outfitKnowledge'
 import { suggestQuery } from '@/lib/fashion/suggestQuery'
 import { exactMatchNote, stripUnverifiableClaims, wantsTheExactPiece } from '@/lib/fashion/exactMatch'
+import { stripEmphasis } from '@/lib/plainText'
 import { findSameGarment, sameGarmentEnabled, type SameGarmentVerdict } from '@/lib/services/sameGarment'
 import { profilesFor } from '@/lib/services/enrichProduct'
 import { worksWith } from '@/lib/fashion/garmentProfile'
@@ -2917,6 +2918,16 @@ Use concrete garment, colour, and material words only, never a brand or product 
       const withoutClaim = sameVerdict?.sameIndex != null ? reply2 : stripUnverifiableClaims(reply2)
       reply2 = `${withoutClaim ? `${withoutClaim} ` : ''}${exactNote}`.trim()
     }
+
+    // Markdown, gone once, for every surface.
+    //
+    // The shopper has now been shown "a sleek knit **elevated** baseline" and
+    // "the orange side tag reads **Woodland**" — asterisks and all. The model
+    // writes markdown; every pane that renders a reply renders plain text.
+    // Fixing it at one render site only fixes that site, so it comes off here,
+    // where every reply passes through. Brackets survive, which is what the
+    // [PRODUCT:N] cards are parsed out of downstream.
+    reply2 = stripEmphasis(reply2)
 
     const nothingUnderIt =
       (!foundProducts || foundProducts.length === 0) &&

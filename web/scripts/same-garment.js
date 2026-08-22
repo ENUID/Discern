@@ -17,6 +17,22 @@
  * exercised deterministically — and so this passes with three of four provider
  * pools out of quota, which is the state of the world today.
  */
+// Builds what it needs, so this is runnable from a clean checkout rather than
+// only after some other command happened to leave a bundle behind.
+const { execFileSync } = require('child_process')
+const fs = require('fs')
+const path = require('path')
+const WEB = '/home/user/From/web'
+function load(tsPath, name) {
+  const out = path.join(WEB, '.vt', name + '.cjs')
+  fs.mkdirSync(path.join(WEB, '.vt'), { recursive: true })
+  execFileSync(path.join(WEB, 'node_modules/.bin/esbuild'), [
+    path.join(WEB, tsPath), '--bundle', '--platform=node', '--format=cjs',
+    '--outfile=' + out, '--log-level=error', '--alias:@=' + WEB,
+  ])
+  return require(out)
+}
+
 const http = require('http')
 
 const PORT = 4953
@@ -57,8 +73,8 @@ server.listen(PORT, async () => {
   delete process.env.CEREBRAS_API_KEY
   delete process.env.NVIDIA_API_KEY
 
-  const { findSameGarment } = require('/home/user/From/web/.vt/sg.cjs')
-  const { exactMatchNote } = require('/home/user/From/web/.vt/em.cjs')
+  const { findSameGarment } = load('lib/services/sameGarment.ts', 'sg')
+  const { exactMatchNote } = load('lib/fashion/exactMatch.ts', 'em')
 
   console.log('── it can say YES ' + '─'.repeat(55))
   reply = '{"same": 2, "confidence": 88, "closest": 2, "why": "same buckle, same stitch"}'
