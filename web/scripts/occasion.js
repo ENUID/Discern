@@ -1,3 +1,19 @@
+
+// Builds what it needs, so this is runnable from a clean checkout rather than
+// only after some other command happened to leave a bundle behind.
+const { execFileSync: _exec } = require('child_process')
+const _fs = require('fs')
+const _path = require('path')
+const _WEB = '/home/user/From/web'
+function load(tsPath, name) {
+  const out = _path.join(_WEB, '.vt', name + '.cjs')
+  _fs.mkdirSync(_path.join(_WEB, '.vt'), { recursive: true })
+  _exec(_path.join(_WEB, 'node_modules/.bin/esbuild'), [
+    _path.join(_WEB, tsPath), '--bundle', '--platform=node', '--format=cjs',
+    '--outfile=' + out, '--log-level=error', '--alias:@=' + _WEB,
+  ])
+  return require(out)
+}
 /**
  * Does a stated formality survive the word next to it?
  *
@@ -14,7 +30,7 @@
  * Most of the cases below are the ones that must NOT move. A rule like this is
  * easy to write so broadly that "casual Friday at the office" stops being work.
  */
-const { readOccasion } = require('/home/user/From/web/.vt/ok.cjs')
+const { readOccasion } = load('lib/fashion/outfitKnowledge.ts', 'ok')
 
 // query, expected occasion key, why it is the interesting case
 const CASES = [

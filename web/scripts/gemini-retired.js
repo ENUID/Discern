@@ -1,3 +1,22 @@
+
+// Builds what it needs, so this is runnable from a clean checkout rather than
+// only after some other command happened to leave a bundle behind.
+const { execFileSync: _exec } = require('child_process')
+const _fs = require('fs')
+const _path = require('path')
+const _WEB = '/home/user/From/web'
+function load(tsPath, name, replace) {
+  const out = _path.join(_WEB, '.vt', name + '.cjs')
+  _fs.mkdirSync(_path.join(_WEB, '.vt'), { recursive: true })
+  _exec(_path.join(_WEB, 'node_modules/.bin/esbuild'), [
+    _path.join(_WEB, tsPath), '--bundle', '--platform=node', '--format=cjs',
+    '--outfile=' + out, '--log-level=error', '--alias:@=' + _WEB,
+  ])
+  // GEMINI_BASE is a module constant rather than an env var, so pointing the
+  // client at the stand-in Google below means rewriting it in the bundle.
+  if (replace) _fs.writeFileSync(out, _fs.readFileSync(out, 'utf8').split(replace[0]).join(replace[1]))
+  return require(out)
+}
 /**
  * Does a retired Gemini model heal itself, and can it loop?
  *
@@ -75,7 +94,8 @@ const google = http.createServer((req, res) => {
 google.listen(4951, async () => {
   process.env.GOOGLE_AI_API_KEY = 'mock'
   process.env.GEMINI_STYLIST_MODEL = 'gemini-2.0-flash'   // the retired one
-  const { geminiChat } = require('/home/user/From/web/.vt/gemini.cjs')
+  const { geminiChat } = load('lib/gemini.ts', 'gemini',
+    ['https://generativelanguage.googleapis.com/v1beta/openai', 'http://127.0.0.1:4951'])
 
   console.log('\n── the live call ' + '─'.repeat(56))
   const first = await geminiChat([{ role: 'user', content: 'hello' }])

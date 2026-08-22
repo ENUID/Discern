@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "e2e": "node scripts/e2e.js"
+    "e2e": "node scripts/e2e.js",
+    "verify": "node scripts/verify.js"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",

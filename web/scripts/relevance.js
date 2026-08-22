@@ -1,3 +1,19 @@
+
+// Builds what it needs, so this is runnable from a clean checkout rather than
+// only after some other command happened to leave a bundle behind.
+const { execFileSync: _exec } = require('child_process')
+const _fs = require('fs')
+const _path = require('path')
+const _WEB = '/home/user/From/web'
+function load(tsPath, name) {
+  const out = _path.join(_WEB, '.vt', name + '.cjs')
+  _fs.mkdirSync(_path.join(_WEB, '.vt'), { recursive: true })
+  _exec(_path.join(_WEB, 'node_modules/.bin/esbuild'), [
+    _path.join(_WEB, tsPath), '--bundle', '--platform=node', '--format=cjs',
+    '--outfile=' + out, '--log-level=error', '--alias:@=' + _WEB,
+  ])
+  return require(out)
+}
 /**
  * Does the garment filter keep the wrong garment out, and the right one in?
  *
@@ -15,7 +31,7 @@
  * The garment question reads TITLE, TAGS and PRODUCT TYPE only, never the
  * description; the haystack below is built the same way for that reason.
  */
-const { matchesGarmentExclusion, GARMENT_VOCAB, decomposeQuery } = require('/home/user/From/web/.vt/qp.cjs')
+const { matchesGarmentExclusion, GARMENT_VOCAB, decomposeQuery } = load('lib/queryParser.ts', 'qp')
 
 const hay = p => `${p.title} ${(p.tags || []).join(' ')} ${p.type || ''}`
   .toLowerCase().replace(/[_/|>]+/g, ' ')

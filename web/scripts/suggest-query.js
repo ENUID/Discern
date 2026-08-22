@@ -1,3 +1,19 @@
+
+// Builds what it needs, so this is runnable from a clean checkout rather than
+// only after some other command happened to leave a bundle behind.
+const { execFileSync: _exec } = require('child_process')
+const _fs = require('fs')
+const _path = require('path')
+const _WEB = '/home/user/From/web'
+function load(tsPath, name) {
+  const out = _path.join(_WEB, '.vt', name + '.cjs')
+  _fs.mkdirSync(_path.join(_WEB, '.vt'), { recursive: true })
+  _exec(_path.join(_WEB, 'node_modules/.bin/esbuild'), [
+    _path.join(_WEB, tsPath), '--bundle', '--platform=node', '--format=cjs',
+    '--outfile=' + out, '--log-level=error', '--alias:@=' + _WEB,
+  ])
+  return require(out)
+}
 /**
  * Is the suggested query actually a good query?
  *
@@ -20,8 +36,8 @@
  *   it states a gender       menswear and womenswear are different searches
  *   no markdown              it goes into a search box, not a renderer
  */
-const { suggestQuery, plainWords } = require('/home/user/From/web/.vt/sq.cjs')
-const { decomposeQuery } = require('/home/user/From/web/.vt/qp.cjs')
+const { suggestQuery, plainWords } = load('lib/fashion/suggestQuery.ts', 'sq')
+const { decomposeQuery } = load('lib/queryParser.ts', 'qp')
 
 // The reply from the screenshot, asterisks included — that is how it was shown.
 const CASUAL_PARTY_REPLY =
