@@ -52,7 +52,7 @@ const check = (ok, label, detail) => {
 server.listen(PORT, async () => {
   process.env.GROQ_API_KEY = 'mock'
   process.env.GROQ_BASE_URL = `http://127.0.0.1:${PORT}`
-  process.env.SAME_GARMENT_TIMEOUT_MS = '1500'
+  process.env.SAME_GARMENT_TIMEOUT_MS = '3500'   // above the 3s floor, so the box is real
   delete process.env.GOOGLE_AI_API_KEY   // skip gemini, land on the groq rung
   delete process.env.CEREBRAS_API_KEY
   delete process.env.NVIDIA_API_KEY
@@ -102,12 +102,27 @@ server.listen(PORT, async () => {
   check((await findSameGarment(PHOTO, [])).sameIndex === null, 'no candidates at all')
   check((await findSameGarment('', SHOP)).sameIndex === null, 'no photo at all')
 
-  delayMs = 3000                                             // past the 1.5s box
-  const started = Date.now()
+  delayMs = 9000                                             // well past the box
+  let started = Date.now()
   const timed = await findSameGarment(PHOTO, SHOP)
-  const took = Date.now() - started
+  let took = Date.now() - started
   check(timed.sameIndex === null, 'a slow provider')
-  check(took < 2500, 'and it gives up inside its own timeout', `${took}ms`)
+  check(took < 4500, 'and it gives up inside its own timeout', `${took}ms`)
+
+  // The caller's remaining budget wins when it is tighter than the default —
+  // the comparison is the last thing a photo search does and is routinely
+  // reached with only a few seconds left. A call that outlives the request
+  // spends the quota and is thrown away.
+  started = Date.now()
+  await findSameGarment(PHOTO, SHOP, 3200)
+  took = Date.now() - started
+  check(took < 4200, "obeys the caller's tighter budget", `${took}ms`)
+
+  // But never shorter than it takes to be worth asking at all.
+  started = Date.now()
+  await findSameGarment(PHOTO, SHOP, 200)
+  took = Date.now() - started
+  check(took >= 2900, 'and never below the floor where a call is pointless', `${took}ms`)
   delayMs = 0
 
   process.env.SAME_GARMENT_VISION = 'off'

@@ -104,6 +104,12 @@ const CONFIDENT = 70
 export async function findSameGarment(
   wantedImage: string,
   candidateImages: string[],
+  /** Hard ceiling for this call, when the caller has less time than the
+   *  default. The comparison is the LAST thing a photo search does, so what is
+   *  left of the request budget by then is often only a few seconds — a fixed
+   *  timeout longer than that means the call is started and then thrown away,
+   *  which costs the quota and buys nothing. */
+  budgetMs?: number,
 ): Promise<SameGarmentVerdict> {
   if (!sameGarmentEnabled() || !wantedImage) return NONE
   const cands = candidateImages.filter(Boolean).slice(0, MAX_CANDIDATES)
@@ -117,7 +123,7 @@ export async function findSameGarment(
         [wantedImage, ...cands.map(u => thumb(u))],
         { max_tokens: 150, temperature: 0 },
       ),
-      new Promise<null>(r => setTimeout(() => r(null), TIMEOUT_MS)),
+      new Promise<null>(r => setTimeout(() => r(null), Math.max(3_000, Math.min(TIMEOUT_MS, budgetMs ?? TIMEOUT_MS)))),
     ])
     if (!raw) return NONE
 

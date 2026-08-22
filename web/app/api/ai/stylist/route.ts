@@ -2866,12 +2866,20 @@ Use concrete garment, colour, and material words only, never a brand or product 
     // question behind it.
     let sameVerdict: SameGarmentVerdict | null = null
     if (images[0] && wantsTheExactPiece(question) && foundProducts && foundProducts.length > 0
-        && sameGarmentEnabled() && requestDeadline - Date.now() > 14_000) {
+        && sameGarmentEnabled() && requestDeadline - Date.now() > 9_000) {
       const candidates = foundProducts.slice(0, 6)
       send('curate', 'Comparing against your photo', `vision.same(${candidates.length} candidates)`)
+      // 14s of headroom was never once available. The vision read alone takes
+      // 25-30s on the one provider still in quota and the catalogue fetch
+      // another twelve, so by the time the comparison is reachable there are
+      // single-digit seconds left and the gate simply never opened — a step
+      // built, tested, deployed and silent. It now asks for what is actually
+      // there and tells the call how long it has, rather than starting one it
+      // is going to throw away.
+      const leftForVision = requestDeadline - Date.now() - 2_500
       sameVerdict = await withDeadline(
-        findSameGarment(images[0], candidates.map(imageOf).filter(Boolean)),
-        requestDeadline - 2_000, null,
+        findSameGarment(images[0], candidates.map(imageOf).filter(Boolean), leftForVision),
+        requestDeadline - 1_500, null,
       )
       if (sameVerdict) {
         console.log(`[stylist] same-garment: same=${sameVerdict.sameIndex} conf=${sameVerdict.confidence} — ${sameVerdict.why}`)
