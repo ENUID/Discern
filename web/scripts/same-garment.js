@@ -1,32 +1,122 @@
-// Provider lives in-process so it cannot die between start and call.
+/**
+ * Does it actually look at the candidates, and will it say no?
+ *
+ * The shopper's question was "find me this exact one, not similar". Until now
+ * every photo search was one-way — read the picture, write words, search the
+ * words — so the model never saw what came back and the answer could only ever
+ * be a hope. A blue denim clog was described as "men leather sandals" and eight
+ * leather sandals were presented as the exact pair.
+ *
+ * This is the step that closes the loop. The thing worth testing hardest is not
+ * that it can find a match: it is that it can REFUSE. "None of these is that
+ * piece" is a real answer to "find me the exact one", and the one no amount of
+ * word-matching could ever have produced.
+ *
+ * Run against a stand-in vision endpoint rather than a live provider, so the
+ * parsing, the confidence floor, the timeout and the failure paths are all
+ * exercised deterministically — and so this passes with three of four provider
+ * pools out of quota, which is the state of the world today.
+ */
 const http = require('http')
-const seen = []
+
+const PORT = 4953
+let lastPrompt = ''
+let reply = ''
+let delayMs = 0
+
 const server = http.createServer((req, res) => {
   let body = ''
-  req.on('data', c => body += c)
+  req.on('data', c => (body += c))
   req.on('end', () => {
-    seen.push(body)
-    // Pretend candidate 3 is the same garment.
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant',
-      content: '{"same": 3, "confidence": 88, "closest": 3}' } }] }))
+    lastPrompt = body
+    setTimeout(() => {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: reply } }] }))
+    }, delayMs)
   })
 })
-server.listen(4747, async () => {
+
+const PHOTO = 'data:image/jpeg;base64,AAAA'
+const SHOP = [
+  'https://cdn.shopify.com/s/files/1/1/mugger-dark-denim.jpg?width=400',
+  'https://cdn.shopify.com/s/files/1/1/mugger-sky-denim.jpg?width=400',
+  'https://cdn.shopify.com/s/files/1/1/ibiza-navy-slider.jpg?width=400',
+]
+
+let bad = 0
+const check = (ok, label, detail) => {
+  if (!ok) bad++
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${label}${detail ? `  ${detail}` : ''}`)
+}
+
+server.listen(PORT, async () => {
   process.env.GROQ_API_KEY = 'mock'
-  process.env.GROQ_BASE_URL = 'http://127.0.0.1:4747'
+  process.env.GROQ_BASE_URL = `http://127.0.0.1:${PORT}`
+  process.env.SAME_GARMENT_TIMEOUT_MS = '1500'
+  delete process.env.GOOGLE_AI_API_KEY   // skip gemini, land on the groq rung
+  delete process.env.CEREBRAS_API_KEY
+  delete process.env.NVIDIA_API_KEY
+
   const { findSameGarment } = require('/home/user/From/web/.vt/sg.cjs')
-  const cands = Array.from({ length: 6 }, (_, i) => `https://cdn.shopify.com/c${i}.jpg`)
-  const t0 = Date.now()
-  const r = await findSameGarment('data:image/png;base64,AAAA', cands)
-  console.log(`answered in ${Date.now() - t0}ms ->`, JSON.stringify(r))
-  const b = seen[0] || ''
-  const imgs = (b.match(/"type":"image_url"/g) || []).length
-  console.log('images sent:', imgs, '(1 wanted + 6 candidates)')
-  console.log('asked which is the SAME garment:', /SAME GARMENT/.test(b))
-  console.log('warned against colour-only matches:', /NOT the same garment/.test(b))
-  console.log('sent candidates as thumbnails:', /width=384/.test(b))
-  const ok = r.sameIndex === 2 && imgs === 7 && /SAME GARMENT/.test(b) && /width=384/.test(b)
-  console.log('\n' + (ok ? 'PASS the photograph is compared against the candidates' : 'FAIL'))
+  const { exactMatchNote } = require('/home/user/From/web/.vt/em.cjs')
+
+  console.log('── it can say YES ' + '─'.repeat(55))
+  reply = '{"same": 2, "confidence": 88, "closest": 2, "why": "same buckle, same stitch"}'
+  let v = await findSameGarment(PHOTO, SHOP)
+  check(v.sameIndex === 1, 'picks the right candidate (1-based 2 → index 1)', `sameIndex=${v.sameIndex}`)
+  check(v.confidence === 88, 'carries the confidence through')
+  check(v.why === 'same buckle, same stitch', 'carries the reason through')
+
+  console.log('\n── it can say NO, which is the point ' + '─'.repeat(36))
+  reply = '{"same": 0, "confidence": 91, "closest": 1, "why": "different sole and no buckle"}'
+  v = await findSameGarment(PHOTO, SHOP)
+  check(v.sameIndex === null, 'no match is null, not a guess', `sameIndex=${v.sameIndex}`)
+  check(v.closestIndex === 0, 'still reports the nearest thing for ranking')
+  const noteNo = exactMatchNote('find me this exact one, not similar', 'men denim sandals',
+    [{ title: 'MUGGER - DARK DENIM' }], v)
+  check(/none of them is that piece/i.test(noteNo), 'and the shopper is told plainly', `"${noteNo}"`)
+
+  console.log('\n── a hedged yes is a no ' + '─'.repeat(49))
+  // 55% is the model shrugging. The question was "is this the EXACT one".
+  reply = '{"same": 1, "confidence": 55, "closest": 1, "why": "similar shape"}'
+  v = await findSameGarment(PHOTO, SHOP)
+  check(v.sameIndex === null, 'below the confidence floor, a match is not claimed', `conf=${v.confidence}`)
+
+  console.log('\n── it sends the pictures, in order ' + '─'.repeat(38))
+  reply = '{"same": 0, "confidence": 90, "closest": 1, "why": "x"}'
+  await findSameGarment(PHOTO, SHOP)
+  const sent = JSON.parse(lastPrompt)
+  const parts = sent.messages[sent.messages.length - 1].content
+  const imgs = parts.filter(p => p.type === 'image_url').map(p => p.image_url.url)
+  check(imgs.length === 4, "the shopper's photo plus three candidates", `${imgs.length} images`)
+  check(imgs[0] === PHOTO, "the shopper's photo goes FIRST — the prompt numbers from it")
+  check(imgs.slice(1).every(u => /width=384/.test(u)),
+    'candidates are requested at a readable thumbnail size', imgs[1])
+
+  console.log('\n── every failure is an honest no-verdict ' + '─'.repeat(32))
+  reply = 'I think probably the second one looks close'      // not JSON
+  check((await findSameGarment(PHOTO, SHOP)).sameIndex === null, 'prose instead of JSON')
+  reply = '{"same": 9, "confidence": 99, "closest": 1}'      // out of range
+  check((await findSameGarment(PHOTO, SHOP)).sameIndex === null, 'an index that is not on the page')
+  reply = '{"same": 1, "confidence": 95, "closest": 1}'
+  check((await findSameGarment(PHOTO, [])).sameIndex === null, 'no candidates at all')
+  check((await findSameGarment('', SHOP)).sameIndex === null, 'no photo at all')
+
+  delayMs = 3000                                             // past the 1.5s box
+  const started = Date.now()
+  const timed = await findSameGarment(PHOTO, SHOP)
+  const took = Date.now() - started
+  check(timed.sameIndex === null, 'a slow provider')
+  check(took < 2500, 'and it gives up inside its own timeout', `${took}ms`)
+  delayMs = 0
+
+  process.env.SAME_GARMENT_VISION = 'off'
+  check((await findSameGarment(PHOTO, SHOP)).sameIndex === null, 'switched off entirely')
+  process.env.SAME_GARMENT_VISION = 'on'
+
   server.close()
+  console.log('\n' + (bad === 0
+    ? 'it looks at the candidates, and it is willing to say none of them'
+    : `${bad} FAILED`))
+  process.exit(bad === 0 ? 0 : 1)
 })

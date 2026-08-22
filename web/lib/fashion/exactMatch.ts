@@ -132,20 +132,47 @@ export function stripUnverifiableClaims(reply: string): string {
   return out.length >= 25 ? out : ''
 }
 
+/** What a look at both pictures concluded, when one happened.
+ *  Mirrors lib/services/sameGarment.ts without importing it — this module is
+ *  pure text and must stay callable with no vision anywhere in reach. */
+export type Verdict = { sameIndex: number | null; confidence: number; why?: string } | null
+
 /** The sentence to add, or ''. Kept short and free of apology: it states what
- *  happened and what the page below actually is. */
+ *  happened and what the page below actually is.
+ *
+ *  There are three states here and they are genuinely different, which is the
+ *  whole reason the comparison was worth building:
+ *
+ *    a look happened and found it        say so — it is the answer
+ *    a look happened and found nothing   say NO, plainly. This is the answer
+ *                                        too, and the one no amount of word
+ *                                        matching could ever have given
+ *    no look happened                    withhold the claim, as before
+ */
 export function exactMatchNote(
   question: string,
   searchQuery: string,
   shown: Shown[],
+  verdict?: Verdict,
 ): string {
   if (!wantsTheExactPiece(question)) return ''
+
+  // Something actually compared the photographs.
+  if (verdict) {
+    if (verdict.sameIndex != null) {
+      return "I compared these against your photo — the first one is the same piece."
+    }
+    return shown.length === 0
+      ? "I could not find that exact piece in the brands I carry."
+      : "I compared every one of these against your photo and none of them is that piece. These are the closest I carry."
+  }
+
   if (shown.length === 0) {
     return "I could not find that exact piece in the brands I carry."
   }
   if (nothingIsTheRightGarment(searchQuery, shown)) {
     return "I could not find that exact piece — nothing I carry matches it, so what is below is the closest I have rather than the same thing."
   }
-  // Right kind of garment, but sameness is not something this can verify.
+  // Right kind of garment, but sameness is not something text can verify.
   return "I cannot promise any of these is the exact piece — these are the closest I carry."
 }

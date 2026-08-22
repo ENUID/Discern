@@ -9,7 +9,8 @@ import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
 import { outfitPlan, composeOutfit, composeOutfits, composeOutfitsWithProfiles } from '@/lib/fashion/outfitKnowledge'
 import { suggestQuery } from '@/lib/fashion/suggestQuery'
-import { exactMatchNote, stripUnverifiableClaims } from '@/lib/fashion/exactMatch'
+import { exactMatchNote, stripUnverifiableClaims, wantsTheExactPiece } from '@/lib/fashion/exactMatch'
+import { findSameGarment, sameGarmentEnabled, type SameGarmentVerdict } from '@/lib/services/sameGarment'
 import { profilesFor } from '@/lib/services/enrichProduct'
 import { worksWith } from '@/lib/fashion/garmentProfile'
 import { describeGarment } from '@/lib/services/describeGarment'
@@ -22,6 +23,12 @@ import { anyApi } from 'convex/server'
 import { api } from '@/convex/_generated/api'
 
 export const maxDuration = 60
+
+/** A product's photograph, wherever the catalogue put it. The same fallback
+ *  chain the interface uses, so the picture the model compares is the picture
+ *  the shopper is looking at. */
+const imageOf = (p: any): string =>
+  p?.media?.[0]?.url || p?.image_url || p?.image || p?.images?.[0] || ''
 
 // ── Usage visibility ─────────────────────────────────────────────────────────
 // This app runs entirely on free-tier AI quotas shared across every request —
@@ -2844,14 +2851,53 @@ Use concrete garment, colour, and material words only, never a brand or product 
     // a provider chain; this is the part that does not depend on the model
     // remembering. It only ever withholds the claim or contradicts it — it
     // never asserts a match, because that is the half no text can settle.
-    const exactNote = exactMatchNote(question, searchQuery || question, foundProducts ?? [])
+    // LOOK AT THE CANDIDATES, rather than only at the photograph.
+    //
+    // Everything upstream is one-way: read the picture, write words, search
+    // the words, show what comes back. The model never sees the results, so
+    // "find me this exact one" could only ever be answered by hope. This is
+    // the step that closes the loop — the shopper's photograph and the top
+    // candidates in front of the model together, one question, a verdict that
+    // can be no.
+    //
+    // Only when a photograph was actually held up, only when the shopper asked
+    // for THIS piece rather than something like it, and only with enough of the
+    // budget left to pay for a vision call. Otherwise it is a cost with no
+    // question behind it.
+    let sameVerdict: SameGarmentVerdict | null = null
+    if (images[0] && wantsTheExactPiece(question) && foundProducts && foundProducts.length > 0
+        && sameGarmentEnabled() && requestDeadline - Date.now() > 14_000) {
+      const candidates = foundProducts.slice(0, 6)
+      send('curate', 'Comparing against your photo', `vision.same(${candidates.length} candidates)`)
+      sameVerdict = await withDeadline(
+        findSameGarment(images[0], candidates.map(imageOf).filter(Boolean)),
+        requestDeadline - 2_000, null,
+      )
+      if (sameVerdict) {
+        console.log(`[stylist] same-garment: same=${sameVerdict.sameIndex} conf=${sameVerdict.confidence} — ${sameVerdict.why}`)
+      }
+      // A confirmed match leads the page. It is the answer to the question
+      // that was asked; it must not sit fourth because a keyword ranked
+      // something else higher.
+      if (sameVerdict?.sameIndex != null) {
+        const hit = candidates[sameVerdict.sameIndex]
+        if (hit) foundProducts = [hit, ...foundProducts.filter((p: any) => p?.id !== hit?.id)]
+      }
+    }
+
+    const exactNote = exactMatchNote(
+      question, searchQuery || question, foundProducts ?? [], sameVerdict,
+    )
     if (exactNote && !reply2.includes(exactNote)) {
       // Take the claim out before adding the truth. Appending alone produced a
       // reply that argued with itself in consecutive sentences — "Here it is …
       // This is the exact style you're looking for. I cannot promise any of
       // these is the exact piece." The first half has to go, not just be
       // followed by a correction.
-      const withoutClaim = stripUnverifiableClaims(reply2)
+      //
+      // A CONFIRMED match is the one case where the model's own words are
+      // allowed to stand: something did look at both pictures and agree.
+      const withoutClaim = sameVerdict?.sameIndex != null ? reply2 : stripUnverifiableClaims(reply2)
       reply2 = `${withoutClaim ? `${withoutClaim} ` : ''}${exactNote}`.trim()
     }
 

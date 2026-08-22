@@ -1,42 +1,44 @@
 /**
- * Is one of these the garment in the photograph?
+ * Which of these IS the thing in the photograph?
  *
- * WHY THIS EXISTS, and what it is a substitute for.
+ * Everything else in this codebase that touches a shopper's photo does the
+ * same one-way thing: look at the picture, write words, search the words. The
+ * model never sees what came back. So "find me this exact one, not similar"
+ * was answered by describing a blue denim clog as "men leather sandals" and
+ * presenting eight leather sandals as the exact pair — and nothing anywhere
+ * was in a position to notice, because nothing ever compared the shopper's
+ * photograph with a product photograph.
  *
- * The accurate visual search everyone has used — Google Lens, Pinterest Lens —
- * works by EMBEDDING: every catalogue image is passed through a vision model
- * once and stored as a vector, and "find this" becomes a nearest-neighbour
- * lookup in that space. It matches shape, texture, pattern and colour at the
- * same time, in milliseconds, over millions of items. That is a different
- * technique from anything else in this codebase and it needs an index we do
- * not have.
+ * This does. One call, the shopper's picture and the candidates side by side,
+ * one question: which of these is the same object, if any?
  *
- * What we have instead is text out of vision: a model looks at the shopper's
- * photograph, writes "cream embroidered short-sleeve shirt", and we search
- * those words — which returns any cream shirt. A shopper who screenshotted a
- * piece from THIS app, uploaded it, and asked for that piece got a different
- * shirt back. The words were right and far too coarse.
+ * WHAT IT IS NOT. It is not the way a visual search engine works. Lens and
+ * Pinterest embed every catalogue image once into a vector index and answer
+ * "find this" as a nearest-neighbour lookup over millions of items in
+ * milliseconds. That finds pieces no text query would ever have retrieved.
+ * This cannot: it only ever sees the handful of candidates the WORD search
+ * already found, so if the piece is not in that shortlist nothing here can
+ * conjure it. It is the verification step, not the retrieval step.
  *
- * So this closes the loop the only other way available: instead of describing
- * the photograph and hoping, it puts the photograph and the candidates in
- * front of the model TOGETHER and asks which is the same garment. One call,
- * one comparison, an answer or an honest none.
- *
- * It is not as good as an embedding index. It is bounded to whatever retrieval
- * already found — if the piece is not in the shortlist this cannot conjure it —
- * and it costs a model call per search with an image. It is, however, the
- * difference between "a cream shirt" and "that cream shirt".
+ * What it is worth is the difference between "a denim sandal" and "THAT denim
+ * sandal" — and, just as much, the ability to say no. An honest "none of these
+ * is it" is a real answer to "find me the exact one". Eight near-misses under
+ * a promise is not.
  */
-import { groqVisionChat, type VisionMessage } from '@/lib/groq'
+import { wardrobeVisionChat } from '@/lib/groq'
 
-const TIMEOUT_MS = Number(process.env.SAME_GARMENT_TIMEOUT_MS ?? 6000)
+const TIMEOUT_MS = Number(process.env.SAME_GARMENT_TIMEOUT_MS ?? 12_000)
+/** Six plus the shopper's own is seven images in one prompt. Past that the
+ *  call slows more than the extra coverage is worth, and the model's attention
+ *  measurably thins across the later ones. */
 const MAX_CANDIDATES = 6
 
-function enabled(): boolean {
+export function sameGarmentEnabled(): boolean {
   return (process.env.SAME_GARMENT_VISION ?? 'on').toLowerCase() === 'on'
 }
 
-/** Big enough to read a pattern and a collar, small enough to send seven of. */
+/** Big enough to read a buckle, a stitch line and a logo; small enough to send
+ *  seven of. Shopify serves any width from the same URL. */
 function thumb(src: string, px = 384): string {
   try {
     const u = new URL(src.startsWith('//') ? `https:${src}` : src)
@@ -45,73 +47,98 @@ function thumb(src: string, px = 384): string {
       u.searchParams.delete('height')
     }
     return u.toString()
-  } catch { return src }
+  } catch {
+    return src
+  }
 }
 
 const SYSTEM =
-  'You compare garments in photographs. You are precise about sameness and you only ever output JSON.'
+  'You compare garments in photographs and you are strict about sameness. You reply with JSON and nothing else.'
 
 function prompt(n: number): string {
   return (
-    `Photograph 0 is a garment a shopper is looking for. Photographs 1 to ${n} are products from a shop.\n` +
-    `Which of 1 to ${n}, if any, is THE SAME GARMENT as photograph 0?\n\n` +
-    `The same garment means the same piece of clothing, allowing for a different ` +
-    `photograph of it: a different angle, different lighting, on a body instead of ` +
-    `flat, a screenshot rather than the original. Judge the garment itself — its cut, ` +
-    `its pattern and where the pattern sits, its collar and closure, its stitching and ` +
-    `trim, any lettering or logo on it, its colour and its cloth.\n\n` +
-    `Two garments of the same colour and type are NOT the same garment. A cream shirt ` +
-    `is not a match for another cream shirt unless the details agree.\n\n` +
-    `Return ONLY this JSON:\n` +
-    `{"same": <index 1-${n}, or 0 if none of them is the same garment>, ` +
-    `"confidence": <0-100>, "closest": <index 1-${n} that most resembles it>}\n` +
-    `Answer 0 for "same" unless you are genuinely confident. A wrong match is worse ` +
-    `than admitting none.`
+    `Image 1 is a garment a shopper is trying to find. Images 2 to ${n + 1} are ` +
+    `products from a shop, in order.\n\n` +
+    `Which of the shop products, if any, is THE SAME GARMENT as image 1?\n\n` +
+    `The same garment means the same product, allowing for a different ` +
+    `photograph of it: another angle, other lighting, on a foot or a body ` +
+    `instead of held or flat, a screenshot instead of the original. Judge the ` +
+    `object itself — its shape and construction, its material, its colour, ` +
+    `where any pattern sits, its fastenings and trim, its sole or its collar, ` +
+    `and any lettering or logo on it.\n\n` +
+    `Two products of the same type and colour are NOT the same garment. A blue ` +
+    `denim sandal is not a match for another blue denim sandal unless the ` +
+    `details actually agree. Answer 0 unless you are genuinely confident: a ` +
+    `wrong match is worse than admitting there is none, because the shopper ` +
+    `asked for this exact piece and will believe you.\n\n` +
+    `Reply with ONLY this JSON:\n` +
+    `{"same": <1-${n} for the matching shop product, or 0 if none of them is>, ` +
+    `"confidence": <0-100>, "closest": <1-${n}>, "why": "<up to 12 words>"}`
   )
 }
 
-export type SameGarment = { same: number; confidence: number; closest: number }
+export type SameGarmentVerdict = {
+  /** Index into the candidates array of the product that IS the photographed
+   *  piece, or null for an honest none. */
+  sameIndex: number | null
+  /** The nearest thing, whether or not it is a match. A soft ranking signal. */
+  closestIndex: number | null
+  confidence: number
+  /** The model's own short reason, for the reply and the logs. */
+  why: string
+}
 
-/** Index (into `candidateImages`) of the piece that IS the photographed garment,
- *  or null. `closest` is returned separately as a soft signal for ranking. */
+const NONE: SameGarmentVerdict = { sameIndex: null, closestIndex: null, confidence: 0, why: '' }
+
+/** Below this a "yes" is not worth acting on. Set high on purpose: this exists
+ *  to answer "is this the exact one", and a hedged yes to that question is a
+ *  no dressed up. */
+const CONFIDENT = 70
+
+/**
+ * Ask the model to pick the match. Never throws and never blocks a search:
+ * every failure — no key, no quota, a timeout, unparseable JSON — comes back
+ * as an honest "no verdict", which the caller treats exactly like not having
+ * asked.
+ */
 export async function findSameGarment(
-  wanted: string,
+  wantedImage: string,
   candidateImages: string[],
-): Promise<{ sameIndex: number | null; closestIndex: number | null; confidence: number }> {
-  const none = { sameIndex: null, closestIndex: null, confidence: 0 }
-  if (!enabled() || !wanted || candidateImages.length === 0) return none
-
+): Promise<SameGarmentVerdict> {
+  if (!sameGarmentEnabled() || !wantedImage) return NONE
   const cands = candidateImages.filter(Boolean).slice(0, MAX_CANDIDATES)
-  if (cands.length === 0) return none
-
-  const parts: VisionMessage['content'] = [
-    { type: 'text', text: prompt(cands.length) },
-    { type: 'image_url', image_url: { url: wanted, detail: 'high' as const } },
-    ...cands.map(u => ({ type: 'image_url' as const, image_url: { url: thumb(u), detail: 'high' as const } })),
-  ]
+  if (cands.length === 0) return NONE
 
   try {
-    const msg = await Promise.race([
-      groqVisionChat([{ role: 'user', content: parts }], SYSTEM, { max_tokens: 120, temperature: 0 }),
+    const raw = await Promise.race([
+      wardrobeVisionChat(
+        SYSTEM,
+        prompt(cands.length),
+        [wantedImage, ...cands.map(u => thumb(u))],
+        { max_tokens: 150, temperature: 0 },
+      ),
       new Promise<null>(r => setTimeout(() => r(null), TIMEOUT_MS)),
     ])
-    if (!msg) return none
-    const raw = String((msg as { content?: string })?.content ?? '')
-    const m = raw.match(/\{[\s\S]*\}/)
-    if (!m) return none
-    const parsed = JSON.parse(m[0]) as Partial<SameGarment>
+    if (!raw) return NONE
+
+    const m = String(raw).match(/\{[\s\S]*\}/)
+    if (!m) return NONE
+    const parsed = JSON.parse(m[0]) as Partial<{ same: number; confidence: number; closest: number; why: string }>
+
+    const confidence = Math.max(0, Math.min(100, Number(parsed.confidence) || 0))
     const same = Number(parsed.same)
     const closest = Number(parsed.closest)
-    const confidence = Math.max(0, Math.min(100, Number(parsed.confidence) || 0))
+    // The model answers in 1-based image numbers among the CANDIDATES.
+    const sameOk = Number.isInteger(same) && same >= 1 && same <= cands.length && confidence >= CONFIDENT
+    const closestOk = Number.isInteger(closest) && closest >= 1 && closest <= cands.length
+
     return {
-      // The model answers in 1-based photograph numbers; 0 means "none of them".
-      sameIndex: Number.isInteger(same) && same >= 1 && same <= cands.length && confidence >= 55
-        ? same - 1 : null,
-      closestIndex: Number.isInteger(closest) && closest >= 1 && closest <= cands.length
-        ? closest - 1 : null,
+      sameIndex: sameOk ? same - 1 : null,
+      closestIndex: closestOk ? closest - 1 : null,
       confidence,
+      why: typeof parsed.why === 'string' ? parsed.why.slice(0, 90) : '',
     }
   } catch {
-    return none
+    return NONE
   }
 }
