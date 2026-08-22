@@ -2885,9 +2885,18 @@ Use concrete garment, colour, and material words only, never a brand or product 
       }
     }
 
-    const exactNote = exactMatchNote(
-      question, searchQuery || question, foundProducts ?? [], sameVerdict,
-    )
+    // Only speak about the catalogue if the catalogue was actually consulted.
+    //
+    // On a run where vision failed outright the model said "I can't see the
+    // photo on my end right now" — true, and the right thing to say — and this
+    // added "I could not find that exact piece in the brands I carry"
+    // underneath it. Nothing had been searched. Reporting a search that never
+    // ran is the same class of dishonesty as claiming a match that was never
+    // checked, and this note exists to remove that, not to add another kind.
+    const didLook = !!searchQuery || (foundProducts?.length ?? 0) > 0 || !!foundProductGroups?.length
+    const exactNote = didLook
+      ? exactMatchNote(question, searchQuery || question, foundProducts ?? [], sameVerdict)
+      : ''
     if (exactNote && !reply2.includes(exactNote)) {
       // Take the claim out before adding the truth. Appending alone produced a
       // reply that argued with itself in consecutive sentences — "Here it is …
