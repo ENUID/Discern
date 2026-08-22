@@ -9,6 +9,7 @@ import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
 import { outfitPlan, composeOutfit, composeOutfits, composeOutfitsWithProfiles } from '@/lib/fashion/outfitKnowledge'
 import { suggestQuery } from '@/lib/fashion/suggestQuery'
+import { exactMatchNote } from '@/lib/fashion/exactMatch'
 import { profilesFor } from '@/lib/services/enrichProduct'
 import { worksWith } from '@/lib/fashion/garmentProfile'
 import { describeGarment } from '@/lib/services/describeGarment'
@@ -1030,6 +1031,7 @@ FORMATTING: no numbered lists, bullets, bold headers, or "1. 2. 3." / "First… 
 • KEEP THEIR EXACT GARMENT WORD, never substitute a look-alike. A t-shirt / tee is NOT a button-up shirt, a polo is not a t-shirt, a hoodie is not a sweater, shorts are not trousers. If they say "t-shirts", the query says "t-shirt", never "shirt" (dropping the "t" is the exact reported bug). If they EXCLUDE something ("t-shirts NOT shirts", "no button-ups"), search ONLY what they asked for and never add the excluded garment as a second category.
 • OCCASIONS THE CATALOG WON'T NAME, TRANSLATE, NEVER PASS THROUGH: for a cultural, religious, or personal occasion no listing would literally mention (Muharram, Ashura, Eid, Ramadan, Diwali, Navratri, Onam, Lunar New Year, Hanukkah, a funeral, a temple/church/mosque visit, a baby shower, graduation), reason first, what it is, what's respectfully worn there in their culture and region, expected colours and modesty, and the season's local climate, then put ONLY the translated concrete attributes in the query, never the occasion word. "…for Muharram" → a month of mourning, subdued and modest, plain black, no shine, hot South-Asian season so breathable → [SEARCH: men plain black cotton shirt and black linen trousers]. Show that read in ONE natural line ("For Muharram you want subdued and breathable, plain black cotton, nothing flashy"), respectful and matter-of-fact, never lecturing them about their own culture.
 • BRANDS: if they name a brand, KEEP it in the query, the search auto-restricts to it; if they name two, pick the most relevant. PHOTOS: a photo of a product to find or buy always gets [SEARCH:] with every visual detail, garment + exact colour + material + cut + a key identifying detail (and a visible brand or logo), e.g. tan suede loafers → [SEARCH: tan suede penny loafer], a black ribbed knit polo → [SEARCH: black ribbed cotton polo shirt].
+• READ THE PHOTO, DO NOT GUESS THE CATEGORY. Name the material you can actually SEE — woven blue denim is denim, not leather; canvas is not suede; cork is not rubber. Name the exact silhouette, because these are different products and different searches: a clog and a mule are closed at the toe and open at the heel, a slide is one strap over the foot, a sandal has straps around it, an espadrille has a rope sole. A denim clog with a buckle is "denim clog", never "leather sandals". A four-word query with no colour and the wrong fabric will return the wrong shelf however good the catalogue is, and that is a failure you caused, not one the search did.
 • One search per reply; none when discussing pieces already shown; never [SEARCH:] and [COMPARE:] together; omit [SEARCH:] entirely if no new products are needed.
 • MULTIPLE CATEGORIES, not one coordinated look: when they name two or more distinct categories without asking for a single cohesive outfit ("shirts and shorts for the beach", "a couple tops and some trousers"), use ONE [SEARCH:] naming every category (the system splits it into a curated, separately-ranked strip per category) and mention them in your lead-in. Every search already returns a small best-of-the-best set, so never make them narrow down before you search.
 Examples: "something for a summer wedding" → "Linen is the move, breathable and elegant." [SEARCH: men linen summer trousers]. "anything from Our Legacy?" → "Their box-fit shirting is a quiet flex." [SEARCH: Our Legacy shirt].
@@ -1127,7 +1129,8 @@ Lead with a decision, not a list: one clear best call with the why and the trade
 • No bullet points. No headers. Natural flowing sentences only.
 • One **bolded** key term per reply maximum.
 • When recommending a product from the pinned items, use [PRODUCT:N] (0-indexed).
-• SHOP INTENT OVERRIDES STYLING. If the shopper wants to FIND, BUY, or see SIMILAR / other options / other brands / a different type or colour of the item shown — anything like "find similar", "show me similar", "something like this", "where can I get this", "find this", "more like this", "other brands", "cheaper", "other options" — do NOT just give styling advice. Identify the piece precisely and end with [SEARCH: garment type + colour + material + key details]. Do NOT put the shown brand's name in the query, so the search returns the exact piece or close matches from OTHER brands. Use [OUTFIT: ...] instead when they want several pieces or a different type per category. Give pure styling advice (no token) ONLY when they ask how to wear it or what goes with it.
+• SHOP INTENT OVERRIDES STYLING. If the shopper wants to FIND, BUY, or see SIMILAR / other options / other brands / a different type or colour of the item shown — anything like "find similar", "show me similar", "something like this", "where can I get this", "find this", "more like this", "other brands", "cheaper", "other options" — do NOT just give styling advice. Identify the piece precisely and end with [SEARCH: garment type + colour + material + key details]. THE BRAND DEPENDS ON WHICH THEY ASKED FOR, and these are opposites: for THIS EXACT PIECE ("find this exact one", "the same one", "not similar", "this exact pair") a brand name printed, embroidered or on a label in the photo is the single strongest identifier there is — put it FIRST in the query. For SIMILAR or OTHER BRANDS, leave the shown brand OUT so the search returns other labels. Use [OUTFIT: ...] instead when they want several pieces or a different type per category. Give pure styling advice (no token) ONLY when they ask how to wear it or what goes with it.
+• ASKED FOR THE EXACT PIECE, DO NOT CLAIM YOU FOUND IT. You write the reply before the search runs, so you cannot know what came back. Say what you are looking for, never that these ARE it — "let me pull up that exact pair" promises something you have not seen. If the piece is from a label we do not carry, the honest line is that the closest matches are below.
 • If ONE new item would complete the look, end with [SEARCH: precise query].
 
 ━━━ BUILDING A COMPLETE OUTFIT FROM WHAT THEY OWN ━━━
@@ -2831,6 +2834,21 @@ Use concrete garment, colour, and material words only, never a brand or product 
     // have to invent, so the reply now carries the query it should have been —
     // built from the garments the model just named, the occasion table, and
     // their own words, with no model call and no extra wait.
+    // "Find me this EXACT one, not similar." Said out loud, and answered with
+    // eight leather sandals under the sentence "let me pull up that exact pair
+    // right here" — for a photograph of denim clogs.
+    //
+    // Nothing in this codebase compares the shopper's photograph against a
+    // product photograph, so the app cannot know it found the exact piece. The
+    // prompt now says not to claim it, and a prompt is not a guarantee across
+    // a provider chain; this is the part that does not depend on the model
+    // remembering. It only ever withholds the claim or contradicts it — it
+    // never asserts a match, because that is the half no text can settle.
+    const exactNote = exactMatchNote(question, searchQuery || question, foundProducts ?? [])
+    if (exactNote && !reply2.includes(exactNote)) {
+      reply2 = `${reply2 ? `${reply2} ` : ''}${exactNote}`.trim()
+    }
+
     const nothingUnderIt =
       (!foundProducts || foundProducts.length === 0) &&
       (!foundProductGroups || foundProductGroups.length === 0) &&
