@@ -853,7 +853,34 @@ async function stylistChat(
     // on a provider early only when giving up buys another real attempt.
     const rungsLeft = chain.length - i
     const budgetLeft = LADDER_MS - (Date.now() - ladderStart)
-    const cap = Math.max(ATTEMPT_MS, Math.floor(budgetLeft / rungsLeft))
+    // An even split starves the rung most likely to answer.
+    //
+    // With four pools healthy an even share is 34/4 = 8.5s, floored to 11s, so
+    // every rung was cut off at eleven seconds — and eleven seconds is not
+    // enough to generate twelve hundred tokens against a five-thousand-token
+    // prompt on any of these providers. Four attempts each killed mid-sentence,
+    // the deadline reached, and the shopper told "I could not think this one
+    // through" by a chain in which nothing had gone wrong except the clock.
+    // Four requests out of four for a summer wedding, with every provider
+    // reporting ok, and modelTrace saying exactly this: the whole chain ran
+    // past the reply deadline.
+    //
+    // The rungs are not equal. The first is the one chosen as best for this
+    // request, and a first-rung success ends the request outright — so it gets
+    // the share it actually needs and the rest divide what is left. A fallback
+    // is worth having; it is not worth starving the primary to keep three of
+    // them in reserve.
+    // The last rung is checked FIRST, and it beats the first-rung rule when a
+    // chain is one long. Nothing is being held in reserve for a fallback that
+    // does not exist, so a lone provider gets everything that is left — which
+    // is the case whenever three of the four pools are out of quota, and the
+    // one this ordering existed to fix before.
+    const FIRST_SHARE = 0.55
+    const cap = rungsLeft === 1
+      ? Math.max(ATTEMPT_MS, budgetLeft)
+      : i === 0
+        ? Math.max(ATTEMPT_MS, Math.floor(budgetLeft * FIRST_SHARE))
+        : Math.max(ATTEMPT_MS, Math.floor(budgetLeft / rungsLeft))
     try {
       const result = await Promise.race([
         a.run(),

@@ -18,16 +18,26 @@
 const ATTEMPT_MS = 11_000
 const LADDER_MS = 34_000
 
+/** The share the FIRST rung gets. The rungs are not equal: the first is the
+ *  one picked as best for this request and a success there ends it outright. */
+const FIRST_SHARE = 0.55
+
 /** The cap this rung gets, given how much of the ladder is already gone. */
-const capFor = (rungsLeft, elapsed) =>
-  Math.max(ATTEMPT_MS, Math.floor((LADDER_MS - elapsed) / rungsLeft))
+const capFor = (rungsLeft, elapsed, isFirst) => {
+  const left = LADDER_MS - elapsed
+  // Last rung first: nothing is held back for a fallback that does not exist.
+  if (rungsLeft === 1) return Math.max(ATTEMPT_MS, left)
+  return isFirst
+    ? Math.max(ATTEMPT_MS, Math.floor(left * FIRST_SHARE))
+    : Math.max(ATTEMPT_MS, Math.floor(left / rungsLeft))
+}
 
 /** Every rung times out; returns the caps handed out and the total spent. */
 function allTimeOut(chainLength) {
   const caps = []
   let elapsed = 0
   for (let i = 0; i < chainLength; i++) {
-    const cap = capFor(chainLength - i, elapsed)
+    const cap = capFor(chainLength - i, elapsed, i === 0)
     caps.push(cap)
     elapsed += cap
   }
@@ -48,9 +58,16 @@ for (const n of [1, 2, 3, 4, 5]) {
 
 console.log('\n── what has to hold ' + '─'.repeat(53))
 
-// 1. A long chain is unchanged: still the flat floor, every rung.
+// 1. THE REPORT. Four healthy pools, an even share of 8.5s floored to 11s, and
+//    eleven seconds cannot generate 1200 tokens against a 5000-token prompt on
+//    any of these providers — so all four were cut off mid-sentence and the
+//    shopper got "I could not think this one through" from a chain in which
+//    nothing was broken except the clock.
 const four = allTimeOut(4)
-check('four rungs still get the flat 11s floor each', four.caps.every(c => c === ATTEMPT_MS), `[${four.caps.join(', ')}]`)
+check('the first of four rungs gets a real chance, not a quarter share',
+  four.caps[0] >= 17_000, `${(four.caps[0] / 1000).toFixed(1)}s`)
+check('and the fallbacks still get the floor', four.caps.slice(1).every(c => c >= ATTEMPT_MS),
+  `[${four.caps.slice(1).map(c => (c / 1000).toFixed(1) + 's').join(', ')}]`)
 
 // 2. A short chain spends the budget rather than a fraction of it.
 const two = allTimeOut(2)
@@ -62,13 +79,18 @@ check('a lone provider gets the whole budget, not 11s', one.caps[0] === LADDER_M
 //    which is deliberate: a rung is always worth 11s even at the very end.
 for (const n of [1, 2, 3, 4, 5, 8]) {
   const { total } = allTimeOut(n)
-  const ceiling = Math.max(LADDER_MS, ATTEMPT_MS * n)
+  // The floor guarantees each rung ATTEMPT_MS however little is left, and the
+  // first takes its larger share on top — so the honest ceiling is the budget
+  // or that sum, whichever is greater. The caller's own chatDeadline is what
+  // actually stops the clock; this only asserts the arithmetic is bounded.
+  const first = Math.max(ATTEMPT_MS, Math.floor(LADDER_MS * FIRST_SHARE))
+  const ceiling = Math.max(LADDER_MS, n === 1 ? LADDER_MS : first + ATTEMPT_MS * (n - 1))
   check(`${n} rungs cannot run away`, total <= ceiling, `${(total / 1000).toFixed(1)}s ≤ ${(ceiling / 1000).toFixed(1)}s`)
 }
 
 // 4. A fast early rung leaves MORE for the one behind it, never less.
-const afterFast = capFor(1, 3_000)
-const afterSlow = capFor(1, 25_000)
+const afterFast = capFor(1, 3_000, false)
+const afterSlow = capFor(1, 25_000, false)
 check('a fast first rung leaves the second more time', afterFast > afterSlow, `${afterFast}ms vs ${afterSlow}ms`)
 check('a slow first rung still leaves the floor', afterSlow >= ATTEMPT_MS, `${afterSlow}ms`)
 
