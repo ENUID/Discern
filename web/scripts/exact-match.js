@@ -24,7 +24,7 @@
  * the claim — it never asserts a match, because no amount of text comparison
  * can settle sameness. A denim clog and a leather clog are both clogs.
  */
-const { exactMatchNote, wantsTheExactPiece, nothingIsTheRightGarment } =
+const { exactMatchNote, wantsTheExactPiece, nothingIsTheRightGarment, stripUnverifiableClaims } =
   require('/home/user/From/web/.vt/em.cjs')
 
 const P = (title, tags) => ({ title, tags: tags || [], description: '' })
@@ -109,6 +109,25 @@ check(/could not find that exact piece/i.test(exactMatchNote('this exact one', '
 // A query naming no garment cannot be judged — silence beats a guess.
 check(!/could not find that exact piece —/i.test(exactMatchNote('this exact one', 'denimverse', LEATHER_SANDALS)),
   'no garment in the query: does not accuse the page')
+
+console.log('\n── the claim comes out, not just a correction after it ' + '─'.repeat(18))
+// Production, after the prompt fix: the query was right and the reply still
+// opened by announcing a black triple-strap slide as the photographed denim
+// clog. Appending the honest note left the two sitting side by side.
+const REAL = "Here it is: Monkstory Atelier 1920 Triple Strap Slide Sandals, Midnight Black [PRODUCT:0], 1490 INR. This is the exact style you're looking for: the classic 1920s-inspired triple-strap design in deep black, just as you described."
+const stripped = stripUnverifiableClaims(REAL)
+check(!/here it is/i.test(stripped), 'drops "Here it is"', JSON.stringify(stripped))
+check(!/this is the exact style/i.test(stripped), 'drops "this is the exact style"')
+check(!/just as you described/i.test(stripped), 'drops "just as you described"')
+
+// Ordinary styling prose must survive untouched — this must not become a
+// blunt instrument that eats every reply it is pointed at.
+const KEEP = "Denim clogs sit between a sandal and a shoe, so they carry a linen trouser better than a slide does. Look for a cork footbed if you are on your feet."
+check(stripUnverifiableClaims(KEEP) === KEEP.replace(/\s+/g, ' ').trim(), 'leaves real styling prose alone')
+
+// All-claim reply collapses to nothing, so the note becomes the whole answer
+// rather than a dangling fragment.
+check(stripUnverifiableClaims('Here it is! Found it.') === '', 'an all-claim reply collapses to nothing')
 
 console.log('\n' + (bad === 0
   ? 'it never claims a match it cannot verify, and never cries wolf'

@@ -68,6 +68,44 @@ export function nothingIsTheRightGarment(searchQuery: string, shown: Shown[]): b
   return !shown.some(p => keys.some(k => productMatchesGarmentKey(p, k)))
 }
 
+/** Sentences in which the model announces it has found the piece.
+ *
+ *  It writes the reply BEFORE the search runs — the route says so in its own
+ *  comments — so any such sentence is a guess dressed as a result. Asked for a
+ *  photographed denim clog, it opened with:
+ *
+ *    "Here it is: Monkstory Atelier 1920 Triple Strap Slide Sandals, Midnight
+ *     Black. This is the exact style you're looking for … just as you
+ *     described."
+ *
+ *  A black triple-strap slide, described as the blue denim clog the shopper
+ *  photographed, in confident detail. Telling the prompt not to do this was
+ *  not enough — the same lesson stripAiDashes and stripSafetyLabels are here
+ *  for — so the claim is removed rather than argued with. Appending an honest
+ *  note under a sentence like that only produces a reply that contradicts
+ *  itself in consecutive breaths. */
+const CLAIM = new RegExp([
+  'here it is', 'here you go', 'found it', 'this is it', 'that\'?s the one',
+  'this is the exact', 'that is the exact', 'the exact (?:one|piece|pair|style|match)',
+  'exactly what you', 'exactly the (?:one|piece|pair)', 'just as you described',
+  'just like (?:the|your) (?:one|photo|picture|image)',
+  'same (?:one|piece|pair) as', 'matches your photo', 'this is the (?:one|piece|pair)',
+  'i found', 'we found', 'pulled up the exact', 'pull(?:ing)? up (?:the|that) exact',
+].join('|'), 'i')
+
+/** The reply with those sentences taken out. Never returns nothing: if every
+ *  sentence was a claim, the caller's honest note becomes the whole reply. */
+export function stripUnverifiableClaims(reply: string): string {
+  if (!reply) return ''
+  // Split on sentence ends, keeping the punctuation with its sentence.
+  const sentences = reply.match(/[^.!?]+[.!?]*/g) ?? [reply]
+  const kept = sentences.filter(s => !CLAIM.test(s))
+  const out = kept.join('').replace(/\s+/g, ' ').trim()
+  // A leftover fragment that only made sense after the claim it followed
+  // ("It's 1490 INR.") is worse than nothing.
+  return out.length >= 25 ? out : ''
+}
+
 /** The sentence to add, or ''. Kept short and free of apology: it states what
  *  happened and what the page below actually is. */
 export function exactMatchNote(

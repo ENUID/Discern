@@ -1129,7 +1129,7 @@ Lead with a decision, not a list: one clear best call with the why and the trade
 • No bullet points. No headers. Natural flowing sentences only.
 • One **bolded** key term per reply maximum.
 • When recommending a product from the pinned items, use [PRODUCT:N] (0-indexed).
-• SHOP INTENT OVERRIDES STYLING. If the shopper wants to FIND, BUY, or see SIMILAR / other options / other brands / a different type or colour of the item shown — anything like "find similar", "show me similar", "something like this", "where can I get this", "find this", "more like this", "other brands", "cheaper", "other options" — do NOT just give styling advice. Identify the piece precisely and end with [SEARCH: garment type + colour + material + key details]. THE BRAND DEPENDS ON WHICH THEY ASKED FOR, and these are opposites: for THIS EXACT PIECE ("find this exact one", "the same one", "not similar", "this exact pair") a brand name printed, embroidered or on a label in the photo is the single strongest identifier there is — put it FIRST in the query. For SIMILAR or OTHER BRANDS, leave the shown brand OUT so the search returns other labels. Use [OUTFIT: ...] instead when they want several pieces or a different type per category. Give pure styling advice (no token) ONLY when they ask how to wear it or what goes with it.
+• SHOP INTENT OVERRIDES STYLING. If the shopper wants to FIND, BUY, or see SIMILAR / other options / other brands / a different type or colour of the item shown — anything like "find similar", "show me similar", "something like this", "where can I get this", "find this", "more like this", "other brands", "cheaper", "other options" — do NOT just give styling advice. Identify the piece precisely and end with [SEARCH: garment type + colour + material + key details]. THE BRAND DEPENDS ON WHICH THEY ASKED FOR, and these are opposites: for THIS EXACT PIECE ("find this exact one", "the same one", "not similar", "this exact pair") a brand name printed, embroidered or on a label in the photo is the single strongest identifier there is — put it FIRST in the query. ONLY a name you can actually READ in the photograph: if no lettering is legible, leave the brand out entirely. Never supply a plausible label from memory because the style looks like theirs — a photo tagged DENIMVERSE searched as "Woodland" is worse than no brand at all, since it sends the search confidently to the wrong shelf. For SIMILAR or OTHER BRANDS, leave the shown brand OUT so the search returns other labels. Use [OUTFIT: ...] instead when they want several pieces or a different type per category. Give pure styling advice (no token) ONLY when they ask how to wear it or what goes with it.
 • ASKED FOR THE EXACT PIECE, DO NOT CLAIM YOU FOUND IT. You write the reply before the search runs, so you cannot know what came back. Say what you are looking for, never that these ARE it — "let me pull up that exact pair" promises something you have not seen. If the piece is from a label we do not carry, the honest line is that the closest matches are below.
 • If ONE new item would complete the look, end with [SEARCH: precise query].
 
@@ -2846,7 +2846,13 @@ Use concrete garment, colour, and material words only, never a brand or product 
     // never asserts a match, because that is the half no text can settle.
     const exactNote = exactMatchNote(question, searchQuery || question, foundProducts ?? [])
     if (exactNote && !reply2.includes(exactNote)) {
-      reply2 = `${reply2 ? `${reply2} ` : ''}${exactNote}`.trim()
+      // Take the claim out before adding the truth. Appending alone produced a
+      // reply that argued with itself in consecutive sentences — "Here it is …
+      // This is the exact style you're looking for. I cannot promise any of
+      // these is the exact piece." The first half has to go, not just be
+      // followed by a correction.
+      const withoutClaim = stripUnverifiableClaims(reply2)
+      reply2 = `${withoutClaim ? `${withoutClaim} ` : ''}${exactNote}`.trim()
     }
 
     const nothingUnderIt =
