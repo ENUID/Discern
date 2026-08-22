@@ -36,7 +36,15 @@ import { useSyncedShelf } from './useSyncedShelf'
 import { productSlotCategories, type SlotCategory } from '@/lib/queryParser'
 
 // ── Types ────────────────────────────────────────────────────────────────────
-export type V2Color = { name: string; code?: string; image: string; available?: boolean }
+export type V2Color = {
+  name: string; code?: string; image: string; available?: boolean
+  /** Every shot the brand publishes for THIS colourway, when the variants
+   *  carry them. One image per colour meant a picked colour could only ever
+   *  show a single photograph; the rest of the page had to fall back to the
+   *  default colour's gallery, which is how a black sandal ended up above five
+   *  blue ones. */
+  images?: string[]
+}
 export type V2Product = {
   id: string
   /** Short display name, written for a caption under a photograph. */
@@ -342,6 +350,51 @@ function HeroVideo({ src, poster }: { src: string; poster?: string }) {
  *  geometry and drops to a warm paper wash instead of showing the browser's
  *  torn-image glyph. This is what lets the whole composition stand up before
  *  the art has been dropped in. */
+/** The same photograph, at the size it is about to be drawn.
+ *
+ *  Shopify serves any width from one URL, and the catalogue hands us ?width=400
+ *  — a tile size. The product page draws that across the whole screen, so the
+ *  first thing a shopper sees when they open a piece is a 400px thumbnail
+ *  stretched to 1200, which is blurred, and it only sharpens seconds later when
+ *  /api/product-images returns the same shots at 2048. There was never any need
+ *  to wait for that request to get a sharp picture: the URL we already had
+ *  could have asked for one. */
+function atWidth(src: string, px: number): string {
+  if (!src) return src
+  try {
+    const u = new URL(src.startsWith('//') ? `https:${src}` : src)
+    if (u.hostname.includes('cdn.shopify') || u.hostname.includes('shopifycdn') || u.pathname.includes('/cdn/shop/')) {
+      u.searchParams.set('width', String(px))
+      u.searchParams.delete('height')
+    }
+    return u.toString()
+  } catch {
+    return src
+  }
+}
+
+/** A colourway's name as a key, so "True Black", "true black" and "TRUE  BLACK"
+ *  are one colour. The byColor map is built from the store's products.json and
+ *  the swatch name comes from the UCP feed; they are the same word typed twice
+ *  by two different systems, and an exact-match lookup between them silently
+ *  misses. That miss is what put the black sandal first and five blue ones
+ *  under it. */
+const colorKey = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, ' ').trim()
+
+function imagesForColor(
+  byColor: Record<string, string[]> | undefined,
+  name: string | undefined,
+): string[] | undefined {
+  if (!byColor || !name) return undefined
+  const exact = byColor[name]
+  if (exact?.length) return exact
+  const want = colorKey(name)
+  for (const [k, v] of Object.entries(byColor)) {
+    if (colorKey(k) === want && v?.length) return v
+  }
+  return undefined
+}
+
 function Img({ src, alt = '', className, ...rest }: React.ImgHTMLAttributes<HTMLImageElement>) {
   // Track WHICH src failed, not a bare boolean — a boolean cleared in an effect
   // races the browser and lets the torn-image glyph back in.
@@ -1591,24 +1644,43 @@ export default function DiscernV2({
 
   const pdpImages = useMemo(() => {
     if (!product) return []
+    // Every photograph on this page is drawn at full column width, so every one
+    // of them is asked for at that size rather than at the tile size the
+    // catalogue happens to hand over. See atWidth.
+    const wide = (u: string) => atWidth(u, 1600)
+    // Whether this piece even HAS more than one colourway. It decides what a
+    // mixed gallery means: with one colour there is nothing to mix up.
+    const manyColours = (product.colors?.length ?? 0) > 1
+
     // A picked colour narrows the gallery to that colourway — the whole point
-    // of byColor — and only falls back to the swatch's single image.
-    const forColor = pickedColor?.name ? gallery?.byColor?.[pickedColor.name] : undefined
-    if (forColor?.length) return forColor
+    // of byColor. Matched loosely, because the map's keys come from the store
+    // and the swatch's name comes from the UCP feed.
+    const forColor = imagesForColor(gallery?.byColor, pickedColor?.name)
+    if (forColor?.length) return forColor.map(wide)
 
     if (gallery?.images.length) {
-      // No byColor map from this store — plenty publish variants without one.
-      // Choosing a colour then changed nothing on screen, which makes the
-      // picker look broken even though the variant really was selected. The
-      // colourway's own shot leads instead, so the page always answers the tap.
-      const lead = pickedColor?.image
-      if (!lead) return gallery.images
-      const rest = gallery.images.filter(u => u !== lead)
-      return [lead, ...rest]
+      // No usable byColor map from this store — plenty publish variants
+      // without one.
+      if (!pickedColor || !manyColours) return gallery.images.map(wide)
+      // A colour WAS picked, this piece comes in several, and nothing tells us
+      // which shot belongs to which. Leading with the colourway's own image and
+      // keeping the rest is what produced the report: black first, then five
+      // blue ones under it, on a page where black was selected. A gallery that
+      // is mostly the wrong colour is worse than a short one that is right, so
+      // only what we can actually attribute is shown.
+      const own = [pickedColor.image, ...(pickedColor.images ?? [])].filter(Boolean)
+      return own.length ? Array.from(new Set(own)).map(wide) : gallery.images.map(wide)
     }
 
-    if (pickedColor?.image) return [pickedColor.image, ...(product.images ?? []).filter(u => u !== pickedColor.image)]
-    return product.images?.length ? product.images : [product.image]
+    if (pickedColor?.image) {
+      const own = Array.from(new Set([pickedColor.image, ...(pickedColor.images ?? [])])).filter(Boolean)
+      // Same rule before the gallery arrives: mix only when there is nothing to
+      // mix up.
+      return manyColours
+        ? own.map(wide)
+        : [...own, ...(product.images ?? []).filter(u => !own.includes(u))].map(wide)
+    }
+    return (product.images?.length ? product.images : [product.image]).filter(Boolean).map(wide)
   }, [product, pickedColor, gallery])
   const soldOut = pickedColor ? pickedColor.available === false : false
 
@@ -2075,7 +2147,11 @@ export default function DiscernV2({
         )}
         {!colorMode && !sizeMode && (
           <>
-            <Img className="v2-cart-thumb" src={product.image} />
+            {/* The piece as CHOSEN, not as listed. This showed product.image —
+                the default colourway — so picking True Black left a blue
+                sandal sitting in the checkout strip under the words "True
+                Black", which is the one place a wrong picture costs money. */}
+            <Img className="v2-cart-thumb" src={pdpImages[0] ?? product.image} />
             <div className="v2-cart-meta">
               <span className="v2-cart-name">{product.title}</span>
               <span className="v2-cart-price">

@@ -83,9 +83,22 @@ function toColors(p: any) {
     // the button on the product page refusing a sale the brand would have made.
     const inColour = (p?.variants ?? []).filter((vr: any) =>
       (vr?.options ?? []).some((o: any) => String(o?.label ?? '').toLowerCase() === name.toLowerCase()))
+    // EVERY shot across the variants in this colourway, not just the first.
+    // One image per colour is why picking a colour could only change the lead
+    // photograph: there was nothing else known to belong to it, so the rest of
+    // the product page fell back to the default colourway's gallery and showed
+    // a black sandal above five blue ones.
+    const shots: string[] = []
+    for (const vr of inColour) {
+      for (const m of (vr?.media ?? [])) {
+        const u = m?.url
+        if (u && !shots.includes(u)) shots.push(u)
+      }
+    }
     return {
       name,
-      image: inColour.find((v: any) => v?.media?.[0]?.url)?.media?.[0]?.url || img(p),
+      image: shots[0] || img(p),
+      images: shots.length ? shots : undefined,
       // Available if ANY size in this colour is.
       available: inColour.length === 0 || inColour.some((v: any) => v.availability !== false),
     }
