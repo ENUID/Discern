@@ -9,7 +9,7 @@ import { compileIntent, continueIntent, compiledReplyText, parseBudget } from '@
 import { selectKnowledgeModules } from '@/lib/knowledgeModules'
 import { outfitPlan, composeOutfit, composeOutfits, composeOutfitsWithProfiles } from '@/lib/fashion/outfitKnowledge'
 import { suggestQuery } from '@/lib/fashion/suggestQuery'
-import { exactMatchNote } from '@/lib/fashion/exactMatch'
+import { exactMatchNote, stripUnverifiableClaims } from '@/lib/fashion/exactMatch'
 import { profilesFor } from '@/lib/services/enrichProduct'
 import { worksWith } from '@/lib/fashion/garmentProfile'
 import { describeGarment } from '@/lib/services/describeGarment'
