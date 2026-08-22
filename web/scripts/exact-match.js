@@ -129,6 +129,38 @@ check(stripUnverifiableClaims(KEEP) === KEEP.replace(/\s+/g, ' ').trim(), 'leave
 // rather than a dangling fragment.
 check(stripUnverifiableClaims('Here it is! Found it.') === '', 'an all-claim reply collapses to nothing')
 
+console.log('\n── the second production reply ' + '─'.repeat(42))
+// After the brand fix the read was right — "Denimverse men blue denim slide
+// sandals cork sole" — and two NEW faults appeared in the reply. A phrasing
+// the first pass had not seen, and a truncation the note was welded onto:
+const REAL2 = "This pair is the exact sandals you\u2019re looking for. The dark denim gives a classic, rebellious vibe while the cork sole keeps them light and breathable, perfect for"
+const out2 = stripUnverifiableClaims(REAL2)
+check(!/the exact sandals/i.test(out2), 'drops "This pair is the exact sandals"', JSON.stringify(out2))
+// The truncation must be GONE, not punctuated: "…perfect for." is a fragment
+// wearing a full stop, and the shopper still reads a sentence that stops dead.
+check(!/perfect for/i.test(out2), 'drops the sentence the model was cut off mid-way through', JSON.stringify(out2))
+check(out2 === '' || /[.!?]$/.test(out2), 'whatever survives is a finished sentence')
+
+// A complete sentence followed by a truncated one keeps the complete half.
+check(stripUnverifiableClaims('Cork moulds to the foot over a season. The denim upper is')
+  === 'Cork moulds to the foot over a season.', 'keeps the finished sentence before a truncation')
+
+// The same shape, other phrasings — the point of matching structure not wording.
+for (const claim of [
+  'These are the exact pair you wanted.',
+  'That is the exact piece from your photo.',
+  'This one is the exact match.',
+  'It is the exact style you showed me.',
+]) {
+  check(stripUnverifiableClaims(`${claim} Cork soles wear in over a season and mould to the foot.`)
+    === 'Cork soles wear in over a season and mould to the foot.',
+    `drops "${claim}"`)
+}
+
+// And the sentences that merely CONTAIN those words without asserting a match.
+const NOTCLAIM = 'Denim uppers are hard to match exactly across brands, so look at the buckle and the footbed.'
+check(stripUnverifiableClaims(NOTCLAIM) === NOTCLAIM, 'keeps a sentence that only mentions matching')
+
 console.log('\n' + (bad === 0
   ? 'it never claims a match it cannot verify, and never cries wolf'
   : `${bad} FAILED`))

@@ -86,11 +86,19 @@ export function nothingIsTheRightGarment(searchQuery: string, shown: Shown[]): b
  *  itself in consecutive breaths. */
 const CLAIM = new RegExp([
   'here it is', 'here you go', 'found it', 'this is it', 'that\'?s the one',
-  'this is the exact', 'that is the exact', 'the exact (?:one|piece|pair|style|match)',
   'exactly what you', 'exactly the (?:one|piece|pair)', 'just as you described',
   'just like (?:the|your) (?:one|photo|picture|image)',
-  'same (?:one|piece|pair) as', 'matches your photo', 'this is the (?:one|piece|pair)',
+  'same (?:one|piece|pair) as', 'matches your photo',
   'i found', 'we found', 'pulled up the exact', 'pull(?:ing)? up (?:the|that) exact',
+  // A subject, a copula, and the claim. The first pass listed the exact
+  // wordings it had seen — "this is the exact" — and production immediately
+  // produced one it had not: "This PAIR IS the exact sandals you're looking
+  // for." Any of these subjects in front of any of these nouns is the same
+  // assertion however it is phrased, so match the shape rather than the
+  // sentence.
+  '\\b(?:this|that|these|those|it)\\b[^.!?]{0,40}?\\b(?:is|are)\\b[^.!?]{0,20}?\\bthe exact\\b',
+  '\\bthe exact (?:one|piece|pair|style|match|sandals?|shoes?|item|product)\\b',
+  '\\b(?:this|that|these|those)\\b[^.!?]{0,40}?\\bis (?:the|your) (?:one|piece|pair)\\b',
 ].join('|'), 'i')
 
 /** The reply with those sentences taken out. Never returns nothing: if every
@@ -100,6 +108,24 @@ export function stripUnverifiableClaims(reply: string): string {
   // Split on sentence ends, keeping the punctuation with its sentence.
   const sentences = reply.match(/[^.!?]+[.!?]*/g) ?? [reply]
   const kept = sentences.filter(s => !CLAIM.test(s))
+
+  // A reply cut off mid-sentence, with a note welded to the stump.
+  //
+  // The model ran out of completion tokens at "…light and breathable, perfect
+  // for" and the honest note was appended straight onto it, so the shopper
+  // read "perfect for I cannot promise any of these is the exact piece". An
+  // unterminated last sentence is a truncation, not a thought, and anything
+  // joined to it reads as gibberish.
+  //
+  // Dropped outright, including when it is the ONLY sentence left. Putting a
+  // full stop on the end of it instead just yields "…light and breathable,
+  // perfect for." — a fragment wearing punctuation, which is not better than
+  // no sentence at all. If nothing survives, the honest note becomes the whole
+  // reply, and that reply is complete.
+  while (kept.length > 0 && !/[.!?]["')\]]*\s*$/.test(kept[kept.length - 1])) {
+    kept.pop()
+  }
+
   const out = kept.join('').replace(/\s+/g, ' ').trim()
   // A leftover fragment that only made sense after the claim it followed
   // ("It's 1490 INR.") is worse than nothing.
