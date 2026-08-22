@@ -15,12 +15,21 @@
  * diagnosis would be safe and useless. A retired model name and an HTTP status
  * must both survive intact.
  */
-const redact = (raw) => String(raw).replace(/\s+/g, ' ').trim()
-  .replace(/(bearer\s+)\S+/gi, '$1[redacted]')
-  .replace(/([?&](?:key|api_?key|access_?token|token)=)[^&\s"']+/gi, '$1[redacted]')
-  .replace(/("(?:api_?key|key|token|authorization)"\s*:\s*")[^"]*/gi, '$1[redacted]')
-  .replace(/\b[A-Za-z0-9_-]{24,}\b/g, '[redacted]')
-  .slice(0, 300)
+const { execFileSync } = require('child_process')
+const fs = require('fs'), path = require('path')
+const WEB = '/home/user/From/web'
+function load(tsPath, name) {
+  const out = path.join(WEB, '.vt', name + '.cjs')
+  fs.mkdirSync(path.join(WEB, '.vt'), { recursive: true })
+  execFileSync(path.join(WEB, 'node_modules/.bin/esbuild'), [
+    path.join(WEB, tsPath), '--bundle', '--platform=node', '--format=cjs',
+    '--outfile=' + out, '--log-level=error', '--alias:@=' + WEB,
+  ])
+  return require(out)
+}
+// The real module, not a copy of it pasted into the test. A copy passes
+// forever while the thing it was copied from drifts.
+const redact = load('lib/redact.ts', 'redact').redactSecrets
 
 /** Anything shaped like a credential, however it was labelled. */
 const SECRETISH = /AIzaSy|sk-proj-|sk-ant-|gsk_|nvapi-|csk-|[A-Za-z0-9_-]{24,}/

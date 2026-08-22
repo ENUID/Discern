@@ -4,6 +4,7 @@ import { GROQ_DIRECT_CONFIGURED, GROQ_DIRECT_SMART_MODEL, pingGroqDirect } from 
 import { CEREBRAS_CONFIGURED, pingCerebras } from '@/lib/cerebras'
 import { NVIDIA_CONFIGURED, pingNvidia } from '@/lib/nvidia'
 import { makeIpRateLimiter } from '@/lib/rateLimit'
+import { redactSecrets } from '@/lib/redact'
 
 /**
  * Is the stylist's model layer up, and if not, why — readable on a phone.
@@ -37,33 +38,6 @@ function classify(err: unknown): Kind {
   return 'unknown'
 }
 
-/** The failure in the provider's own words, with anything secret taken out.
- *
- *  'unknown' means the five patterns above all missed, and the advice for it
- *  was "see the deploy logs" — which needs a laptop, the Vercel dashboard and
- *  someone who reads logs, at the exact moment the app is down. That is the
- *  situation this whole endpoint exists to avoid, and it was the answer for
- *  the one case that most needed an answer: gemini has been failing for days
- *  and the check could only say it could not say.
- *
- *  A model name retired out from under us, a rejected parameter, a 404 on a
- *  renamed endpoint — none of those match a keyword and all of them are named
- *  plainly in the response body. So the body is passed through, minus the
- *  parts that must never leave the server: bearer tokens, key=… parameters,
- *  and any long unbroken token that could be a credential. Bounded to a line,
- *  because this is a diagnosis and not a log tail. */
-function redact(err: unknown): string {
-  const raw = String((err as Error)?.message ?? err ?? '').replace(/\s+/g, ' ').trim()
-  if (!raw) return ''
-  return raw
-    .replace(/(bearer\s+)\S+/gi, '$1[redacted]')
-    .replace(/([?&](?:key|api_?key|access_?token|token)=)[^&\s"']+/gi, '$1[redacted]')
-    .replace(/("(?:api_?key|key|token|authorization)"\s*:\s*")[^"]*/gi, '$1[redacted]')
-    // Anything long enough and dense enough to be a key, whatever it is called.
-    .replace(/\b[A-Za-z0-9_-]{24,}\b/g, '[redacted]')
-    .slice(0, 300)
-}
-
 type Probe = { kind: Kind; detail?: string }
 
 async function probe(configured: boolean, run: () => Promise<unknown>): Promise<Probe> {
@@ -75,7 +49,7 @@ async function probe(configured: boolean, run: () => Promise<unknown>): Promise<
     const kind = classify(e)
     // Only where the label alone is not the answer. 'quota' and 'auth' say
     // everything already; 'unknown' says nothing at all.
-    return kind === 'ok' ? { kind } : { kind, detail: redact(e) || undefined }
+    return kind === 'ok' ? { kind } : { kind, detail: redactSecrets(e) || undefined }
   }
 }
 

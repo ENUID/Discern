@@ -11,6 +11,7 @@ import { outfitPlan, composeOutfit, composeOutfits, composeOutfitsWithProfiles }
 import { suggestQuery } from '@/lib/fashion/suggestQuery'
 import { exactMatchNote, stripUnverifiableClaims, wantsTheExactPiece } from '@/lib/fashion/exactMatch'
 import { stripEmphasis } from '@/lib/plainText'
+import { redactSecrets } from '@/lib/redact'
 import { findSameGarment, sameGarmentEnabled, type SameGarmentVerdict } from '@/lib/services/sameGarment'
 import { profilesFor } from '@/lib/services/enrichProduct'
 import { worksWith } from '@/lib/fashion/garmentProfile'
@@ -1779,6 +1780,20 @@ async function runStylistRequest(
       if (!speculative) speculative = rescueSearch().catch(() => null)
     }
 
+    /** Why the model chain gave up, in its own words, redacted.
+     *
+     *  The provider check says every pool is "ok" and the occasion path
+     *  degrades on four requests out of four. It cannot be otherwise: that
+     *  check sends a one-token "ok" and this path sends a five-thousand-token
+     *  system prompt with knowledge modules bolted on, so the two are asking
+     *  different questions of the same provider. The ladder already builds a
+     *  full account of what each rung said and then throws it away into a
+     *  console nobody outside the deploy can read.
+     *
+     *  Same fix as the provider check's whatFailed, which named a retired
+     *  Gemini model on its first run after months of "unknown". */
+    let modelTrace: string | null = null
+
     const withoutTheModel = async (kind: 'busy' | 'error') => {
       beginSpeculativeSearch()
       const rescued = await speculative
@@ -1789,6 +1804,11 @@ async function runStylistRequest(
             ? 'A lot of people are asking at once, so I went straight to the catalogue for this one. Ask again in a moment and I will style it properly.'
             : 'I could not think this one through, so here is what the catalogue has for it. Ask again and I will do it properly.',
           comparison: null, busy: kind === 'busy', degraded: true,
+          // Present only on a degraded answer. The interface ignores it; it is
+          // here so "the model failed" can be read from outside without the
+          // deploy logs, which is the only reason the Gemini retirement was
+          // ever found.
+          modelTrace: modelTrace ?? undefined,
           ...rescued,
         })
       }
@@ -2401,6 +2421,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
         if (!msg) {
           console.error('[stylist] model call timed out within budget')
           noteModelFailure()
+          modelTrace = 'the whole chain ran past the reply deadline'
           // `retryable` tells the client this produced NO answer, so re-sending
           // costs nothing and will very likely succeed (the slow provider is now
           // on cooldown and gets skipped). The client retries once silently, so
@@ -2415,6 +2436,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
         console.error('[stylist] model call failed:', err)
         console.error('[stylist] all models failed:', (err as Error).message)
         noteModelFailure()
+        modelTrace = redactSecrets((err as Error)?.message ?? String(err))
         return withoutTheModel(isRateLimited(err) ? 'busy' : 'error')
       }
 
