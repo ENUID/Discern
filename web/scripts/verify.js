@@ -45,6 +45,7 @@ const UNIT = [
   'retrieval.js',
   'ladder.js',
   'judge-scope.js',
+  'catalog-filters.js',
   'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',
