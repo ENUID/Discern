@@ -75,8 +75,19 @@ console.log('\n── it has to compile ' + '─'.repeat(52))
 step('typecheck', () => {
   // On OUTPUT, not on the exit code, and not through a pipe that discards it.
   // This is the exact check that was defeated by `| head -5 && echo CLEAN`.
-  const out = execSync('npx tsc --noEmit 2>&1', { cwd: WEB, encoding: 'utf8' }).trim()
-  if (out) { const err = new Error('tsc reported errors'); err.stdout = out; throw err }
+  //
+  // But "any output at all" is too blunt in the other direction: npm prints an
+  // upgrade notice to stderr, which has nothing to do with the code and would
+  // fail every run. Keep only lines that are actually a compiler diagnostic —
+  // `path(line,col): error TSxxxx:` — so this cannot be defeated by noise in
+  // either direction.
+  const raw = execSync('npx tsc --noEmit 2>&1', { cwd: WEB, encoding: 'utf8' })
+  const errors = raw.split('\n').filter(l => /error TS\d+:/.test(l))
+  if (errors.length) {
+    const err = new Error(`tsc reported ${errors.length} error(s)`)
+    err.stdout = errors.join('\n')
+    throw err
+  }
 })
 
 console.log('\n── and it has to behave ' + '─'.repeat(50))

@@ -28,6 +28,27 @@ import { findSameGarment } from './sameGarment'
  *  running at all", which is a property of the deployment rather than of one
  *  request. */
 export let lastJudgeOutcome: JudgeOutcome | 'not-run' = 'not-run'
+
+/** What the last look at the shopper's photograph concluded.
+ *
+ *  The comparison already happens here, and the caller needs the ANSWER —
+ *  not to ask the same question again. The stylist route did exactly that for
+ *  a while: it ran findSameGarment a second time on the same photograph and
+ *  the same candidates, so every photo search paid for two vision calls on
+ *  whichever provider still had quota, to learn the same thing twice.
+ *
+ *  Keyed by the photograph it was asked about. A module-level value is shared
+ *  by concurrent requests, and a stale verdict about somebody else's picture
+ *  is worse than none — so the caller can only use it by naming the image it
+ *  is asking about, and two shoppers holding up different photographs can
+ *  never read each other's answer. */
+export let lastSameGarment: { forImage: string; sameIndex: number | null; confidence: number; why: string } | null = null
+
+/** The verdict for THIS photograph, or null. */
+export function sameGarmentVerdictFor(image: string | null | undefined) {
+  if (!image || !lastSameGarment || lastSameGarment.forImage !== image) return null
+  return lastSameGarment
+}
 import { matchStyles, styleRecallSignals } from '../styleVocabulary'
 import { recordBrandOutcome, deprioritizeDead } from './brandHealth'
 import { readPersistentCache, writePersistentCache } from './persistentSearchCache'
@@ -1686,6 +1707,15 @@ export class GlobalCatalogService {
         // leads; when it does not, the order above stands and the only cost is
         // one model call.
         const look = await findSameGarment(matchImage, result.slice(0, 6).map(p => p.image_url || ''))
+        // Recorded for the caller, whatever it says. A confident NO is as much
+        // an answer to "find me this exact one" as a yes, and the route has no
+        // other way to know one was even asked for.
+        lastSameGarment = {
+          forImage: matchImage,
+          sameIndex: look.sameIndex,
+          confidence: look.confidence,
+          why: look.why ?? '',
+        }
         if (look.sameIndex !== null && look.sameIndex > 0) {
           const found = result[look.sameIndex]
           result = [found, ...result.filter((_, i) => i !== look.sameIndex)]

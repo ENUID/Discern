@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { groqChat, wardrobeVisionChat, stripThinkTags, stripAiDashes, stripSafetyLabels, looksLikeLeakedReasoning, CHAT_MODEL, FAST_MODEL } from '@/lib/groq'
 import { geminiChat } from '@/lib/gemini'
-import { GlobalCatalogService, type CatalogProgress } from '@/lib/services/GlobalCatalogService'
+import { GlobalCatalogService, sameGarmentVerdictFor, type CatalogProgress } from '@/lib/services/GlobalCatalogService'
 import { normalizeFashionTypos, dropGenericWhenSpecific, buildMandatoryConcepts, classifyQuerySlot, productMatchesSlot, productMatchesGarmentKey, slotLabelFor, decomposeQuery, GARMENT_VOCAB, GARMENT_CATEGORY, type SlotCategory } from '@/lib/queryParser'
 import { matchStyles, vocabPromptBlock } from '@/lib/styleVocabulary'
 import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/stores'
@@ -12,7 +12,7 @@ import { suggestQuery } from '@/lib/fashion/suggestQuery'
 import { exactMatchNote, stripUnverifiableClaims, wantsTheExactPiece } from '@/lib/fashion/exactMatch'
 import { stripEmphasis } from '@/lib/plainText'
 import { redactSecrets } from '@/lib/redact'
-import { findSameGarment, sameGarmentEnabled, type SameGarmentVerdict } from '@/lib/services/sameGarment'
+import { type SameGarmentVerdict } from '@/lib/services/sameGarment'
 import { profilesFor } from '@/lib/services/enrichProduct'
 import { worksWith } from '@/lib/fashion/garmentProfile'
 import { describeGarment } from '@/lib/services/describeGarment'
@@ -2901,46 +2901,26 @@ Use concrete garment, colour, and material words only, never a brand or product 
     // a provider chain; this is the part that does not depend on the model
     // remembering. It only ever withholds the claim or contradicts it — it
     // never asserts a match, because that is the half no text can settle.
-    // LOOK AT THE CANDIDATES, rather than only at the photograph.
+    // LOOK AT THE CANDIDATES, rather than only at the photograph — and read
+    // the answer the catalogue already got, rather than asking twice.
     //
-    // Everything upstream is one-way: read the picture, write words, search
-    // the words, show what comes back. The model never sees the results, so
-    // "find me this exact one" could only ever be answered by hope. This is
-    // the step that closes the loop — the shopper's photograph and the top
-    // candidates in front of the model together, one question, a verdict that
-    // can be no.
+    // The comparison lives in GlobalCatalogService: when a photograph is
+    // handed to search() it puts that picture and the best few candidates in
+    // front of the vision model together, asks which is the same garment, and
+    // promotes the match. I did not know that when I added a second call here,
+    // so every photo search briefly paid for the same vision call twice — on
+    // whichever provider still had quota — to learn the same thing.
     //
-    // Only when a photograph was actually held up, only when the shopper asked
-    // for THIS piece rather than something like it, and only with enough of the
-    // budget left to pay for a vision call. Otherwise it is a cost with no
-    // question behind it.
-    let sameVerdict: SameGarmentVerdict | null = null
-    if (images[0] && wantsTheExactPiece(question) && foundProducts && foundProducts.length > 0
-        && sameGarmentEnabled() && requestDeadline - Date.now() > 9_000) {
-      const candidates = foundProducts.slice(0, 6)
-      send('curate', 'Comparing against your photo', `vision.same(${candidates.length} candidates)`)
-      // 14s of headroom was never once available. The vision read alone takes
-      // 25-30s on the one provider still in quota and the catalogue fetch
-      // another twelve, so by the time the comparison is reachable there are
-      // single-digit seconds left and the gate simply never opened — a step
-      // built, tested, deployed and silent. It now asks for what is actually
-      // there and tells the call how long it has, rather than starting one it
-      // is going to throw away.
-      const leftForVision = requestDeadline - Date.now() - 2_500
-      sameVerdict = await withDeadline(
-        findSameGarment(images[0], candidates.map(imageOf).filter(Boolean), leftForVision),
-        requestDeadline - 1_500, null,
-      )
-      if (sameVerdict) {
-        console.log(`[stylist] same-garment: same=${sameVerdict.sameIndex} conf=${sameVerdict.confidence} — ${sameVerdict.why}`)
-      }
-      // A confirmed match leads the page. It is the answer to the question
-      // that was asked; it must not sit fourth because a keyword ranked
-      // something else higher.
-      if (sameVerdict?.sameIndex != null) {
-        const hit = candidates[sameVerdict.sameIndex]
-        if (hit) foundProducts = [hit, ...foundProducts.filter((p: any) => p?.id !== hit?.id)]
-      }
+    // Keyed by the photograph, so a verdict about somebody else's picture can
+    // never be read as this shopper's.
+    const sameVerdict: SameGarmentVerdict | null = images[0]
+      ? (() => {
+          const v = sameGarmentVerdictFor(images[0])
+          return v ? { sameIndex: v.sameIndex, closestIndex: null, confidence: v.confidence, why: v.why } : null
+        })()
+      : null
+    if (sameVerdict) {
+      console.log(`[stylist] same-garment: same=${sameVerdict.sameIndex} conf=${sameVerdict.confidence} — ${sameVerdict.why}`)
     }
 
     // Only speak about the catalogue if the catalogue was actually consulted.
