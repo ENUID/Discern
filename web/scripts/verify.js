@@ -34,6 +34,8 @@ const browser = process.argv.includes('--browser')
 const UNIT = [
   // The evaluation set first: it is the broadest check and the cheapest.
   'eval.js',
+  // Before and after every extraction — see PHASE_E_EXTRACTION_PLAN.md.
+  'characterize.js',
   'exact-match.js',
   'trace.js',
   'profile-cache.js',
