@@ -43,6 +43,7 @@ const UNIT = [
   // Not a behaviour test: it hashes the prompts, so text cannot drift silently.
   'prompts.js',
   'retrieval.js',
+  'ladder.js',
   'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',
