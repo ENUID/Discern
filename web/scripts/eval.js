@@ -45,6 +45,7 @@ const gp = load('lib/fashion/garmentProfile.ts', 'gp')
 const em = load('lib/fashion/exactMatch.ts', 'em')
 const sq = load('lib/fashion/suggestQuery.ts', 'sq')
 const an = load('lib/stylist/answer.ts', 'an')
+const rt = load('lib/intent/routing.ts', 'rt')
 
 const S = JSON.parse(fs.readFileSync(path.join(WEB, 'eval/scenarios.json'), 'utf8'))
 
@@ -192,6 +193,39 @@ for (const c of arr(S.suggestion)) {
     fail('missing_constraint', c.id, `"${line}" carries too many mandatory adjectives`)
   }
   if (/[*_`#]/.test(line)) fail('hallucinated_fact', c.id, `"${line}" carries markdown`)
+}
+
+// ── intent routing: which path does this sentence take? ─────────────────────
+for (const c of arr(S.routing)) {
+  if (!c.q) continue
+  ran++
+  if (c.heavy !== undefined && rt.isHeavyQuery(c.q) !== c.heavy) {
+    fail('missing_constraint', c.id, `"${c.q}" routed ${rt.isHeavyQuery(c.q) ? 'heavy' : 'light'} (want ${c.heavy ? 'heavy' : 'light'})`)
+  }
+  if (c.greeting !== undefined && rt.isBareGreeting(c.q) !== c.greeting) {
+    fail('conversation_state_loss', c.id, `"${c.q}" read as ${rt.isBareGreeting(c.q) ? 'a bare greeting' : 'a request'}`)
+  }
+  if (c.reaction !== undefined && rt.isReactionOnly(c.q) !== c.reaction) {
+    fail('conversation_state_loss', c.id, `"${c.q}" read as ${rt.isReactionOnly(c.q) ? 'feedback' : 'a request'}`)
+  }
+  if (c.product !== undefined && rt.isProductIntent(c.q) !== c.product) {
+    fail('wrong_product_relevance', c.id, `"${c.q}" product intent ${rt.isProductIntent(c.q)}`)
+  }
+  if (c.follow !== undefined && rt.isActionFollowThrough(c.q, c.last || '') !== c.follow) {
+    fail('conversation_state_loss', c.id, `"${c.q}" after "${(c.last || '').slice(0, 30)}" → ${rt.isActionFollowThrough(c.q, c.last || '')}`)
+  }
+  if (c.slotLabel && rt.outfitSlotInfo(c.q).label !== c.slotLabel) {
+    fail('wrong_category', c.id, `"${c.q}" labelled ${rt.outfitSlotInfo(c.q).label} (want ${c.slotLabel})`)
+  }
+  if (c.clean && rt.cleanSubQuery(c.q) !== c.clean) {
+    fail('missing_constraint', c.id, `"${c.q}" cleaned to "${rt.cleanSubQuery(c.q)}" (want "${c.clean}")`)
+  }
+  if (c.keys) {
+    const got = rt.separatedGarmentKeys(c.q)
+    if (!has(got, c.keys) || got.length !== c.keys.length) {
+      fail('wrong_category', c.id, `"${c.q}" → [${got.join(', ')}] (want ${c.keys.join(', ')})`)
+    }
+  }
 }
 
 // ── §44: the answer contract ────────────────────────────────────────────────

@@ -161,6 +161,63 @@
       "reply": "Hi. What are you shopping for?", "minGarments": 0, "expectNull": true }
   ],
 
+  "routing": [
+    { "_note": "isHeavyQuery decides whether a shopper reaches the path that can SEARCH. Its default was once a whitelist of shopping words, and \"I have an interview on Friday\" contains none of them — so it could never search. The default is now inverted: everything is a request unless it is plainly not one.",
+      "id": "h-garment",      "q": "a linen shirt",                          "heavy": true },
+    { "id": "h-occasion",     "q": "I have an interview on Friday",          "heavy": true },
+    { "id": "h-wedding",      "q": "what should I wear to a summer wedding", "heavy": true },
+    { "id": "h-vague",        "q": "I have nothing to wear",                 "heavy": true },
+    { "id": "h-brand",        "q": "anything from Our Legacy?",              "heavy": true },
+    { "id": "h-oneword",      "q": "loafers",                               "heavy": true },
+    { "id": "h-cultural",     "q": "something for Muharram",                 "heavy": true },
+
+    { "_note": "And the few things that are genuinely not requests.",
+      "id": "h-greeting",     "q": "hey",                                    "heavy": false, "greeting": true },
+    { "_note": "RECORDED, NOT ENDORSED. \"hello there\" routes HEAVY — the denylist that decides this only catches the shortest greetings. It is harmless because isBareGreeting is consulted separately for the introduction, but it means a two-word hello pays for the full path.",
+      "id": "h-greeting-2",   "q": "hello there",                            "heavy": true,  "greeting": true },
+    { "id": "h-thanks",       "q": "thanks!",                                "heavy": false },
+
+    { "_note": "A bare greeting gets the introduction. Anything with a real question in it does NOT — greeting someone who asked you something reads as though nobody listened.",
+      "id": "g-bare",         "q": "hi",                                     "greeting": true },
+    { "id": "g-bare-2",       "q": "you there?",                             "greeting": true },
+    { "id": "g-not-bare",     "q": "hi, I need a linen shirt",               "greeting": false },
+    { "id": "g-not-bare-2",   "q": "hey what should I wear to a wedding",    "greeting": false },
+
+    { "_note": "A reaction to what was just shown is FEEDBACK, not a new order — it must not trigger another search.",
+      "id": "r-like",         "q": "I like it",                              "reaction": true },
+    { "id": "r-meh",          "q": "meh",                                    "reaction": true },
+    { "id": "r-love",         "q": "love these",                             "reaction": true },
+    { "id": "r-not-reaction", "q": "I like it, show me more shirts",         "reaction": false },
+    { "id": "r-garment",      "q": "nice, now trousers",                     "reaction": false },
+
+    { "_note": "productIntent decides whether the grounding pass runs over real products.",
+      "id": "p-search",       "q": "show me linen shirts",                   "product": true },
+    { "id": "p-chat",         "q": "what do you think of quiet luxury",      "product": false },
+
+    { "_note": "A follow-through on something the assistant just offered — \"ok\", \"go\" — is a GO signal, not a new question. Depends on what was last said.",
+      "id": "f-ok",           "q": "ok",           "last": "Want me to put a look together?", "follow": true },
+    { "_note": "The approving half is an EXACT-MATCH whitelist anchored at both ends, so \"go\" is a go-signal and \"go for it\" is not. A sharp edge, recorded because it is invisible and easy to smooth away.",
+      "id": "f-go",           "q": "go",           "last": "Shall I build that outfit?",      "follow": true },
+    { "id": "f-go-for-it",    "q": "go for it",    "last": "Shall I build that outfit?",      "follow": false },
+    { "_note": "And the CONTEXT half is deliberately broad: any previous message naming a garment or a fabric counts as something to follow through on, not just an explicit offer. \"Linen\" alone is enough.",
+      "id": "f-fabric-ctx",   "q": "ok",           "last": "Linen breathes well in humidity.", "follow": true },
+    { "id": "f-no-context",   "q": "ok",           "last": "The weather is lovely today.",     "follow": false },
+
+    { "_note": "Per-slot labels come from the query's own words, not a generic Top/Bottom/Shoes.",
+      "id": "s-overshirt",    "q": "men navy overshirt",        "slotLabel": "Overshirt" },
+    { "id": "s-blazer",       "q": "men linen blazer",          "slotLabel": "Blazer" },
+    { "id": "s-bag",          "q": "women leather tote",        "slotLabel": "Bag" },
+
+    { "_note": "Filler is stripped from a per-category subquery so a store gets \"men trousers\", not \"men i need some trousers\".",
+      "id": "c-filler",       "q": "i need some trousers",      "clean": "trousers" },
+    { "id": "c-keeps-signal", "q": "show me black linen shirt", "clean": "black linen shirt" },
+
+    { "_note": "separatedGarmentKeys is the split unit for multi-category results.",
+      "id": "k-two",          "q": "shirts and trousers",       "keys": ["shirt", "trouser"] },
+    { "id": "k-compound",     "q": "a white t-shirt",           "keys": ["tshirt"] },
+    { "id": "k-three",        "q": "shirts, trousers and shoes", "keys": ["shirt", "trouser", "shoe"] }
+  ],
+
   "answerContract": [
     { "_note": "§44. Every one of these is a shape a live provider actually produced this week. The route recovered its structure from prose with four regexes; when the bracket was missed the page came back empty.",
       "id": "a-tokens-search",  "raw": "Linen is the move.\n\n[SEARCH: men linen shirt]", "via": "tokens", "search": "men linen shirt", "reply": "Linen is the move." },

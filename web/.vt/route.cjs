@@ -45331,6 +45331,249 @@ function recordVocabMiss(query, reason) {
   });
 }
 
+// lib/fashion/intentRouter.ts
+var GREETING = /^(hi|hey+|hello|yo|sup|hiya|howdy|namaste|salaam|good (morning|afternoon|evening|day))\b[\s!.,]*$/i;
+var SIGNOFF = /^(thanks?|thank you|ty|cheers|ok(ay)?|cool|nice|great|sure|got it|alright|k|bye|goodbye|see ya|good ?night)\b[\s!.,]*$/i;
+var ABOUT_THE_APP = /\b(who are you|what are you|are you (an? )?(ai|bot|robot|human|real)|what can you do|how (do|does) (you|this|discern) work|what is (this|discern)|your name)\b/i;
+var OFF_TOPIC_WORK = /\b(write|debug|fix|explain) (me )?(some )?(code|a function|a script|a program|this bug)\b|\b(my )?(homework|assignment|essay|thesis|dissertation)\b|\b(medical|legal|financial|tax|investment) advice\b|\bdiagnose\b|\bsymptoms?\b/i;
+var REACTION = new RegExp([
+  // "I love it", "really like these"
+  /^(i )?(really |so |absolutely )?(like|love|hate|dislike) (it|this|that|these|them|the \w+)\b[\s!.,]*$/.source,
+  // "looks great", "that is nice", "these are lovely"
+  /^(looks?|thats?|that is|that'?s|this is|it is|it'?s|these are|they are) (good|great|nice|amazing|perfect|cool|lovely|beautiful|awful|bad|terrible)\b[\s!.,]*$/.source,
+  // bare noises
+  /^(meh|hmm+|nah|nope|yep|yes|no|perfect|amazing|beautiful|wow|lol|haha)\b[\s!.,]*$/.source
+].join("|"), "i");
+var STILL_WANTS_SOMETHING = /\b(another|different|more|other|instead|swap|change|replace|show|find|get|need|want|buy|shop|wear|dress|style|outfit|cheaper|pricier|else|new|add|without)\b/i;
+function routeReason(question) {
+  const q = (question || "").trim();
+  if (!q) return "greeting";
+  if (q.length > 90) return "shopping";
+  if (STILL_WANTS_SOMETHING.test(q)) return "shopping";
+  if (GREETING.test(q)) return "greeting";
+  if (SIGNOFF.test(q)) return "signoff";
+  if (REACTION.test(q)) return "reaction";
+  if (ABOUT_THE_APP.test(q)) return "about-the-app";
+  if (OFF_TOPIC_WORK.test(q)) return "off-topic";
+  return "shopping";
+}
+function wantsProducts(question) {
+  return routeReason(question) === "shopping";
+}
+
+// lib/intent/routing.ts
+var SUBQUERY_FILLER = /\b(?:i|need|want|some|any|a|an|the|please|show|find|get|me|looking|for|would|like|could|you|help|hey|hi|hello|can|could|pls|plz|and|also|maybe|something|to|wear|buy|shop|shopping)\b/gi;
+function cleanSubQuery(q) {
+  const cleaned = q.replace(SUBQUERY_FILLER, " ").replace(/\s+/g, " ").trim();
+  return cleaned.length >= 2 ? cleaned : q.trim();
+}
+var GARMENT_DISPLAY = {
+  shirt: "Shirts",
+  tshirt: "T-Shirts",
+  blouse: "Blouses",
+  polo: "Polos",
+  tank: "Tanks",
+  sweater: "Sweaters",
+  hoodie: "Hoodies",
+  cardigan: "Cardigans",
+  henley: "Henleys",
+  turtleneck: "Turtlenecks",
+  trouser: "Trousers",
+  jean: "Jeans",
+  chino: "Chinos",
+  short: "Shorts",
+  skirt: "Skirts",
+  legging: "Leggings",
+  cargo: "Cargos",
+  jogger: "Joggers",
+  sweatpant: "Sweatpants",
+  culotte: "Culottes",
+  capri: "Capris",
+  jacket: "Jackets",
+  blazer: "Blazers",
+  coat: "Coats",
+  vest: "Vests",
+  bomber: "Bombers",
+  denimJacket: "Denim Jackets",
+  windbreaker: "Windbreakers",
+  dress: "Dresses",
+  jumpsuit: "Jumpsuits",
+  bodysuit: "Bodysuits",
+  gown: "Gowns",
+  shoe: "Shoes",
+  sneaker: "Sneakers",
+  boot: "Boots",
+  loafer: "Loafers",
+  sandal: "Sandals",
+  heel: "Heels",
+  derby: "Dress Shoes",
+  espadrille: "Espadrilles",
+  clog: "Clogs",
+  mule: "Mules",
+  flat: "Flats",
+  kurta: "Kurtas",
+  kurti: "Kurtis",
+  saree: "Sarees",
+  lehenga: "Lehengas",
+  anarkali: "Anarkalis",
+  kaftan: "Kaftans",
+  palazzo: "Palazzos",
+  churidar: "Churidars",
+  sharara: "Shararas",
+  gharara: "Ghararas",
+  dhoti: "Dhotis",
+  salwarKameez: "Salwar Kameez",
+  sherwani: "Sherwanis",
+  nehruJacket: "Nehru Jackets",
+  bandhgala: "Bandhgalas",
+  dupatta: "Dupattas",
+  bag: "Bags",
+  tote: "Totes",
+  backpack: "Backpacks",
+  hat: "Hats",
+  scarf: "Scarves",
+  belt: "Belts",
+  sock: "Socks",
+  sunglasses: "Sunglasses",
+  watch: "Watches",
+  jewelry: "Jewelry",
+  wallet: "Wallets"
+};
+function garmentLabel(key2) {
+  if (GARMENT_DISPLAY[key2]) return GARMENT_DISPLAY[key2];
+  const cat = GARMENT_CATEGORY[key2];
+  return cat ? slotLabelFor(cat) : "Pieces";
+}
+function separatedGarmentKeys(query) {
+  const words = query.toLowerCase().replace(/\bt[\s-]+shirts?\b/g, "tshirt").replace(/\btank[\s-]+tops?\b/g, "tank").replace(/\bpolo[\s-]+shirts?\b/g, "polo").replace(/\bsweat[\s-]+shirts?\b/g, "sweatshirt").split(/[^a-z0-9]+/).filter(Boolean);
+  const wordKey = words.map((w) => {
+    const ws = w.replace(/s$/, "");
+    for (const [key2, entry] of Object.entries(GARMENT_VOCAB)) {
+      if (!GARMENT_CATEGORY[key2]) continue;
+      for (const t of entry.query) {
+        if (t.includes(" ") || t.includes("-")) continue;
+        if (t === w || t.replace(/s$/, "") === ws) return key2;
+      }
+    }
+    return null;
+  });
+  const consumed = /* @__PURE__ */ new Set();
+  for (let i = 0; i + 1 < words.length; i++) {
+    const a = wordKey[i], b = wordKey[i + 1];
+    if (!a || !b) continue;
+    if (a === "dress") consumed.add(i);
+    else if (b === "dress") consumed.add(i);
+    else if (a === "shirt" && b === "jacket") consumed.add(i);
+  }
+  const keys = [];
+  words.forEach((_, i) => {
+    if (consumed.has(i)) return;
+    const k = wordKey[i];
+    if (k && !keys.includes(k)) keys.push(k);
+  });
+  return keys;
+}
+function isBareGreeting(question) {
+  const t = question.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return true;
+  if (t.split(" ").length > 4) return false;
+  return /^(hi|hey|hello|yo|hiya|heya|howdy|sup|hi there|hey there|hello there|good (morning|afternoon|evening)|are you there|you there|anyone there|test|testing)$/.test(t);
+}
+function isHeavyQuery(question) {
+  if (decomposeQuery(question.toLowerCase()).garmentKeys.length > 0) return true;
+  return wantsProducts(question);
+}
+function isReactionOnly(question) {
+  const q = question.trim().toLowerCase();
+  if (q.length === 0 || q.length > 70) return false;
+  if (decomposeQuery(q).garmentKeys.length > 0) return false;
+  const reaction = /\bi (like|love|prefer|hate|don'?t like)\b|\b(like|love|hate) (it|this|that|these|them)\b|\blooks? (good|great|nice|amazing|perfect|cool)\b|(^|\W)(much |way |even |so much )?better( than| then| now)?(\W|$)|\bnot (the best|bad|great|feeling it)\b|\b(pretty good|perfect|amazing|meh|hmm+|not sure|so-?so|good one|nice one|that works|love this)\b/.test(q);
+  if (!reaction) return false;
+  const wantsChange = /\b(another|different|more|others?|instead|swap|change|replace|show me|find|search|get me|blue|red|black|white|green|olive|beige|formal|casual|cheaper|pricier|bigger|smaller|else|new|add|remove|without|with a)\b/.test(q);
+  return !wantsChange;
+}
+function isProductIntent(question) {
+  const q = question.toLowerCase();
+  if (decomposeQuery(q).garmentKeys.length > 0) return true;
+  return /\bfind\b|\bshow me\b|\blook(ing)? for\b|\brecommend\b|\bsuggest\b|\bsearch\b|\boutfits?\b|\bpieces?\b|\bbuild.{0,12}(look|outfit)\b|\bwhat.{0,12}wear\b|\bwear (to|for|with)\b|\bstyle (me|this|a|an|my|for)\b|\bpair (with|it)\b|\bdress (for|me)\b|\bwardrobe\b/.test(q);
+}
+var OUTFIT_LAYER_RE = /\b(over-?shirts?|shackets?|shirt[- ]jackets?|blazers?|bombers?|jackets?|cardigans?|overcoats?|trench(?:es|coats?)?|parkas?|puffers?|coats?|gilets?|waistcoats?|dusters?|nehru jackets?)\b/i;
+var OUTFIT_SLOT_NAMES = [
+  [/\bover-?shirts?|shackets?|shirt[- ]jackets?\b/i, "Overshirt"],
+  [/\bblazers?\b/i, "Blazer"],
+  [/\bbombers?\b/i, "Bomber"],
+  [/\b(denim|jean|trucker) jackets?\b/i, "Denim Jacket"],
+  [/\bnehru jackets?\b/i, "Nehru Jacket"],
+  [/\bjackets?\b/i, "Jacket"],
+  [/\bcardigans?\b/i, "Cardigan"],
+  [/\b(overcoats?|trench(?:es|coats?)?|parkas?|puffers?|coats?)\b/i, "Coat"],
+  [/\b(gilets?|waistcoats?|vests?)\b/i, "Vest"],
+  [/\bhoodies?|sweatshirts?\b/i, "Hoodie"],
+  [/\b(sweaters?|jumpers?|pullovers?|knitwear|knit tops?)\b/i, "Sweater"],
+  [/\bturtlenecks?|roll[- ]?necks?\b/i, "Turtleneck"],
+  [/\bhenleys?\b/i, "Henley"],
+  [/\bpolos?\b/i, "Polo"],
+  [/\bt-?shirts?|tees?\b/i, "Tee"],
+  [/\bkurtis?\b/i, "Kurti"],
+  [/\bkurtas?\b/i, "Kurta"],
+  [/\bblouses?\b/i, "Blouse"],
+  [/\btanks?|camisoles?\b/i, "Tank"],
+  [/\bshirts?\b/i, "Shirt"],
+  [/\bchinos?\b/i, "Chinos"],
+  [/\b(jeans?|denim)\b/i, "Jeans"],
+  [/\b(joggers?|sweatpants|track pants)\b/i, "Joggers"],
+  [/\bcargos?\b/i, "Cargos"],
+  [/\bshorts?\b/i, "Shorts"],
+  [/\bskirts?\b/i, "Skirt"],
+  [/\bpalazzos?\b/i, "Palazzo"],
+  [/\bchuridars?\b/i, "Churidar"],
+  [/\b(trousers?|pants|slacks)\b/i, "Trousers"],
+  [/\bloafers?\b/i, "Loafers"],
+  [/\b(sneakers?|trainers?)\b/i, "Sneakers"],
+  [/\bboots?\b/i, "Boots"],
+  [/\b(sandals?|slides?|floaters?)\b/i, "Sandals"],
+  [/\b(heels?|pumps?|stilettos?)\b/i, "Heels"],
+  [/\b(derby|derbies|oxfords?|brogues?|dress shoes?)\b/i, "Dress Shoes"],
+  [/\b(mules?|flats?|espadrilles?|shoes?|footwear)\b/i, "Shoes"],
+  [/\bdress(es)?\b/i, "Dress"],
+  [/\bsarees?|saris?\b/i, "Saree"],
+  [/\blehengas?\b/i, "Lehenga"],
+  [/\bjumpsuits?|rompers?\b/i, "Jumpsuit"],
+  [/\bbelts?\b/i, "Belt"],
+  [/\b(bags?|totes?|backpacks?|clutch(?:es)?)\b/i, "Bag"],
+  [/\b(hats?|caps?|beanies?)\b/i, "Hat"],
+  [/\bscarves?|scarf\b/i, "Scarf"],
+  [/\bwatch(?:es)?\b/i, "Watch"],
+  [/\bsunglasses|shades\b/i, "Sunglasses"]
+];
+function outfitSlotInfo(query) {
+  const isLayer = OUTFIT_LAYER_RE.test(query);
+  let label = "Piece";
+  for (const [re, name] of OUTFIT_SLOT_NAMES) {
+    if (re.test(query)) {
+      label = name;
+      break;
+    }
+  }
+  const slotCat = isLayer ? "outer" : classifyQuerySlot(query);
+  return { label, slotCat };
+}
+function isShoppingContinuation(question, lastAssistant) {
+  const q = question.trim();
+  if (q.length === 0 || q.length > 40) return false;
+  const la = (lastAssistant || "").trim();
+  if (!la.endsWith("?")) return false;
+  const laLower = la.toLowerCase();
+  return /\bvibe\b|\boccasion\b|\bcolou?rs?\b|\baiming for\b|\bwhat are you\b|\bwhat.{0,12}(wear|looking|need|after)\b|\baccessor|\bfit\b|\bbudget\b|\bstyle\b|\bformal or\b|\bcasual or\b/.test(laLower) || decomposeQuery(laLower).garmentKeys.length > 0;
+}
+function isActionFollowThrough(question, lastAssistant) {
+  const q = question.toLowerCase().trim();
+  const approves = /^(ok(ay)?|k|yes|yep|yeah|ya|sure|sounds good|that works|perfect|go|go ahead|do it|build it|make it|show me|please( do)?|continue|yes please)\b[.!]?$/.test(q) || /\bwhere('?s| is| are)\b.*\b(outfit|look|it|them|product|piece)/.test(q) || /\b(again|still (waiting|nothing)|you (didn'?t|haven'?t)|i asked|do what i asked)\b/.test(q);
+  if (!approves) return false;
+  const la = lastAssistant.toLowerCase();
+  return /\bon it\b|how does that sound|sound good|want me to|shall i|let me (put|build|pull|find)|i'?ll (put|build|pull|find)|putting together|let'?s (create|build|do)|imagining|here'?s (a|the) (look|outfit)/.test(la) || /\b(shirt|trouser|short|shoe|loafer|sneaker|boot|blazer|jacket|coat|dress|knit|linen|cotton|wool)\b/.test(la);
+}
+
 // lib/stylist/answer.ts
 var Query = external_exports.string().trim().min(1).max(200);
 var StylistAnswerSchema = external_exports.object({
@@ -45827,36 +46070,6 @@ async function describeGarment(image) {
   }
 }
 
-// lib/fashion/intentRouter.ts
-var GREETING = /^(hi|hey+|hello|yo|sup|hiya|howdy|namaste|salaam|good (morning|afternoon|evening|day))\b[\s!.,]*$/i;
-var SIGNOFF = /^(thanks?|thank you|ty|cheers|ok(ay)?|cool|nice|great|sure|got it|alright|k|bye|goodbye|see ya|good ?night)\b[\s!.,]*$/i;
-var ABOUT_THE_APP = /\b(who are you|what are you|are you (an? )?(ai|bot|robot|human|real)|what can you do|how (do|does) (you|this|discern) work|what is (this|discern)|your name)\b/i;
-var OFF_TOPIC_WORK = /\b(write|debug|fix|explain) (me )?(some )?(code|a function|a script|a program|this bug)\b|\b(my )?(homework|assignment|essay|thesis|dissertation)\b|\b(medical|legal|financial|tax|investment) advice\b|\bdiagnose\b|\bsymptoms?\b/i;
-var REACTION = new RegExp([
-  // "I love it", "really like these"
-  /^(i )?(really |so |absolutely )?(like|love|hate|dislike) (it|this|that|these|them|the \w+)\b[\s!.,]*$/.source,
-  // "looks great", "that is nice", "these are lovely"
-  /^(looks?|thats?|that is|that'?s|this is|it is|it'?s|these are|they are) (good|great|nice|amazing|perfect|cool|lovely|beautiful|awful|bad|terrible)\b[\s!.,]*$/.source,
-  // bare noises
-  /^(meh|hmm+|nah|nope|yep|yes|no|perfect|amazing|beautiful|wow|lol|haha)\b[\s!.,]*$/.source
-].join("|"), "i");
-var STILL_WANTS_SOMETHING = /\b(another|different|more|other|instead|swap|change|replace|show|find|get|need|want|buy|shop|wear|dress|style|outfit|cheaper|pricier|else|new|add|without)\b/i;
-function routeReason(question) {
-  const q = (question || "").trim();
-  if (!q) return "greeting";
-  if (q.length > 90) return "shopping";
-  if (STILL_WANTS_SOMETHING.test(q)) return "shopping";
-  if (GREETING.test(q)) return "greeting";
-  if (SIGNOFF.test(q)) return "signoff";
-  if (REACTION.test(q)) return "reaction";
-  if (ABOUT_THE_APP.test(q)) return "about-the-app";
-  if (OFF_TOPIC_WORK.test(q)) return "off-topic";
-  return "shopping";
-}
-function wantsProducts(question) {
-  return routeReason(question) === "shopping";
-}
-
 // app/api/ai/stylist/route.ts
 init_cerebras();
 var maxDuration = 60;
@@ -45871,117 +46084,6 @@ function dedupeById(items) {
     out.push(p);
   }
   return out;
-}
-var SUBQUERY_FILLER = /\b(?:i|need|want|some|any|a|an|the|please|show|find|get|me|looking|for|would|like|could|you|help|hey|hi|hello|can|could|pls|plz|and|also|maybe|something|to|wear|buy|shop|shopping)\b/gi;
-function cleanSubQuery(q) {
-  const cleaned = q.replace(SUBQUERY_FILLER, " ").replace(/\s+/g, " ").trim();
-  return cleaned.length >= 2 ? cleaned : q.trim();
-}
-var GARMENT_DISPLAY = {
-  shirt: "Shirts",
-  tshirt: "T-Shirts",
-  blouse: "Blouses",
-  polo: "Polos",
-  tank: "Tanks",
-  sweater: "Sweaters",
-  hoodie: "Hoodies",
-  cardigan: "Cardigans",
-  henley: "Henleys",
-  turtleneck: "Turtlenecks",
-  trouser: "Trousers",
-  jean: "Jeans",
-  chino: "Chinos",
-  short: "Shorts",
-  skirt: "Skirts",
-  legging: "Leggings",
-  cargo: "Cargos",
-  jogger: "Joggers",
-  sweatpant: "Sweatpants",
-  culotte: "Culottes",
-  capri: "Capris",
-  jacket: "Jackets",
-  blazer: "Blazers",
-  coat: "Coats",
-  vest: "Vests",
-  bomber: "Bombers",
-  denimJacket: "Denim Jackets",
-  windbreaker: "Windbreakers",
-  dress: "Dresses",
-  jumpsuit: "Jumpsuits",
-  bodysuit: "Bodysuits",
-  gown: "Gowns",
-  shoe: "Shoes",
-  sneaker: "Sneakers",
-  boot: "Boots",
-  loafer: "Loafers",
-  sandal: "Sandals",
-  heel: "Heels",
-  derby: "Dress Shoes",
-  espadrille: "Espadrilles",
-  clog: "Clogs",
-  mule: "Mules",
-  flat: "Flats",
-  kurta: "Kurtas",
-  kurti: "Kurtis",
-  saree: "Sarees",
-  lehenga: "Lehengas",
-  anarkali: "Anarkalis",
-  kaftan: "Kaftans",
-  palazzo: "Palazzos",
-  churidar: "Churidars",
-  sharara: "Shararas",
-  gharara: "Ghararas",
-  dhoti: "Dhotis",
-  salwarKameez: "Salwar Kameez",
-  sherwani: "Sherwanis",
-  nehruJacket: "Nehru Jackets",
-  bandhgala: "Bandhgalas",
-  dupatta: "Dupattas",
-  bag: "Bags",
-  tote: "Totes",
-  backpack: "Backpacks",
-  hat: "Hats",
-  scarf: "Scarves",
-  belt: "Belts",
-  sock: "Socks",
-  sunglasses: "Sunglasses",
-  watch: "Watches",
-  jewelry: "Jewelry",
-  wallet: "Wallets"
-};
-function garmentLabel(key2) {
-  if (GARMENT_DISPLAY[key2]) return GARMENT_DISPLAY[key2];
-  const cat = GARMENT_CATEGORY[key2];
-  return cat ? slotLabelFor(cat) : "Pieces";
-}
-function separatedGarmentKeys(query) {
-  const words = query.toLowerCase().replace(/\bt[\s-]+shirts?\b/g, "tshirt").replace(/\btank[\s-]+tops?\b/g, "tank").replace(/\bpolo[\s-]+shirts?\b/g, "polo").replace(/\bsweat[\s-]+shirts?\b/g, "sweatshirt").split(/[^a-z0-9]+/).filter(Boolean);
-  const wordKey = words.map((w) => {
-    const ws = w.replace(/s$/, "");
-    for (const [key2, entry] of Object.entries(GARMENT_VOCAB)) {
-      if (!GARMENT_CATEGORY[key2]) continue;
-      for (const t of entry.query) {
-        if (t.includes(" ") || t.includes("-")) continue;
-        if (t === w || t.replace(/s$/, "") === ws) return key2;
-      }
-    }
-    return null;
-  });
-  const consumed = /* @__PURE__ */ new Set();
-  for (let i = 0; i + 1 < words.length; i++) {
-    const a = wordKey[i], b = wordKey[i + 1];
-    if (!a || !b) continue;
-    if (a === "dress") consumed.add(i);
-    else if (b === "dress") consumed.add(i);
-    else if (a === "shirt" && b === "jacket") consumed.add(i);
-  }
-  const keys = [];
-  words.forEach((_, i) => {
-    if (consumed.has(i)) return;
-    const k = wordKey[i];
-    if (k && !keys.includes(k)) keys.push(k);
-  });
-  return keys;
 }
 async function multiCategorySearch(fullQuery, budgetMax, countryCode, buyerCurrency, tasteProfile, sizeForQuery, onProgress, shopperGender) {
   const decomp = decomposeQuery(fullQuery);
@@ -46138,106 +46240,6 @@ Revised query:`;
     console.error("[stylist] refine-query failed:", e);
     return null;
   }
-}
-function isBareGreeting(question) {
-  const t = question.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
-  if (!t) return true;
-  if (t.split(" ").length > 4) return false;
-  return /^(hi|hey|hello|yo|hiya|heya|howdy|sup|hi there|hey there|hello there|good (morning|afternoon|evening)|are you there|you there|anyone there|test|testing)$/.test(t);
-}
-function isHeavyQuery(question) {
-  if (decomposeQuery(question.toLowerCase()).garmentKeys.length > 0) return true;
-  return wantsProducts(question);
-}
-function isReactionOnly(question) {
-  const q = question.trim().toLowerCase();
-  if (q.length === 0 || q.length > 70) return false;
-  if (decomposeQuery(q).garmentKeys.length > 0) return false;
-  const reaction = /\bi (like|love|prefer|hate|don'?t like)\b|\b(like|love|hate) (it|this|that|these|them)\b|\blooks? (good|great|nice|amazing|perfect|cool)\b|(^|\W)(much |way |even |so much )?better( than| then| now)?(\W|$)|\bnot (the best|bad|great|feeling it)\b|\b(pretty good|perfect|amazing|meh|hmm+|not sure|so-?so|good one|nice one|that works|love this)\b/.test(q);
-  if (!reaction) return false;
-  const wantsChange = /\b(another|different|more|others?|instead|swap|change|replace|show me|find|search|get me|blue|red|black|white|green|olive|beige|formal|casual|cheaper|pricier|bigger|smaller|else|new|add|remove|without|with a)\b/.test(q);
-  return !wantsChange;
-}
-function isProductIntent(question) {
-  const q = question.toLowerCase();
-  if (decomposeQuery(q).garmentKeys.length > 0) return true;
-  return /\bfind\b|\bshow me\b|\blook(ing)? for\b|\brecommend\b|\bsuggest\b|\bsearch\b|\boutfits?\b|\bpieces?\b|\bbuild.{0,12}(look|outfit)\b|\bwhat.{0,12}wear\b|\bwear (to|for|with)\b|\bstyle (me|this|a|an|my|for)\b|\bpair (with|it)\b|\bdress (for|me)\b|\bwardrobe\b/.test(q);
-}
-var OUTFIT_LAYER_RE = /\b(over-?shirts?|shackets?|shirt[- ]jackets?|blazers?|bombers?|jackets?|cardigans?|overcoats?|trench(?:es|coats?)?|parkas?|puffers?|coats?|gilets?|waistcoats?|dusters?|nehru jackets?)\b/i;
-var OUTFIT_SLOT_NAMES = [
-  [/\bover-?shirts?|shackets?|shirt[- ]jackets?\b/i, "Overshirt"],
-  [/\bblazers?\b/i, "Blazer"],
-  [/\bbombers?\b/i, "Bomber"],
-  [/\b(denim|jean|trucker) jackets?\b/i, "Denim Jacket"],
-  [/\bnehru jackets?\b/i, "Nehru Jacket"],
-  [/\bjackets?\b/i, "Jacket"],
-  [/\bcardigans?\b/i, "Cardigan"],
-  [/\b(overcoats?|trench(?:es|coats?)?|parkas?|puffers?|coats?)\b/i, "Coat"],
-  [/\b(gilets?|waistcoats?|vests?)\b/i, "Vest"],
-  [/\bhoodies?|sweatshirts?\b/i, "Hoodie"],
-  [/\b(sweaters?|jumpers?|pullovers?|knitwear|knit tops?)\b/i, "Sweater"],
-  [/\bturtlenecks?|roll[- ]?necks?\b/i, "Turtleneck"],
-  [/\bhenleys?\b/i, "Henley"],
-  [/\bpolos?\b/i, "Polo"],
-  [/\bt-?shirts?|tees?\b/i, "Tee"],
-  [/\bkurtis?\b/i, "Kurti"],
-  [/\bkurtas?\b/i, "Kurta"],
-  [/\bblouses?\b/i, "Blouse"],
-  [/\btanks?|camisoles?\b/i, "Tank"],
-  [/\bshirts?\b/i, "Shirt"],
-  [/\bchinos?\b/i, "Chinos"],
-  [/\b(jeans?|denim)\b/i, "Jeans"],
-  [/\b(joggers?|sweatpants|track pants)\b/i, "Joggers"],
-  [/\bcargos?\b/i, "Cargos"],
-  [/\bshorts?\b/i, "Shorts"],
-  [/\bskirts?\b/i, "Skirt"],
-  [/\bpalazzos?\b/i, "Palazzo"],
-  [/\bchuridars?\b/i, "Churidar"],
-  [/\b(trousers?|pants|slacks)\b/i, "Trousers"],
-  [/\bloafers?\b/i, "Loafers"],
-  [/\b(sneakers?|trainers?)\b/i, "Sneakers"],
-  [/\bboots?\b/i, "Boots"],
-  [/\b(sandals?|slides?|floaters?)\b/i, "Sandals"],
-  [/\b(heels?|pumps?|stilettos?)\b/i, "Heels"],
-  [/\b(derby|derbies|oxfords?|brogues?|dress shoes?)\b/i, "Dress Shoes"],
-  [/\b(mules?|flats?|espadrilles?|shoes?|footwear)\b/i, "Shoes"],
-  [/\bdress(es)?\b/i, "Dress"],
-  [/\bsarees?|saris?\b/i, "Saree"],
-  [/\blehengas?\b/i, "Lehenga"],
-  [/\bjumpsuits?|rompers?\b/i, "Jumpsuit"],
-  [/\bbelts?\b/i, "Belt"],
-  [/\b(bags?|totes?|backpacks?|clutch(?:es)?)\b/i, "Bag"],
-  [/\b(hats?|caps?|beanies?)\b/i, "Hat"],
-  [/\bscarves?|scarf\b/i, "Scarf"],
-  [/\bwatch(?:es)?\b/i, "Watch"],
-  [/\bsunglasses|shades\b/i, "Sunglasses"]
-];
-function outfitSlotInfo(query) {
-  const isLayer = OUTFIT_LAYER_RE.test(query);
-  let label = "Piece";
-  for (const [re, name] of OUTFIT_SLOT_NAMES) {
-    if (re.test(query)) {
-      label = name;
-      break;
-    }
-  }
-  const slotCat = isLayer ? "outer" : classifyQuerySlot(query);
-  return { label, slotCat };
-}
-function isShoppingContinuation(question, lastAssistant) {
-  const q = question.trim();
-  if (q.length === 0 || q.length > 40) return false;
-  const la = (lastAssistant || "").trim();
-  if (!la.endsWith("?")) return false;
-  const laLower = la.toLowerCase();
-  return /\bvibe\b|\boccasion\b|\bcolou?rs?\b|\baiming for\b|\bwhat are you\b|\bwhat.{0,12}(wear|looking|need|after)\b|\baccessor|\bfit\b|\bbudget\b|\bstyle\b|\bformal or\b|\bcasual or\b/.test(laLower) || decomposeQuery(laLower).garmentKeys.length > 0;
-}
-function isActionFollowThrough(question, lastAssistant) {
-  const q = question.toLowerCase().trim();
-  const approves = /^(ok(ay)?|k|yes|yep|yeah|ya|sure|sounds good|that works|perfect|go|go ahead|do it|build it|make it|show me|please( do)?|continue|yes please)\b[.!]?$/.test(q) || /\bwhere('?s| is| are)\b.*\b(outfit|look|it|them|product|piece)/.test(q) || /\b(again|still (waiting|nothing)|you (didn'?t|haven'?t)|i asked|do what i asked)\b/.test(q);
-  if (!approves) return false;
-  const la = lastAssistant.toLowerCase();
-  return /\bon it\b|how does that sound|sound good|want me to|shall i|let me (put|build|pull|find)|i'?ll (put|build|pull|find)|putting together|let'?s (create|build|do)|imagining|here'?s (a|the) (look|outfit)/.test(la) || /\b(shirt|trouser|short|shoe|loafer|sneaker|boot|blazer|jacket|coat|dress|knit|linen|cotton|wool)\b/.test(la);
 }
 var GROQ_8B = FAST_MODEL;
 var GROQ_70B = CHAT_MODEL;
