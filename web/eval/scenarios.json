@@ -161,6 +161,40 @@
       "reply": "Hi. What are you shopping for?", "minGarments": 0, "expectNull": true }
   ],
 
+  "answerContract": [
+    { "_note": "§44. Every one of these is a shape a live provider actually produced this week. The route recovered its structure from prose with four regexes; when the bracket was missed the page came back empty.",
+      "id": "a-tokens-search",  "raw": "Linen is the move.\n\n[SEARCH: men linen shirt]", "via": "tokens", "search": "men linen shirt", "reply": "Linen is the move." },
+    { "id": "a-tokens-outfit",  "raw": "Keep it breathable. [OUTFIT: men linen shirt | men wide trousers | men tan loafers]", "via": "tokens", "outfit": ["men linen shirt", "men wide trousers", "men tan loafers"] },
+    { "id": "a-tokens-outfits", "raw": "Three ways. [OUTFITS: a shirt | b trouser || c shirt | d trouser]", "via": "tokens", "outfits": 2 },
+    { "id": "a-tokens-inline",  "raw": "For a wedding [SEARCH: men navy blazer] should work.", "via": "tokens", "search": "men navy blazer" },
+
+    { "_note": "OUTFITS must not be read as OUTFIT — the shorter pattern is a prefix of the longer one, and collapsing three looks into one is silent.",
+      "id": "a-outfits-not-outfit", "raw": "[OUTFITS: a shirt | b trouser || c shirt | d trouser]", "via": "tokens", "outfits": 2, "noOutfit": true },
+
+    { "_note": "JSON, which is where this is going. Fenced, bare, and with prose around it.",
+      "id": "a-json-search",  "raw": "{\"reply\":\"Linen is the move.\",\"search\":\"men linen shirt\"}", "via": "json", "search": "men linen shirt", "reply": "Linen is the move." },
+    { "id": "a-json-fenced",  "raw": "```json\n{\"reply\":\"Here.\",\"search\":\"men linen shirt\"}\n```", "via": "json", "search": "men linen shirt" },
+    { "id": "a-json-outfit",  "raw": "{\"reply\":\"Breathable.\",\"outfit\":[\"men linen shirt\",\"men wide trousers\"]}", "via": "json", "outfit": ["men linen shirt", "men wide trousers"] },
+    { "id": "a-json-outfits", "raw": "{\"reply\":\"Two ways.\",\"outfits\":[[\"a\",\"b\"],[\"c\",\"d\"]]}", "via": "json", "outfits": 2 },
+    { "id": "a-json-nested",  "raw": "{\"reply\":\"A {brace} inside\",\"search\":\"men shirt\"}", "via": "json", "search": "men shirt" },
+    { "id": "a-json-replyonly","raw": "{\"reply\":\"Linen breathes better than cotton.\"}", "via": "json", "noSearch": true },
+
+    { "_note": "Prose is a legitimate answer, not a failure. Treating it as one is what produced three fallbacks.",
+      "id": "a-prose",       "raw": "Linen breathes better than cotton in humidity.", "via": "prose", "noSearch": true },
+    { "id": "a-prose-empty", "raw": "", "via": "prose", "noSearch": true },
+
+    { "_note": "Malformed structure must FALL THROUGH, never be half-believed.",
+      "id": "a-json-broken",   "raw": "{\"reply\":\"oops\",\"search\":}", "via": "prose", "noSearch": true },
+    { "id": "a-json-then-token", "raw": "{not json at all} [SEARCH: men linen shirt]", "via": "tokens", "search": "men linen shirt" },
+    { "id": "a-json-wrongtype",  "raw": "{\"reply\":\"x\",\"search\":123}", "via": "prose", "noSearch": true },
+    { "id": "a-json-empty-obj",  "raw": "{}", "via": "prose", "noSearch": true },
+    { "id": "a-json-other",      "raw": "{\"wardrobe\":[{\"item\":\"shirt\"}]} [SEARCH: men linen shirt]", "via": "tokens", "search": "men linen shirt" },
+    { "_note": "A one-slot outfit is a search. The bracket grammar accepted it as an outfit and the JSON schema refused it — a contract that means different things depending on how it was written is not a contract.",
+      "id": "a-outfit-of-one",   "raw": "[OUTFIT: men linen shirt]", "via": "tokens", "search": "men linen shirt", "outfitLen": 0 },
+    { "id": "a-json-outfit-one", "raw": "{\"reply\":\"x\",\"outfit\":[\"only one\"]}", "via": "json", "search": "only one", "outfitLen": 0 },
+    { "id": "a-token-empty",     "raw": "[SEARCH:   ]", "via": "prose", "noSearch": true }
+  ],
+
   "lossyCompilation": [
     { "_note": "§20: a term the parser does not know must NOT be silently dropped. These carry meaning no garment word captures.",
       "id": "l-muharram",  "q": "something for Muharram",        "residue": "muharram" },

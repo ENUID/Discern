@@ -11,6 +11,7 @@ import { outfitPlan, composeOutfit, composeOutfits, composeOutfitsWithProfiles }
 import { suggestQuery } from '@/lib/fashion/suggestQuery'
 import { exactMatchNote, stripUnverifiableClaims, wantsTheExactPiece } from '@/lib/fashion/exactMatch'
 import { stripEmphasis } from '@/lib/plainText'
+import { parseStylistAnswer } from '@/lib/stylist/answer'
 import { redactSecrets } from '@/lib/redact'
 import { type SameGarmentVerdict } from '@/lib/services/sameGarment'
 import { profilesFor } from '@/lib/services/enrichProduct'
@@ -1329,14 +1330,6 @@ function parseReply(raw: string): { reply: string; comparison?: Comparison } {
 }
 
 // ── Search token ────────────────────────────────────────────────────────────
-function parseSearchToken(text: string): { reply: string; searchQuery?: string } {
-  const match = text.match(/\[SEARCH:\s*([^\]]+)\]/i)
-  if (!match) return { reply: text.trim() }
-  return {
-    reply: text.replace(match[0], '').replace(/\n+$/, '').trim(),
-    searchQuery: match[1].trim().slice(0, 200),
-  }
-}
 
 // ── Grounding pass — reply from the REAL found products ──────────────────────
 // On a fresh search the model composes its reply BEFORE the catalog runs, so it
@@ -1393,34 +1386,12 @@ async function groundReplyInProducts(question: string, products: any[], history:
 }
 
 // ── Outfit token ─────────────────────────────────────────────────────────────
-function parseOutfitToken(text: string): { reply: string; outfitQueries?: string[] } {
-  const match = text.match(/\[OUTFIT:\s*([^\]]+)\]/i)
-  if (!match) return { reply: text.trim() }
-  const queries = match[1].split('|').map((q) => q.trim().slice(0, 200)).filter(Boolean).slice(0, 4)
-  return {
-    reply: text.replace(match[0], '').replace(/\n+$/, '').trim(),
-    outfitQueries: queries.length > 0 ? queries : undefined,
-  }
-}
 
 // ── Multi-outfit token ───────────────────────────────────────────────────────
 // [OUTFITS: a|b|c || d|e|f || g|h|i] — several DISTINCT looks in one reply, each
 // look separated by "||", each slot within a look by "|". This is what lets
 // "create three outfits" render as three separate carded looks instead of prose.
 // (The regex differs from [OUTFIT:] by the S, so the two never collide.)
-function parseOutfitsToken(text: string): { reply: string; outfitSets?: string[][] } {
-  const match = text.match(/\[OUTFITS:\s*([^\]]+)\]/i)
-  if (!match) return { reply: text.trim() }
-  const sets = match[1]
-    .split('||')
-    .map(chunk => chunk.split('|').map(q => q.trim().slice(0, 200)).filter(Boolean).slice(0, 4))
-    .filter(set => set.length > 0)
-    .slice(0, 3)
-  return {
-    reply: text.replace(match[0], '').replace(/\n+$/, '').trim(),
-    outfitSets: sets.length > 0 ? sets : undefined,
-  }
-}
 
 // ── Wardrobe token ───────────────────────────────────────────────────────────
 // Brace-depth scan rather than a lazy regex — a lazy `\{[\s\S]*?\}` only
@@ -2504,9 +2475,19 @@ Use concrete garment, colour, and material words only, never a brand or product 
     if (!raw) return finish({ reply: "I missed that one, sorry. Try again?", retryable: true, comparison: null })
 
     const { reply: replyWithSearch, comparison } = parseReply(raw)
-    const { reply: replyWithOutfit, searchQuery: rawSearchQuery } = parseSearchToken(replyWithSearch)
-    const { reply: replyWithOutfits, outfitQueries: rawOutfitQueries } = parseOutfitToken(replyWithOutfit)
-    const { reply: parsedReply, outfitSets: rawOutfitSets } = parseOutfitsToken(replyWithOutfits)
+    // ONE boundary between what the model said and what this route believes.
+    //
+    // This was three regexes in a row over prose, and whether the shopper saw
+    // any clothes depended on a model remembering a bracket grammar
+    // mid-sentence. The grammar is still the second strategy inside — nothing
+    // about what the model is asked for has changed — but it is now validated
+    // into a typed answer at a single point, so the JSON path can be turned on
+    // later without touching one line of what follows. See lib/stylist/answer.
+    const answer = parseStylistAnswer(replyWithSearch)
+    const parsedReply = answer.reply
+    const rawSearchQuery = answer.search
+    const rawOutfitQueries = answer.outfit
+    const rawOutfitSets = answer.outfits
     // Now that SEARCH/OUTFIT/COMPARE tokens are stripped out, turn any leftover
     // "(product N)" prose references in the visible reply into real
     // [PRODUCT:N-1] cards, so every pinned piece the model recommends renders,
@@ -2972,6 +2953,11 @@ Use concrete garment, colour, and material words only, never a brand or product 
       looks: foundProductGroups ? await looksFrom(foundProductGroups) : [],
       outfitSlots, outfitGroups, searchQuery: searchQuery || undefined,
       suggest: suggest ?? undefined,
+      // Which strategy read the model's answer — json, tokens or prose. The
+      // interface ignores it; it is the only way to see whether the move to a
+      // JSON contract is actually happening, and it cannot be recovered after
+      // the fact.
+      answerVia: answer.via,
       // Present only when an outfit was requested and produced nothing. The
       // interface ignores it; it is here so the failure can be read from
       // outside without the deploy logs.

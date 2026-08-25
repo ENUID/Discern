@@ -44,6 +44,7 @@ const ok = load('lib/fashion/outfitKnowledge.ts', 'ok')
 const gp = load('lib/fashion/garmentProfile.ts', 'gp')
 const em = load('lib/fashion/exactMatch.ts', 'em')
 const sq = load('lib/fashion/suggestQuery.ts', 'sq')
+const an = load('lib/stylist/answer.ts', 'an')
 
 const S = JSON.parse(fs.readFileSync(path.join(WEB, 'eval/scenarios.json'), 'utf8'))
 
@@ -191,6 +192,38 @@ for (const c of arr(S.suggestion)) {
     fail('missing_constraint', c.id, `"${line}" carries too many mandatory adjectives`)
   }
   if (/[*_`#]/.test(line)) fail('hallucinated_fact', c.id, `"${line}" carries markdown`)
+}
+
+// ── §44: the answer contract ────────────────────────────────────────────────
+for (const c of arr(S.answerContract)) {
+  if (c.raw === undefined) continue
+  ran++
+  const a = an.parseStylistAnswer(c.raw)
+  if (c.via && a.via !== c.via) {
+    fail('hallucinated_fact', c.id, `read via ${a.via} (want ${c.via})`)
+    continue
+  }
+  if (c.search && a.search !== c.search) {
+    fail('missing_constraint', c.id, `search ${JSON.stringify(a.search)} (want ${JSON.stringify(c.search)})`)
+  }
+  if (c.noSearch && (a.search || a.outfit || a.outfits)) {
+    fail('hallucinated_fact', c.id, 'invented an instruction from an answer that carried none')
+  }
+  if (c.reply && a.reply !== c.reply) {
+    fail('missing_constraint', c.id, `reply ${JSON.stringify(a.reply)} (want ${JSON.stringify(c.reply)})`)
+  }
+  if (c.outfit && JSON.stringify(a.outfit) !== JSON.stringify(c.outfit)) {
+    fail('missing_constraint', c.id, `outfit ${JSON.stringify(a.outfit)}`)
+  }
+  if (c.outfits && arr(a.outfits).length !== c.outfits) {
+    fail('missing_constraint', c.id, `${arr(a.outfits).length} looks (want ${c.outfits})`)
+  }
+  if (c.noOutfit && a.outfit) {
+    fail('missing_constraint', c.id, 'read several looks as one')
+  }
+  if (c.outfitLen != null && arr(a.outfit).length !== c.outfitLen) {
+    fail('missing_constraint', c.id, `outfit of ${arr(a.outfit).length} (want ${c.outfitLen})`)
+  }
 }
 
 // ── §20: unrecognised meaning must not be silently dropped ─────────────────
