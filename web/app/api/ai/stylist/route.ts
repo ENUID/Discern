@@ -12,6 +12,10 @@ import { suggestQuery } from '@/lib/fashion/suggestQuery'
 import { exactMatchNote, stripUnverifiableClaims, wantsTheExactPiece } from '@/lib/fashion/exactMatch'
 import { stripEmphasis } from '@/lib/plainText'
 import { lastJudgeDetail } from '@/lib/services/relevanceRerank'
+import {
+  stylistRateLimited, modelLooksDown, noteModelFailure, noteModelSuccess,
+  markProviderOut, providerOutUntil, isRateLimited, PROVIDER_OUT_MS,
+} from '@/lib/stylist/limits'
 import { parseStylistAnswer } from '@/lib/stylist/answer'
 import { startTrace, step, note, shown, finishTrace, type Trace } from '@/lib/stylist/trace'
 import { saveTrace, tracingEnabled } from '@/lib/stylist/traceStore'
@@ -834,7 +838,7 @@ async function stylistChat(
   // remembered — that really can be a one-off.
   const now = Date.now()
   const live = attempts.filter(a => {
-    const until = providerOut.get(a.name.split('(')[0])
+    const until = providerOutUntil(a.name.split('(')[0])
     if (until && until > now) { console.log(`[stylist] skipping ${a.name} — out of quota until ${new Date(until).toISOString()}`); return false }
     return true
   })
@@ -924,7 +928,7 @@ async function stylistChat(
       // Spent key or wrong key — do not pay for this again for a while.
       if (/\b429\b|rate limit|too many requests|quota|insufficient|billing|credit|\b401\b|\b403\b|unauthor|invalid api key/i.test(msg)) {
         const base = a.name.split('(')[0]
-        providerOut.set(base, Date.now() + PROVIDER_OUT_MS)
+        markProviderOut(base)
         console.warn(`[stylist] ${base} marked out for ${PROVIDER_OUT_MS / 60000}min — ${msg.slice(0, 120)}`)
       }
       errors.push(`${a.name}: ${msg}`)
@@ -933,18 +937,6 @@ async function stylistChat(
 
   // Everything failed — throw with the full diagnostic trail.
   throw new Error(errors.join(' | ') || 'all model calls failed')
-}
-
-// True when a failure was caused by every model being rate-limited, so the UI
-// can show a warm "we're busy" message instead of a generic error.
-// Providers whose key is spent or invalid, and when to bother with them again.
-// Module scope, so one request's discovery spares every request after it.
-const providerOut = new Map<string, number>()
-const PROVIDER_OUT_MS = 10 * 60_000
-
-function isRateLimited(err: unknown): boolean {
-  const msg = (err as Error)?.message || ''
-  return /\b429\b|rate limit|too many requests|quota/i.test(msg)
 }
 
 const BUSY_REPLY = "I'm briefly stretched thin and couldn't finish that one. Give it a few seconds and try again, or tell me the vibe and I'll style you from there."
@@ -1434,33 +1426,6 @@ function parseWardrobeToken(text: string): { reply: string; wardrobeScan?: any }
 }
 
 // ── Per-IP rate limit (shared in-process; Vercel may have multiple instances) ─
-const stylistBuckets = new Map<string, { count: number; resetAt: number }>()
-const STYLIST_MAX = 30   // requests per minute per IP
-const STYLIST_WIN = 60_000
-// Expired entries were only ever overwritten in place, never removed — on a
-// long-lived instance the map grows with every distinct IP ever seen for the
-// life of the process. Sweep it occasionally instead of on every request.
-let lastStylistSweep = 0
-const STYLIST_SWEEP_EVERY = 5 * 60_000
-
-function stylistRateLimited(req: NextRequest): boolean {
-  const ip = req.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim()
-    ?? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    ?? 'unknown'
-  const now = Date.now()
-  if (now - lastStylistSweep > STYLIST_SWEEP_EVERY) {
-    lastStylistSweep = now
-    stylistBuckets.forEach((bucket, key) => {
-      if (now > bucket.resetAt) stylistBuckets.delete(key)
-    })
-  }
-  const b = stylistBuckets.get(ip)
-  if (!b || now > b.resetAt) { stylistBuckets.set(ip, { count: 1, resetAt: now + STYLIST_WIN }); return false }
-  if (b.count >= STYLIST_MAX) return true
-  b.count++
-  return false
-}
-
 // ── Route ───────────────────────────────────────────────────────────────────
 // Streamed as newline-delimited JSON so the frontend's loading tracker can
 // show REAL progress instead of a client-only guessed animation — each
@@ -1541,30 +1506,6 @@ const REQUEST_BUDGET_MS = 52_000
 // window and the request goes straight to the catalogue. It costs a styled
 // answer for a minute; it saves every shopper in that minute from a 50-second
 // wait for an apology. One success closes it immediately.
-const BREAKER_TRIP_AT = 3
-const BREAKER_COOLDOWN_MS = 60_000
-let modelFailures = 0
-let breakerOpenedAt = 0
-function modelLooksDown(): boolean {
-  if (modelFailures < BREAKER_TRIP_AT) return false
-  if (Date.now() - breakerOpenedAt > BREAKER_COOLDOWN_MS) {
-    // Cooldown elapsed — let one request through to find out if it recovered.
-    modelFailures = 0
-    return false
-  }
-  return true
-}
-function noteModelFailure() {
-  modelFailures++
-  if (modelFailures === BREAKER_TRIP_AT) {
-    breakerOpenedAt = Date.now()
-    console.warn('[stylist] model breaker OPEN — serving the catalogue directly for 60s')
-  }
-}
-function noteModelSuccess() {
-  if (modelFailures > 0) console.log('[stylist] model breaker closed')
-  modelFailures = 0
-}
 // Race any awaited work against the remaining budget. On timeout it resolves to
 // `fallback` (never rejects) and the outer flow proceeds to finish() with what
 // it has; the orphaned promise settles harmlessly after the stream is closed.

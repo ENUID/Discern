@@ -45236,6 +45236,66 @@ function exactMatchNote(question, searchQuery, shown2, verdict) {
   return "I cannot promise any of these is the exact piece \u2014 these are the closest I carry.";
 }
 
+// lib/stylist/limits.ts
+var stylistBuckets = /* @__PURE__ */ new Map();
+var STYLIST_MAX = 30;
+var STYLIST_WIN = 6e4;
+var lastStylistSweep = 0;
+var STYLIST_SWEEP_EVERY = 5 * 6e4;
+function stylistRateLimited(req) {
+  const ip = req.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const now = Date.now();
+  if (now - lastStylistSweep > STYLIST_SWEEP_EVERY) {
+    lastStylistSweep = now;
+    stylistBuckets.forEach((bucket, key2) => {
+      if (now > bucket.resetAt) stylistBuckets.delete(key2);
+    });
+  }
+  const b = stylistBuckets.get(ip);
+  if (!b || now > b.resetAt) {
+    stylistBuckets.set(ip, { count: 1, resetAt: now + STYLIST_WIN });
+    return false;
+  }
+  if (b.count >= STYLIST_MAX) return true;
+  b.count++;
+  return false;
+}
+var BREAKER_TRIP_AT = 3;
+var BREAKER_COOLDOWN_MS = 6e4;
+var modelFailures = 0;
+var breakerOpenedAt = 0;
+function modelLooksDown() {
+  if (modelFailures < BREAKER_TRIP_AT) return false;
+  if (Date.now() - breakerOpenedAt > BREAKER_COOLDOWN_MS) {
+    modelFailures = 0;
+    return false;
+  }
+  return true;
+}
+function noteModelFailure() {
+  modelFailures++;
+  if (modelFailures === BREAKER_TRIP_AT) {
+    breakerOpenedAt = Date.now();
+    console.warn("[stylist] model breaker OPEN \u2014 serving the catalogue directly for 60s");
+  }
+}
+function noteModelSuccess() {
+  if (modelFailures > 0) console.log("[stylist] model breaker closed");
+  modelFailures = 0;
+}
+var providerOut = /* @__PURE__ */ new Map();
+var PROVIDER_OUT_MS = 10 * 6e4;
+function markProviderOut(name) {
+  providerOut.set(name, Date.now() + PROVIDER_OUT_MS);
+}
+function providerOutUntil(name) {
+  return providerOut.get(name);
+}
+function isRateLimited(err) {
+  const msg = err?.message || "";
+  return /\b429\b|rate limit|too many requests|quota/i.test(msg);
+}
+
 // lib/stylist/answer.ts
 var Query = external_exports.string().trim().min(1).max(200);
 var StylistAnswerSchema = external_exports.object({
@@ -46216,7 +46276,7 @@ async function stylistChat(messages, system, opts, useGemini = false) {
   }
   const now = Date.now();
   const live = attempts.filter((a) => {
-    const until = providerOut.get(a.name.split("(")[0]);
+    const until = providerOutUntil(a.name.split("(")[0]);
     if (until && until > now) {
       console.log(`[stylist] skipping ${a.name} \u2014 out of quota until ${new Date(until).toISOString()}`);
       return false;
@@ -46256,19 +46316,13 @@ async function stylistChat(messages, system, opts, useGemini = false) {
       const msg = err.message || "";
       if (/\b429\b|rate limit|too many requests|quota|insufficient|billing|credit|\b401\b|\b403\b|unauthor|invalid api key/i.test(msg)) {
         const base = a.name.split("(")[0];
-        providerOut.set(base, Date.now() + PROVIDER_OUT_MS);
+        markProviderOut(base);
         console.warn(`[stylist] ${base} marked out for ${PROVIDER_OUT_MS / 6e4}min \u2014 ${msg.slice(0, 120)}`);
       }
       errors.push(`${a.name}: ${msg}`);
     }
   }
   throw new Error(errors.join(" | ") || "all model calls failed");
-}
-var providerOut = /* @__PURE__ */ new Map();
-var PROVIDER_OUT_MS = 10 * 6e4;
-function isRateLimited(err) {
-  const msg = err?.message || "";
-  return /\b429\b|rate limit|too many requests|quota/i.test(msg);
 }
 var BUSY_REPLY = "I'm briefly stretched thin and couldn't finish that one. Give it a few seconds and try again, or tell me the vibe and I'll style you from there.";
 function enrichHistory(messages) {
@@ -46645,29 +46699,6 @@ function parseWardrobeToken(text) {
     return { reply: replyText || text.trim() };
   }
 }
-var stylistBuckets = /* @__PURE__ */ new Map();
-var STYLIST_MAX = 30;
-var STYLIST_WIN = 6e4;
-var lastStylistSweep = 0;
-var STYLIST_SWEEP_EVERY = 5 * 6e4;
-function stylistRateLimited(req) {
-  const ip = req.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-  const now = Date.now();
-  if (now - lastStylistSweep > STYLIST_SWEEP_EVERY) {
-    lastStylistSweep = now;
-    stylistBuckets.forEach((bucket, key2) => {
-      if (now > bucket.resetAt) stylistBuckets.delete(key2);
-    });
-  }
-  const b = stylistBuckets.get(ip);
-  if (!b || now > b.resetAt) {
-    stylistBuckets.set(ip, { count: 1, resetAt: now + STYLIST_WIN });
-    return false;
-  }
-  if (b.count >= STYLIST_MAX) return true;
-  b.count++;
-  return false;
-}
 async function POST(req) {
   if (stylistRateLimited(req)) {
     return import_server10.NextResponse.json({ reply: "Too many requests \u2014 please slow down.", busy: false }, { status: 429 });
@@ -46710,29 +46741,6 @@ async function POST(req) {
   });
 }
 var REQUEST_BUDGET_MS = 52e3;
-var BREAKER_TRIP_AT = 3;
-var BREAKER_COOLDOWN_MS = 6e4;
-var modelFailures = 0;
-var breakerOpenedAt = 0;
-function modelLooksDown() {
-  if (modelFailures < BREAKER_TRIP_AT) return false;
-  if (Date.now() - breakerOpenedAt > BREAKER_COOLDOWN_MS) {
-    modelFailures = 0;
-    return false;
-  }
-  return true;
-}
-function noteModelFailure() {
-  modelFailures++;
-  if (modelFailures === BREAKER_TRIP_AT) {
-    breakerOpenedAt = Date.now();
-    console.warn("[stylist] model breaker OPEN \u2014 serving the catalogue directly for 60s");
-  }
-}
-function noteModelSuccess() {
-  if (modelFailures > 0) console.log("[stylist] model breaker closed");
-  modelFailures = 0;
-}
 function withDeadline(work, deadlineAt, fallback) {
   const remaining = deadlineAt - Date.now();
   if (remaining <= 400) return Promise.resolve(fallback);

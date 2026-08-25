@@ -38,6 +38,7 @@ const UNIT = [
   'characterize.js',
   'exact-match.js',
   'trace.js',
+  'limits.js',
   'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',
