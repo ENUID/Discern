@@ -40,6 +40,8 @@ const UNIT = [
   'trace.js',
   'limits.js',
   'usage.js',
+  // Not a behaviour test: it hashes the prompts, so text cannot drift silently.
+  'prompts.js',
   'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',

@@ -1,0 +1,35 @@
+{
+  "note": "SHA-256 of each prompt as the model receives it. Written by scripts/prompts.js --update. Editing this file by hand defeats the guard.",
+  "prompts": {
+    "CHAT_SYSTEM": {
+      "sha256": "6257da469cd0aa5dfbd834e1b19087b8bca7bd0b25371876b93da64cfae3addf",
+      "chars": 3495,
+      "lines": 16
+    },
+    "FASHION_KNOWLEDGE": {
+      "sha256": "7415427dcb16f0b798062ff7b33b39a8de46e94820075c3c3aca31eb5d82c3ed",
+      "chars": 5284,
+      "lines": 15
+    },
+    "GROUNDING_SYSTEM": {
+      "sha256": "e2e37df3b20f7c01e75a11b88acca0b1caa87dc737af27bf24707cbd4e945f2a",
+      "chars": 1538,
+      "lines": 8
+    },
+    "SYSTEM": {
+      "sha256": "d5af9cadccd61825563b8a7b70be18607c4e35c49ca33dc75eba2e6e7e180be1",
+      "chars": 27928,
+      "lines": 80
+    },
+    "VISION_SYSTEM": {
+      "sha256": "207a0c4e4929fd3b0b69d0af08a66ebe2cd6e77c3aae8d2de350d5c48cb6b822",
+      "chars": 15851,
+      "lines": 83
+    },
+    "WARDROBE_SYSTEM": {
+      "sha256": "d195c4d16910fb3b7092e0f3fd99927107357e4c5c8e4e0481993ef0488389c1",
+      "chars": 727,
+      "lines": 14
+    }
+  }
+}
