@@ -33,6 +33,7 @@ const browser = process.argv.includes('--browser')
 /** Harnesses that need only node. Each exits non-zero on failure. */
 const UNIT = [
   'exact-match.js',
+  'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',
   'occasion.js',

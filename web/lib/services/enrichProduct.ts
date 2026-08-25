@@ -18,7 +18,8 @@
  * search fail or a page wait.
  */
 import { BoundedCache } from '@/lib/boundedCache'
-import { groqVisionChat, type VisionMessage } from '@/lib/groq'
+import { profileKey, readProfiles, writeProfiles } from '@/lib/services/persistentProfileCache'
+import { groqVisionChat, GROQ_DIRECT_VISION_MODEL, type VisionMessage } from '@/lib/groq'
 import {
   PROFILE_SYSTEM, profilePrompt, parseProfile, type GarmentProfile,
 } from '@/lib/fashion/garmentProfile'
@@ -84,14 +85,39 @@ export async function profilesFor(products: Readable[]): Promise<Map<string, Gar
   }
   if (todo.length === 0) return out
 
+  // Then the store, before spending anything.
+  //
+  // The map above is process-local, so on a serverless deployment it is empty
+  // for most of the requests that matter — a cold instance knew nothing and
+  // re-read garments this app had already looked at hundreds of times. One
+  // batched query stands between that and paying for a vision call on a
+  // provider whose quota is gone.
+  const keyOf = new Map<string, string>()
+  for (const p of todo) keyOf.set(p.id, profileKey(p.id, p.image_url || '', GROQ_DIRECT_VISION_MODEL))
+  const stored = await readProfiles(Array.from(keyOf.values()))
+  const unseen: Readable[] = []
+  for (const p of todo) {
+    const found = stored.get(keyOf.get(p.id) || '')
+    if (found) { mem.set(p.id, found); out.set(p.id, found) }
+    else unseen.push(p)
+  }
+  if (unseen.length === 0) return out
+
+  /** What this pass actually had to look at, so it is only ever looked at once. */
+  const learned: { key: string; productId: string; profile: GarmentProfile }[] = []
+
   const work = async () => {
-    const queue = [...todo]
+    const queue = [...unseen]
     const runners = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
       for (;;) {
         const next = queue.shift()
         if (!next) return
         const profile = await readOne(next)
-        if (profile) { mem.set(next.id, profile); out.set(next.id, profile) }
+        if (profile) {
+          mem.set(next.id, profile)
+          out.set(next.id, profile)
+          learned.push({ key: keyOf.get(next.id) || '', productId: next.id, profile })
+        }
       }
     })
     await Promise.all(runners)
@@ -103,6 +129,13 @@ export async function profilesFor(products: Readable[]): Promise<Map<string, Gar
     work().catch(() => undefined),
     new Promise<void>(r => setTimeout(r, TIMEOUT_MS)),
   ])
+
+  // Written AFTER the box, and never awaited. Whatever was read inside the
+  // deadline is worth keeping even if the batch as a whole ran out of time —
+  // and nobody waiting on a page should wait on a cache write.
+  if (learned.length) {
+    void writeProfiles(learned).catch(() => undefined)
+  }
   return out
 }
 

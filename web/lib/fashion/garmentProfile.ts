@@ -27,6 +27,22 @@
  * between two known values, not a search for a word.
  */
 
+/** Versions, because a cached profile is only trustworthy while the thing that
+ *  produced it is unchanged.
+ *
+ *  §15 of the build spec asks for a cache identity of product + image + schema
+ *  + prompt + model, and it is right: a profile read by an older prompt against
+ *  an older field set is not the same answer, and silently reusing it is how a
+ *  cache becomes a source of stale wrong data rather than a saving.
+ *
+ *  BUMP SCHEMA when a field is added, removed or its values change.
+ *  BUMP PROMPT when PROFILE_SYSTEM or profilePrompt() changes what is asked.
+ *  Either bump invalidates every stored profile by changing the key — no
+ *  migration, no deletion, the old rows simply stop being addressed and age
+ *  out. */
+export const PROFILE_SCHEMA_VERSION = 1
+export const PROFILE_PROMPT_VERSION = 1
+
 export type Fit = 'slim' | 'regular' | 'relaxed' | 'oversized' | 'wide'
 export type Volume = 'fitted' | 'boxy'
 export type Weight = 'light' | 'mid' | 'heavy'

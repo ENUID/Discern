@@ -285,4 +285,24 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user", ["userId"])
     .index("by_user_session", ["userId", "sessionId"]),
+
+  // What a garment IS, read once by a vision model and kept.
+  //
+  // enrichProduct.ts held these in a process-local Map, so every cold start
+  // threw away every profile and re-paid the vision cost — on providers whose
+  // free tiers are exhausted. A garment does not become a different garment,
+  // so this is the one cache in the system with nothing to go stale: it is
+  // pure saving.
+  //
+  // No TTL, deliberately. Freshness is handled by the KEY instead (product +
+  // image + schema version + prompt version + model): change any of those and
+  // the old row simply stops being addressed. A time limit would only throw
+  // away correct answers and buy another vision call.
+  garment_profiles: defineTable({
+    key: v.string(),          // productId|image|schemaV|promptV|model
+    productId: v.string(),    // for finding every profile of one product
+    profile: v.string(),      // JSON-encoded GarmentProfile
+    createdAt: v.number(),
+  }).index("by_key", ["key"])
+    .index("by_product", ["productId"]),
 });
