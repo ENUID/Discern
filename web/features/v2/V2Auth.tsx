@@ -3,7 +3,7 @@
 /**
  * Sign-in for v2.
  *
- * This is the main app's account gate (DiscernPage.tsx, the .fr-gate-card
+ * This is the main app's account gate (formerly the v1 .fr-gate-card
  * block), ported across unchanged in structure and wording. Only the skin is
  * different: the frosted dark glass the menu and composer are cut from, Geist
  * throughout instead of the warm palette and Cormorant serif, and v2's radii and

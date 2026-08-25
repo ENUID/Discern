@@ -10,10 +10,12 @@ import {
 /**
  * The boutique interface is now the app.
  *
- * The chat UI it replaces still exists — features/discern/DiscernPage.tsx, with
- * every flow intact — so putting it back is a one-line change here. What moved
- * across with it is the part that mattered: the shopper context that made
- * Fabrics answer a known person rather than a stranger, which now lives in
+ * The chat UI it replaced was deleted in Stage 0 — 8,357 unreachable lines that
+ * every audit and every search was still reading. Its reasoning is preserved in
+ * docs/architecture/v1-decisions.md, and the implementation is one `git show`
+ * away if a product decision ever brings that interface back. What moved across
+ * with it is the part that mattered: the shopper context that made Fabrics
+ * answer a known person rather than a stranger, which now lives in
  * features/stylist and is shared rather than owned by one screen.
  *
  * Currency and country are resolved here, on the server, from the request's own

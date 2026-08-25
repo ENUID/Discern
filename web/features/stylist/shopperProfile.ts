@@ -4,7 +4,7 @@
 // person": gender and sizes decide what is even eligible, the wardrobe decides
 // what would be a duplicate, saved pieces and recent searches carry taste.
 //
-// These derivations used to live inside DiscernPage as four useMemo bodies, so
+// These derivations used to live inside the v1 page as four useMemo bodies, so
 // only the v1 UI could reach them. They are pure functions here so both
 // surfaces build the same payload from the same rules — a second copy would
 // drift, and the failure mode of drift is silent: the model simply answers a

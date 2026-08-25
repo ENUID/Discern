@@ -2,7 +2,7 @@
  * The Product shape.
  *
  * This file used to also export a ProductCard component. Nothing rendered it —
- * the product card that ships is the one built inline in DiscernPage
+ * the product card that ships is the one built inline in the v2 boutique
  * (renderFoundProductCard), and the two had drifted apart. The component is
  * gone; the type stays, because it is the shared contract between the search
  * stack, the chat hook and the page.

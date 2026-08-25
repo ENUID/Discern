@@ -3,7 +3,9 @@
 Measured at `2317da0`. Every number below comes from the working tree, not from
 the earlier audit — several had moved.
 
-**Audit only. No code written. Stopping for approval.**
+**Audit only when written. STAGE 0 IS NOW COMPLETE** — see §11, appended after
+execution. Everything from §1 onward describes the repository *before* Stage 0
+and is left unedited so the before/after is legible.
 
 ---
 
@@ -334,3 +336,86 @@ database migration, prompt rewriting, provider changes.
    edit-then-update-checksum. Confirm that is wanted.
 
 **Stopping here for approval.**
+
+
+---
+
+## 11. STAGE 0 — EXECUTED
+
+Approved with one condition: preserve the reasoning before deleting. Done in
+the order set out, with the result of each step.
+
+**1–2. Identified and confirmed.** A transitive dependency walk, not a grep:
+all 72 Next.js entry points (`page`/`route`/`layout`/`middleware`) plus every
+Convex function as roots, following `import`, `export from`, dynamic `import()`
+and `require()` through `@/` and relative specifiers.
+
+```
+  reachable      140 files
+  unreachable     46 files
+```
+
+Of the 46, all but the deletion set were test harnesses (invoked by `npm`, not
+imported), generated Convex types, and build configuration — correctly
+unreachable by import and not dead.
+
+**3–4. Reasoning extracted.** 44 decision-bearing comment blocks mined from the
+condemned files and distilled into:
+
+- `docs/architecture/v1-decisions.md` — 16 entries, five marked **STILL
+  BINDING** on v2
+- `docs/architecture/v2-migration-notes.md` — what v2 inherited, what it did
+  not, and why the v1 UI is not returning
+
+The most valuable are the z-index scale (a named layering order, written after
+the mandatory sign-in gate was found sitting *below* every sheet and modal in
+the app), the SSR rule against measuring the window in a state initializer, and
+the pinned-product recency window — **the last of which v2 does not have**, and
+which is now recorded as an open exposure rather than lost.
+
+**5. Searched again.** Six remaining textual references, all comments, zero
+imports. Each was corrected in place so no comment points at a file that no
+longer exists.
+
+**One binding item resolved before deleting rather than after.** §13 of
+`v1-decisions.md` records a localStorage migration (`from:` → `discern:`) that
+ran at module load and lived only in the condemned file. Checked: live v2 uses
+a **different namespace** (`discern.v2.*`, dot-separated), and the three
+`'discern:shopsFor'` hits elsewhere are a *CustomEvent name*, not a storage key.
+The migration fed only the v1 UI. Nothing live loses a read path.
+
+**6. Deleted.**
+
+```
+  features/discern/                       8,357
+  lib/_parked/                            1,081
+  features/discern/{components,hooks}/_parked/   (within the above)
+                                        ───────
+                                          9,430
+```
+
+**7. Verified.** `npm run verify` — 13 checks, 149 scenarios, typecheck and
+production build all green after deletion.
+
+**8. New repository size, measured:**
+
+| | before | after |
+|---|---|---|
+| total lines (ts/tsx) | 44,710 | **35,281** |
+| unreachable lines | 14,416 | 4,978 |
+| unreachable, excluding harnesses and config | 9,430 | **0** |
+
+Every remaining unreachable line is a test harness, a generated type, or build
+configuration. **The repository now contains no dead implementation.**
+
+The four large files are unchanged and unaffected — `stores.ts` 5,929,
+`DiscernV2.tsx` 3,892, `route.ts` 3,037, `GlobalCatalogService.ts` 1,764. That
+is the point: Stage 0 removed what nothing reaches, and touched nothing that
+runs.
+
+**Three orphan candidates outside the approved scope were left alone**, and are
+listed in `v2-migration-notes.md` so the next pass need not rediscover them:
+`components/IntersectionSentinel.tsx` (37), `features/landing/HeroPrompt.tsx`
+(79), and `scratch/` (~50 ad-hoc debug scripts, never in the build).
+
+**9. Next:** the characterization tests of §5, before the first extraction.
