@@ -23,11 +23,23 @@ import { runAfterResponse } from '../afterResponse'
 import { wornGenderFor } from './wornGender'
 import { findSameGarment } from './sameGarment'
 
-/** The last search's judge outcome, for the diagnostic endpoint and the
- *  scorecard. A module-level value is enough: it answers "is the taste layer
- *  running at all", which is a property of the deployment rather than of one
- *  request. */
-export let lastJudgeOutcome: JudgeOutcome | 'not-run' = 'not-run'
+/** How the judge went for ONE search, reported to whoever asked for that
+ *  search rather than left in a module-level slot.
+ *
+ *  It used to be `export let lastJudgeOutcome`, on the reasoning that it
+ *  answers "is the taste layer running at all", which is a property of the
+ *  deployment rather than of one request. That reasoning does not survive two
+ *  shoppers at once: the value a request reported was whichever search
+ *  finished last, so a request could and did report a judge outcome that
+ *  belonged to somebody else's query. Proven, then fixed — see
+ *  `scripts/judge-scope.js`.
+ *
+ *  Passed as `options.onJudge`, the same shape as `options.onProgress`
+ *  directly above it, and request-scoped for the same reason: it is a closure
+ *  over the caller's own state, so there is only ever one request's answer in
+ *  it. A caller that does not pass it is not reporting the outcome and pays
+ *  nothing. */
+export type JudgeReport = (outcome: JudgeOutcome, detail: string) => void
 
 /** What the last look at the shopper's photograph concluded.
  *
@@ -1251,6 +1263,8 @@ export class GlobalCatalogService {
       refreshReserve?: boolean
       debug?: CatalogSearchDebug
       onProgress?: CatalogProgress
+      /** Where this search's judge outcome goes. See JudgeReport above. */
+      onJudge?: JudgeReport
     } = {},
     brandDomains: string[] = [],
     _tasteProfile?: string,
@@ -1527,8 +1541,8 @@ export class GlobalCatalogService {
         // stays up while the judge is actually thinking.
         options.onProgress?.({ kind: 'judge', candidates: result.length })
         const judgeQuery = (rerankQuery && rerankQuery.trim()) ? rerankQuery.trim() : rawQuery
-        result = await rerankByRelevance(judgeQuery, result, _tasteProfile, (o) => {
-          lastJudgeOutcome = o
+        result = await rerankByRelevance(judgeQuery, result, _tasteProfile, (o, detail) => {
+          options.onJudge?.(o, detail)
           if (o !== 'judged' && o !== 'cached') {
             console.warn(`[Catalog] the judge did NOT rank "${judgeQuery}" (${o}) — this page is keyword order`)
           }

@@ -44,6 +44,7 @@ const UNIT = [
   'prompts.js',
   'retrieval.js',
   'ladder.js',
+  'judge-scope.js',
   'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',

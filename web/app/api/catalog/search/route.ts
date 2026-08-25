@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { GlobalCatalogService, lastJudgeOutcome } from '@/lib/services/GlobalCatalogService'
-import { lastJudgeDetail } from '@/lib/services/relevanceRerank'
+import { GlobalCatalogService, type JudgeReport } from '@/lib/services/GlobalCatalogService'
+import { type JudgeOutcome } from '@/lib/services/relevanceRerank'
 import {
   normalizeFashionTypos, buildMandatoryConcepts, classifyQuerySlot,
   GARMENT_VOCAB, decomposeQuery, dropGenericWhenSpecific,
@@ -90,6 +90,13 @@ export async function POST(req: NextRequest) {
   if (!raw) return NextResponse.json({ products: [], groups: [], reason: 'empty-query' })
 
   const q = normalizeFashionTypos(raw)
+
+  // How the judge went, for THIS request. Was a module-level `export let` in
+  // two files, so the value reported belonged to whichever search in the
+  // process finished last — see the note on JudgeReport.
+  let judge: JudgeOutcome | 'not-run' = 'not-run'
+  let judgeDetail = ''
+  const onJudge: JudgeReport = (o, d) => { judge = o; judgeDetail = d }
   const countryCode: string | null =
     typeof body?.country === 'string' && body.country.trim() ? body.country.trim().toUpperCase() : null
   const currency: string =
@@ -151,7 +158,7 @@ export async function POST(req: NextRequest) {
         try {
           const found = await perStrip(GlobalCatalogService.search(
             sub, undefined, [], countryCode, true, buildMandatoryConcepts(sub),
-            'relevance', currency, { fastFirstPage: true }, [], undefined, sub, sizeFor(sub),
+            'relevance', currency, { onJudge, fastFirstPage: true }, [], undefined, sub, sizeFor(sub),
           ))
           const label = term.charAt(0).toUpperCase() + term.slice(1)
           return { label, query: sub, products: found.slice(0, 8) } as Group
@@ -171,7 +178,7 @@ export async function POST(req: NextRequest) {
         // Whether the taste layer actually ran. Without it a page is a keyword
         // search with filters on it, and that is indistinguishable from bad
         // taste unless it is said.
-        return NextResponse.json({ products: flat, groups, query: q, plan: plan?.occasion ?? 'named-garments', judge: lastJudgeOutcome, judgeDetail: lastJudgeDetail })
+        return NextResponse.json({ products: flat, groups, query: q, plan: plan?.occasion ?? 'named-garments', judge, judgeDetail })
       }
     }
 
@@ -186,12 +193,12 @@ export async function POST(req: NextRequest) {
       opts, [], undefined, raw, sizeFor(term),
     )
     const found = await byDeadline(
-      runSearch({ fastFirstPage: true }),
+      runSearch({ onJudge, fastFirstPage: true }),
       [] as any[],
       // Second pass with the judge off: the pool is already fetched and cached
       // by then, so this returns the keyword-ordered page in a fraction of the
       // time. A worse order is a far better answer than none.
-      () => runSearch({ fastFirstPage: true, sort: 'trust_desc' as never }),
+      () => runSearch({ onJudge, fastFirstPage: true, sort: 'trust_desc' as never }),
     )
     // An empty page has to say WHICH empty it is. Without this the response is
     // `{products: []}` and nothing else — indistinguishable, from the outside,
@@ -202,7 +209,7 @@ export async function POST(req: NextRequest) {
     const page = found.slice(0, 12)
     return NextResponse.json({
       products: page, groups: [], query: term,
-      judge: lastJudgeOutcome, judgeDetail: lastJudgeDetail,
+      judge, judgeDetail,
       ...(page.length === 0 ? { reason: 'no-matches' } : {}),
     })
   } catch (e) {

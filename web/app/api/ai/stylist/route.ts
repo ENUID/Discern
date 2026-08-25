@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { wardrobeVisionChat, stripThinkTags, stripAiDashes, stripSafetyLabels, looksLikeLeakedReasoning } from '@/lib/groq'
-import { GlobalCatalogService, sameGarmentVerdictFor, lastJudgeOutcome, type CatalogProgress } from '@/lib/services/GlobalCatalogService'
+import { GlobalCatalogService, sameGarmentVerdictFor, type CatalogProgress, type JudgeReport } from '@/lib/services/GlobalCatalogService'
+import { type JudgeOutcome } from '@/lib/services/relevanceRerank'
 import { normalizeFashionTypos, buildMandatoryConcepts, classifyQuerySlot, productMatchesSlot, productMatchesGarmentKey, decomposeQuery, GARMENT_VOCAB, GARMENT_CATEGORY, type SlotCategory } from '@/lib/queryParser'
 import { matchStyles, vocabPromptBlock } from '@/lib/styleVocabulary'
 import { detectBrandsInQuery } from '@/lib/stores'
@@ -10,7 +11,6 @@ import { outfitPlan, composeOutfit } from '@/lib/fashion/outfitKnowledge'
 import { suggestQuery } from '@/lib/fashion/suggestQuery'
 import { exactMatchNote, stripUnverifiableClaims } from '@/lib/fashion/exactMatch'
 import { stripEmphasis } from '@/lib/plainText'
-import { lastJudgeDetail } from '@/lib/services/relevanceRerank'
 import {
   stylistRateLimited, modelLooksDown, noteModelFailure, noteModelSuccess, isRateLimited,
 } from '@/lib/stylist/limits'
@@ -393,6 +393,18 @@ async function runStylistRequest(
   finish: (result: Record<string, unknown>) => void,
 ): Promise<void> {
   const requestDeadline = Date.now() + REQUEST_BUDGET_MS
+
+  // ── How the judge went, for THIS request ──────────────────────────────────
+  // Both of these were module-level `export let`s until now, which meant the
+  // values a reply reported were whichever search in the whole process had
+  // finished most recently. Two shoppers asking at once reported each other's
+  // judge outcomes. Now they are ordinary local variables, handed to every
+  // search below as `onJudge` and read at the two places that report them.
+  // The last search of THIS request wins, which is what the module slot did
+  // within a single request and is the only part of it that was ever correct.
+  let judge: JudgeOutcome | 'not-run' = 'not-run'
+  let judgeDetail = ''
+  const onJudge: JudgeReport = (o, d) => { judge = o; judgeDetail = d }
   /** Why did we show this? One per request, held in this closure — never a
    *  module global, which is what makes lastJudgeOutcome unusable for the
    *  question. See lib/stylist/trace.ts. */
@@ -548,6 +560,7 @@ async function runStylistRequest(
           const groups = await withDeadline(multiCategorySearch(
             q, undefined, countryCode, buyerCurrency, tasteProfile, sizeForQuery,
             onSearchProgress, shopperGender,
+            onJudge,
           ), requestDeadline, null)
           if (groups && groups.length) {
             return {
@@ -569,7 +582,7 @@ async function runStylistRequest(
           term, searchArgs?.budgetMax, [], countryCode, true,
           searchArgs?.mandatoryConcepts || buildMandatoryConcepts(term),
           searchArgs?.sort || 'relevance', searchArgs?.budgetCurrency || buyerCurrency,
-          { fastFirstPage: true, onProgress: onSearchProgress }, [],
+          { onJudge, fastFirstPage: true, onProgress: onSearchProgress }, [],
           // The shopper's own photograph, when they held one up. The vision
           // model's words got us to the right shelf; this picks off it by
           // measuring each candidate's photograph against theirs.
@@ -620,7 +633,7 @@ async function runStylistRequest(
       const rescued = await speculative
       if (rescued) {
         console.log(`[stylist] model unavailable (${kind}) — served from the catalogue directly`)
-        note(trace, { degraded: true, modelTrace: modelTrace ?? undefined, judge: lastJudgeOutcome, judgeDetail: lastJudgeDetail })
+        note(trace, { degraded: true, modelTrace: modelTrace ?? undefined, judge, judgeDetail })
         step(trace, 'served without the model', kind)
         shown(trace, (rescued.foundProducts as unknown[]) ?? [])
         keepTrace(trace)
@@ -712,7 +725,7 @@ async function runStylistRequest(
         const concepts = buildMandatoryConcepts(loadMoreQuery)
         const results = await GlobalCatalogService.search(
           loadMoreQuery, undefined, excludeIds, countryCode, true, concepts,
-          'relevance', buyerCurrency, { fastFirstPage: true, loadMore: true }, [],
+          'relevance', buyerCurrency, { onJudge, fastFirstPage: true, loadMore: true }, [],
           tasteProfile, undefined, sizeForQuery(loadMoreQuery),
         )
         send('curate', 'Ranking the next best picks', `rank.relevance(${results.length} candidates)`)
@@ -814,6 +827,7 @@ async function runStylistRequest(
             genderedQuestion, compiled.args.budgetMax, countryCode,
             compiled.args.budgetCurrency || buyerCurrency, tasteProfile, sizeForQuery,
             onSearchProgress, shopperGender,
+            onJudge,
           )
           if (multiGroups) {
             const totalCount = multiGroups.reduce((sum, g) => sum + g.products.length, 0)
@@ -837,7 +851,7 @@ async function runStylistRequest(
           let results = await GlobalCatalogService.search(
             compiled.args.searchQuery, compiled.args.budgetMax, [], countryCode, true,
             compiled.args.mandatoryConcepts || [], compiled.args.sort || 'relevance',
-            compiled.args.budgetCurrency || buyerCurrency, { fastFirstPage: true, onProgress: onSearchProgress }, [],
+            compiled.args.budgetCurrency || buyerCurrency, { onJudge, fastFirstPage: true, onProgress: onSearchProgress }, [],
             tasteProfile, question, preferredSize,
           )
           // Agentic refine, bounded to exactly one extra round: a budget cap
@@ -849,7 +863,7 @@ async function runStylistRequest(
             const widened = await GlobalCatalogService.search(
               compiled.args.searchQuery, undefined, [], countryCode, true,
               compiled.args.mandatoryConcepts || [], compiled.args.sort || 'relevance',
-              compiled.args.budgetCurrency || buyerCurrency, { fastFirstPage: true }, [],
+              compiled.args.budgetCurrency || buyerCurrency, { onJudge, fastFirstPage: true }, [],
               tasteProfile, question, preferredSize,
             )
             if (widened.length > results.length) {
@@ -1348,6 +1362,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
         const multiGroups = await withDeadline(multiCategorySearch(
           searchQuery, llmBudget.budgetMax, countryCode, buyerCurrency,
           tasteProfile, sizeForQuery, onSearchProgress, shopperGender,
+          onJudge,
         ), requestDeadline, null)
         if (multiGroups) {
           foundProductGroups = multiGroups
@@ -1364,7 +1379,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
           searchQuery,
           llmBudget.budgetMax, [], countryCode, true, concepts,
           'relevance', buyerCurrency,
-          { fastFirstPage: true, onProgress: onSearchProgress }, [],
+          { onJudge, fastFirstPage: true, onProgress: onSearchProgress }, [],
           tasteProfile,
           question, preferredSize,
         ), requestDeadline, [] as any[])
@@ -1385,7 +1400,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
             const debranded = stripBrandNames(searchQuery, brands) || searchQuery
             const broad = await withDeadline(GlobalCatalogService.search(
               debranded, llmBudget.budgetMax, [], countryCode, true, buildMandatoryConcepts(debranded),
-              'relevance', buyerCurrency, { fastFirstPage: true }, [],
+              'relevance', buyerCurrency, { onJudge, fastFirstPage: true }, [],
               tasteProfile, question, preferredSize,
             ), requestDeadline, [] as any[])
             const names = brands.map(brandNameOf).filter(Boolean).join(' & ')
@@ -1406,7 +1421,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
           if (llmBudget.budgetMax) {
             const widened = await withDeadline(GlobalCatalogService.search(
               searchQuery, undefined, [], countryCode, true, concepts,
-              'relevance', buyerCurrency, { fastFirstPage: true }, [],
+              'relevance', buyerCurrency, { onJudge, fastFirstPage: true }, [],
               tasteProfile, question, preferredSize,
             ), requestDeadline, [] as any[])
             if (widened.length > results.length) {
@@ -1429,7 +1444,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
             if (broadened) {
               const retry = await withDeadline(GlobalCatalogService.search(
                 broadened, undefined, [], countryCode, true, buildMandatoryConcepts(broadened),
-                'relevance', buyerCurrency, { fastFirstPage: true }, [],
+                'relevance', buyerCurrency, { onJudge, fastFirstPage: true }, [],
                 tasteProfile, question, preferredSize,
               ), requestDeadline, [] as any[])
               if (retry.length > results.length) {
@@ -1475,7 +1490,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
             const concepts = buildMandatoryConcepts(q)
             const results = await GlobalCatalogService.search(
               q, undefined, [], countryCode, true, concepts,
-              'relevance', buyerCurrency, { fastFirstPage: true }, [],
+              'relevance', buyerCurrency, { onJudge, fastFirstPage: true }, [],
               tasteProfile, undefined, sizeForQuery(q), images[0] ?? null,
             )
             const filtered = slotCat ? results.filter(p => productMatchesSlot(p, slotCat)) : results
@@ -1556,7 +1571,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
             const { slotCat } = outfitSlotInfo(q)
             const results = await GlobalCatalogService.search(
               q, undefined, [], countryCode, true, buildMandatoryConcepts(q),
-              'relevance', buyerCurrency, { fastFirstPage: true }, [],
+              'relevance', buyerCurrency, { onJudge, fastFirstPage: true }, [],
               tasteProfile, undefined, sizeForQuery(q), images[0] ?? null,
             )
             const filtered = slotCat ? results.filter(p => productMatchesSlot(p, slotCat)) : results
@@ -1599,7 +1614,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
         send('search', 'Casting a wider net', `catalog.search("${fallbackQ}")`)
         const broad = await withDeadline(GlobalCatalogService.search(
           fallbackQ, undefined, [], countryCode, true, buildMandatoryConcepts(fallbackQ),
-          'relevance', buyerCurrency, { fastFirstPage: true }, [],
+          'relevance', buyerCurrency, { onJudge, fastFirstPage: true }, [],
           tasteProfile, question, sizeForQuery(fallbackQ),
         ), requestDeadline, [] as any[])
         if (broad.length > 0) foundProducts = dedupeById(broad).slice(0, INITIAL_RESULT_CAP)
@@ -1646,6 +1661,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
           send('outfit', 'Pulling the pieces', `catalog.multi(${keysToSurface.join(', ')})`)
           const groups = await withDeadline(multiCategorySearch(
             surfaceQuery, undefined, countryCode, buyerCurrency, tasteProfile, sizeForQuery, onSearchProgress, shopperGender,
+            onJudge,
           ), requestDeadline, null)
           if (groups && groups.length > 0) {
             foundProductGroups = groups
@@ -1769,7 +1785,7 @@ Use concrete garment, colour, and material words only, never a brand or product 
       : null
 
     note(trace, {
-      judge: lastJudgeOutcome, judgeDetail: lastJudgeDetail,
+      judge, judgeDetail,
       outfitTrace: outfitTrace ?? undefined,
       sameGarment: sameVerdict
         ? { matched: sameVerdict.sameIndex != null, confidence: sameVerdict.confidence, why: sameVerdict.why }

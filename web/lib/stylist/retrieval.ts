@@ -25,7 +25,7 @@
  * into a string would compile, pass every test, and quietly put one size on
  * every strip.
  */
-import { GlobalCatalogService, type CatalogProgress } from '@/lib/services/GlobalCatalogService'
+import { GlobalCatalogService, type CatalogProgress, type JudgeReport } from '@/lib/services/GlobalCatalogService'
 import { groqChat, FAST_MODEL } from '@/lib/groq'
 import {
   buildMandatoryConcepts, classifyQuerySlot, decomposeQuery, dropGenericWhenSpecific,
@@ -96,6 +96,10 @@ export async function multiCategorySearch(
   onProgress?: CatalogProgress,
   /** The shopper's stated gender, so an occasion resolves to the right slots. */
   shopperGender?: string | null,
+  /** Where each strip's judge outcome goes. Passed through to every search this
+   *  makes, so the caller's request-scoped recorder sees them rather than a
+   *  module-level slot shared with every other shopper. */
+  onJudge?: JudgeReport,
 ): Promise<{ label: string; products: any[]; query: string }[] | null> {
   const decomp = decomposeQuery(fullQuery)
   // One strip PER DISTINCT GARMENT the shopper named — "shirts, trousers and
@@ -204,7 +208,7 @@ export async function multiCategorySearch(
           const found = await GlobalCatalogService.search(
             rung, budgetMax, [], countryCode, true, buildMandatoryConcepts(rung),
             'relevance', buyerCurrency,
-            { fastFirstPage: true, onProgress: onProgress ? (e => onProgress({ ...e, label })) : undefined },
+            { onJudge, fastFirstPage: true, onProgress: onProgress ? (e => onProgress({ ...e, label })) : undefined },
             [], tasteProfile, rung, sizeForQuery(rung),
           )
           // Filter by the SPECIFIC garment, not its broad slot — t-shirt and shirt
