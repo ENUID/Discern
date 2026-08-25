@@ -104,8 +104,14 @@ var GARMENT_VOCAB = {
     product: ["shirt", "button-up", "button-down", "dress shirt", "oxford shirt", "flannel shirt", "overshirt", "camp shirt", "woven shirt"]
   },
   tshirt: {
-    query: ["t-shirt", "t shirt", "tshirt", "tee", "tees"],
-    product: ["t-shirt", "tshirt", "tee", "tees"]
+    // The plurals are listed, and they have to be. hasWord anchors on a word
+    // boundary, so 't-shirt' does not match "t-shirts" — and `shirt` lists
+    // BOTH its forms, so it did. "plain white t-shirts" resolved to `shirt`
+    // and returned button-ups, while "plain white tshirts" resolved to nothing
+    // at all. The comment on GARMENT_EXCLUSIONS calls dropping the t "the exact
+    // reported bug"; it was still live for every plural.
+    query: ["t-shirt", "t-shirts", "t shirt", "t shirts", "tshirt", "tshirts", "tee", "tees"],
+    product: ["t-shirt", "t-shirts", "tshirt", "tshirts", "tee", "tees"]
   },
   blouse: {
     query: ["blouse", "blouses"],
@@ -973,15 +979,14 @@ function decomposeQuery(query) {
   const garmentKeys = matchedKeys.filter((key) => {
     const ex = GARMENT_EXCLUSIONS[key];
     if (!ex || ex.length === 0) return true;
-    const ownTerms = (GARMENT_VOCAB[key]?.product || []).map((t) => t.toLowerCase().trim());
-    return !matchedKeys.some((other) => {
-      if (other === key) return false;
-      const otherTerms = GARMENT_VOCAB[other]?.product || [];
-      return otherTerms.some((t) => {
-        const term = t.toLowerCase().trim();
-        if (!ex.includes(term)) return false;
-        return ownTerms.some((own) => own && term !== own && term.includes(own));
-      });
+    const ownTerms = [
+      ...GARMENT_VOCAB[key]?.product || [],
+      ...GARMENT_VOCAB[key]?.query || []
+    ].map((t) => t.toLowerCase().trim()).filter(Boolean);
+    return !ex.some((term) => {
+      const t = term.toLowerCase().trim();
+      if (!t || !(hasWord(lower, t) || hasWord(lower, `${t}s`))) return false;
+      return ownTerms.some((own) => t !== own && t.includes(own));
     });
   });
   const materials = [];

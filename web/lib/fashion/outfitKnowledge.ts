@@ -134,6 +134,43 @@ const OCCASIONS: Occasion[] = [
     note: 'Cocktail: shorter and sharper than black tie, dressier than any office. Sneakers fail here regardless of price.',
   },
   {
+    // Occasions the catalogue will never name, and the parser was dropping.
+    //
+    // §20 forbids lossy compilation, and this was the clearest breach in the
+    // system: "something for Muharram" compiled to nothing at all — no
+    // occasion, no garment, no residue carried forward — so the meaning of the
+    // sentence survived only if the model happened to be up and happened to
+    // translate it. The system prompt tells it how; the prompt is not a
+    // guarantee, and on this deployment the model is unavailable often.
+    //
+    // Encoded here it works whether or not a model answers, and it is
+    // inspectable and arguable, which prose in a prompt is not. The palettes
+    // and the formality are the load-bearing parts: nobody searches for the
+    // word Muharram, they search for plain black cotton that breathes.
+    key: 'mourning-observance',
+    match: /\b(muharram|ashura|matam|shok|mourning period)\b/i,
+    formality: 4,
+    slots: { men: ['kurta', 'trouser', 'sandal'], women: ['kurta', 'palazzo', 'dupatta'] },
+    palette: ['black', 'charcoal', 'deep grey'],
+    note: 'A month of mourning: plain black, matte, modest, nothing that catches light. Hot South-Asian season, so breathable cotton over anything heavy.',
+  },
+  {
+    key: 'festive-south-asian',
+    match: /\b(eid|diwali|deepavali|navratri|onam|pongal|baisakhi|raksha bandhan|karwa chauth|puja|pooja|teej)\b/i,
+    formality: 4,
+    slots: { men: ['kurta', 'trouser', 'nehruJacket'], women: ['kurta', 'lehenga', 'dupatta'] },
+    palette: ['ivory', 'gold', 'emerald', 'deep red', 'mustard'],
+    note: 'Festive and traditional rather than western-formal. Colour and craft are the point; a suit reads as the wrong kind of dressed up.',
+  },
+  {
+    key: 'graduation',
+    match: /\b(graduations?|convocation|commencement|degree ceremony)\b/i,
+    formality: 4,
+    slots: { men: ['blazer', 'shirt', 'trouser', 'derby'], women: ['dress', 'blazer', 'flat'] },
+    palette: ['navy', 'charcoal', 'stone', 'white'],
+    note: 'Photographed all day, often under a gown: it has to read from the shoulders up and survive being sat in.',
+  },
+  {
     key: 'work',
     match: /\b(work|working|office|business|workwear|corporate|meetings?|9[- ]?to[- ]?5|formals?)\b/i,
     formality: 3,
@@ -217,6 +254,14 @@ const OCCASIONS: Occasion[] = [
  *  cocktail and came back with BLAZERS. The word beach was right there in the
  *  sentence and lost to the word party. */
 const PLACE_BEATS_PARTY: [RegExp, string][] = [
+  // A NAMED event beats a generic gathering word, for the same reason a named
+  // place does: "diwali party outfit" resolved to cocktail, because cocktail
+  // owns the word party and is checked first — so a festival came back as a
+  // black blazer. The word diwali was right there in the sentence and lost to
+  // the word party, exactly as beach did before it.
+  [/\b(muharram|ashura|matam)\b/i, 'mourning-observance'],
+  [/\b(eid|diwali|deepavali|navratri|onam|pongal|baisakhi|raksha bandhan|karwa chauth|teej)\b/i, 'festive-south-asian'],
+  [/\b(graduations?|convocation|commencement)\b/i, 'graduation'],
   [/\b(beach|poolside|pool|seaside|island|resort|shore|sand)\b/i, 'holiday'],
   [/\b(gym|workout|training)\b/i, 'gym'],
   [/\b(wedding|shaadi|nikah|reception)\b/i, 'wedding-guest'],

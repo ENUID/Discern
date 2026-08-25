@@ -32,6 +32,8 @@ const browser = process.argv.includes('--browser')
 
 /** Harnesses that need only node. Each exits non-zero on failure. */
 const UNIT = [
+  // The evaluation set first: it is the broadest check and the cheapest.
+  'eval.js',
   'exact-match.js',
   'profile-cache.js',
   'same-garment.js',

@@ -42,8 +42,14 @@ export const GARMENT_VOCAB: Record<string, GarmentEntry> = {
     product: ['shirt', 'button-up', 'button-down', 'dress shirt', 'oxford shirt', 'flannel shirt', 'overshirt', 'camp shirt', 'woven shirt'],
   },
   tshirt: {
-    query:   ['t-shirt', 't shirt', 'tshirt', 'tee', 'tees'],
-    product: ['t-shirt', 'tshirt', 'tee', 'tees'],
+    // The plurals are listed, and they have to be. hasWord anchors on a word
+    // boundary, so 't-shirt' does not match "t-shirts" — and `shirt` lists
+    // BOTH its forms, so it did. "plain white t-shirts" resolved to `shirt`
+    // and returned button-ups, while "plain white tshirts" resolved to nothing
+    // at all. The comment on GARMENT_EXCLUSIONS calls dropping the t "the exact
+    // reported bug"; it was still live for every plural.
+    query:   ['t-shirt', 't-shirts', 't shirt', 't shirts', 'tshirt', 'tshirts', 'tee', 'tees'],
+    product: ['t-shirt', 't-shirts', 'tshirt', 'tshirts', 'tee', 'tees'],
   },
   blouse: {
     query:   ['blouse', 'blouses'],
@@ -823,18 +829,38 @@ export function decomposeQuery(query: string): QueryComponents {
   // whole difference, and it is exactly the relation the comment above
   // describes — a name that CONTAINS this one is a narrower reading of it; a
   // name that does not is simply a different garment.
+  //
+  // THE COMPOUND HAS TO BE IN THE SENTENCE. Reading specificity off the
+  // exclusion lists alone cannot tell "a dress shirt" from "a shirt dress":
+  // both match `shirt` and `dress`, and the lists say each excludes the other,
+  // so the answer depended on which list was consulted first. It resolved BOTH
+  // to `shirt` — one of them correctly and one of them not.
+  //
+  // So the test is evidence: drop this garment only when the sentence actually
+  // contains a compound that (a) this garment excludes and (b) is built out of
+  // this garment's own name. "shirt dress" contains "shirt", so in "a shirt
+  // dress" the shirt reading is the wrong half of a compound the shopper
+  // wrote — and in "a dress shirt" it is "dress shirt" that appears, so the
+  // dress reading goes instead. Nothing is dropped on a sentence that never
+  // named the compound: "trousers and shorts" keeps both, because neither
+  // "shorts" nor "trousers" is built out of the other.
   const garmentKeys = matchedKeys.filter(key => {
     const ex = GARMENT_EXCLUSIONS[key]
     if (!ex || ex.length === 0) return true
-    const ownTerms = (GARMENT_VOCAB[key]?.product || []).map(t => t.toLowerCase().trim())
-    return !matchedKeys.some(other => {
-      if (other === key) return false
-      const otherTerms = GARMENT_VOCAB[other]?.product || []
-      return otherTerms.some(t => {
-        const term = t.toLowerCase().trim()
-        if (!ex.includes(term)) return false
-        return ownTerms.some(own => own && term !== own && term.includes(own))
-      })
+    const ownTerms = [
+      ...(GARMENT_VOCAB[key]?.product || []),
+      ...(GARMENT_VOCAB[key]?.query || []),
+    ].map(t => t.toLowerCase().trim()).filter(Boolean)
+    return !ex.some(term => {
+      const t = term.toLowerCase().trim()
+      // Plural too. The same word-boundary blindness that hid "t-shirts" from
+      // the vocabulary hides it from the exclusion list — "plain white
+      // t-shirts" kept BOTH readings because the compound it names is spelled
+      // with an s and the list is not.
+      if (!t || !(hasWord(lower, t) || hasWord(lower, `${t}s`))) return false
+      // Built out of this garment's own name, and longer than it — a compound,
+      // not a synonym.
+      return ownTerms.some(own => t !== own && t.includes(own))
     })
   })
 
