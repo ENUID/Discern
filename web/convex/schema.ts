@@ -305,4 +305,25 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_key", ["key"])
     .index("by_product", ["productId"]),
+
+  // Why did we show this? — §42/§71.
+  //
+  // Every quality question this week was answered by re-running the request by
+  // hand and reading intermediate output production throws away. The pieces
+  // existed and were not joined up: the judge's outcome, which strategy read
+  // the model, why the chain gave up, why an outfit came back empty. This is
+  // the record that ties them to one id and survives the request.
+  //
+  // TTL'd, unlike the garment profiles next door, and for the opposite reason:
+  // a profile is a fact about a garment and never goes stale, while a trace is
+  // a diagnostic about one moment that nobody will read a fortnight later.
+  // Kept bounded by the writer, not by hope — see lib/stylist/trace.ts.
+  recommendation_traces: defineTable({
+    traceId: v.string(),
+    question: v.string(),
+    trace: v.string(),        // JSON-encoded Trace, capped at write time
+    degraded: v.boolean(),
+    createdAt: v.number(),
+  }).index("by_trace", ["traceId"])
+    .index("by_created", ["createdAt"]),
 });

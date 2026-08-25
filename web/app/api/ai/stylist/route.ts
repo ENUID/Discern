@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { groqChat, wardrobeVisionChat, stripThinkTags, stripAiDashes, stripSafetyLabels, looksLikeLeakedReasoning, CHAT_MODEL, FAST_MODEL } from '@/lib/groq'
 import { geminiChat } from '@/lib/gemini'
-import { GlobalCatalogService, sameGarmentVerdictFor, type CatalogProgress } from '@/lib/services/GlobalCatalogService'
+import { GlobalCatalogService, sameGarmentVerdictFor, lastJudgeOutcome, type CatalogProgress } from '@/lib/services/GlobalCatalogService'
 import { normalizeFashionTypos, dropGenericWhenSpecific, buildMandatoryConcepts, classifyQuerySlot, productMatchesSlot, productMatchesGarmentKey, slotLabelFor, decomposeQuery, GARMENT_VOCAB, GARMENT_CATEGORY, type SlotCategory } from '@/lib/queryParser'
 import { matchStyles, vocabPromptBlock } from '@/lib/styleVocabulary'
 import { detectBrandsInQuery, brandDisplayName, UCP_REGISTRY } from '@/lib/stores'
@@ -11,7 +11,11 @@ import { outfitPlan, composeOutfit, composeOutfits, composeOutfitsWithProfiles }
 import { suggestQuery } from '@/lib/fashion/suggestQuery'
 import { exactMatchNote, stripUnverifiableClaims, wantsTheExactPiece } from '@/lib/fashion/exactMatch'
 import { stripEmphasis } from '@/lib/plainText'
+import { lastJudgeDetail } from '@/lib/services/relevanceRerank'
 import { parseStylistAnswer } from '@/lib/stylist/answer'
+import { startTrace, step, note, shown, finishTrace, type Trace } from '@/lib/stylist/trace'
+import { saveTrace, tracingEnabled } from '@/lib/stylist/traceStore'
+import { runAfterResponse } from '@/lib/afterResponse'
 import { redactSecrets } from '@/lib/redact'
 import { type SameGarmentVerdict } from '@/lib/services/sameGarment'
 import { profilesFor } from '@/lib/services/enrichProduct'
@@ -1577,12 +1581,27 @@ function withDeadline<T>(work: Promise<T>, deadlineAt: number, fallback: T): Pro
   })
 }
 
+/** Seal the trace and store it AFTER the response has gone out.
+ *
+ *  runAfterResponse survives the serverless freeze that follows a flush, which
+ *  is the whole reason it exists — and it means a diagnostic write is never on
+ *  the path a shopper is waiting on. */
+function keepTrace(t: Trace | null): void {
+  const sealed = finishTrace(t)
+  if (!sealed) return
+  runAfterResponse(() => saveTrace(sealed))
+}
+
 async function runStylistRequest(
   req: NextRequest,
   send: (icon: string, main: string, detail?: string) => void,
   finish: (result: Record<string, unknown>) => void,
 ): Promise<void> {
   const requestDeadline = Date.now() + REQUEST_BUDGET_MS
+  /** Why did we show this? One per request, held in this closure — never a
+   *  module global, which is what makes lastJudgeOutcome unusable for the
+   *  question. See lib/stylist/trace.ts. */
+  let trace: Trace | null = null
   try {
     const body = await req.json()
     const mode: string = typeof body?.mode === 'string' ? body.mode : 'default'
@@ -1620,6 +1639,15 @@ async function runStylistRequest(
     // through. Ask me again." Every message, permanently, for exactly the
     // returning shoppers the memory exists to serve. Asking again could not
     // help: the memory was still there the second time.
+    if (tracingEnabled()) {
+      trace = startTrace({
+        question,
+        gender: typeof body?.shopperGender === 'string' ? body.shopperGender : null,
+        country: countryCode,
+        currency: buyerCurrency,
+      })
+    }
+
     const memorySummary: string | undefined = typeof body?.memorySummary === 'string' && body.memorySummary.trim()
       ? body.memorySummary.trim()
       : undefined
@@ -1797,6 +1825,10 @@ async function runStylistRequest(
       const rescued = await speculative
       if (rescued) {
         console.log(`[stylist] model unavailable (${kind}) — served from the catalogue directly`)
+        note(trace, { degraded: true, modelTrace: modelTrace ?? undefined, judge: lastJudgeOutcome, judgeDetail: lastJudgeDetail })
+        step(trace, 'served without the model', kind)
+        shown(trace, (rescued.foundProducts as unknown[]) ?? [])
+        keepTrace(trace)
         return finish({
           reply: kind === 'busy'
             ? 'A lot of people are asking at once, so I went straight to the catalogue for this one. Ask again in a moment and I will style it properly.'
@@ -1807,6 +1839,7 @@ async function runStylistRequest(
           // deploy logs, which is the only reason the Gemini retirement was
           // ever found.
           modelTrace: modelTrace ?? undefined,
+          traceId: trace?.id,
           ...rescued,
         })
       }
@@ -2348,6 +2381,8 @@ Use concrete garment, colour, and material words only, never a brand or product 
       // Loggable, because a mis-route is invisible in the answer: it looks like
       // the model simply had nothing to say. This line is how you find it.
       console.log(`[stylist] route ${heavy ? 'heavy(can search)' : 'light(chat only)'} — ${routeReason(questionRead)} — "${question.slice(0, 60)}"`)
+      note(trace, { route: heavy ? 'heavy' : 'light' })
+      step(trace, 'routed', `${heavy ? 'heavy(can search)' : 'light(chat only)'} — ${routeReason(questionRead)}`)
 
       // The speculative catalogue search does NOT start here any more.
       //
@@ -2488,6 +2523,12 @@ Use concrete garment, colour, and material words only, never a brand or product 
     const rawSearchQuery = answer.search
     const rawOutfitQueries = answer.outfit
     const rawOutfitSets = answer.outfits
+    note(trace, {
+      answerVia: answer.via,
+      searchQuery: answer.search,
+      outfitQueries: answer.outfit,
+    })
+    step(trace, 'answer read', `via ${answer.via}${answer.search ? ` — search "${answer.search}"` : ''}${answer.outfit ? ` — outfit of ${answer.outfit.length}` : ''}${answer.outfits ? ` — ${answer.outfits.length} looks` : ''}`)
     // Now that SEARCH/OUTFIT/COMPARE tokens are stripped out, turn any leftover
     // "(product N)" prose references in the visible reply into real
     // [PRODUCT:N-1] cards, so every pinned piece the model recommends renders,
@@ -2947,12 +2988,30 @@ Use concrete garment, colour, and material words only, never a brand or product 
       ? suggestQuery(question, reply2, shopperGender)
       : null
 
+    note(trace, {
+      judge: lastJudgeOutcome, judgeDetail: lastJudgeDetail,
+      outfitTrace: outfitTrace ?? undefined,
+      sameGarment: sameVerdict
+        ? { matched: sameVerdict.sameIndex != null, confidence: sameVerdict.confidence, why: sameVerdict.why }
+        : undefined,
+      degraded: false,
+    })
+    shown(trace, [
+      ...(foundProducts ?? []),
+      ...((outfitSlots ?? []).flatMap((sl: { products?: unknown[] }) => sl?.products ?? [])),
+    ])
+    keepTrace(trace)
+
     return finish({
       reply: reply2, comparison: comparison ?? null, foundProducts, foundProductGroups,
       // What leads the page: complete outfits, not three shelves.
       looks: foundProductGroups ? await looksFrom(foundProductGroups) : [],
       outfitSlots, outfitGroups, searchQuery: searchQuery || undefined,
       suggest: suggest ?? undefined,
+      // The id that ties the judge's outcome, the answer strategy, the model
+      // trace and the outfit trace to THIS request — and survives it. On the
+      // response so a complaint can carry it.
+      traceId: trace?.id,
       // Which strategy read the model's answer — json, tokens or prose. The
       // interface ignores it; it is the only way to see whether the move to a
       // JSON contract is actually happening, and it cannot be recovered after

@@ -35,6 +35,7 @@ const UNIT = [
   // The evaluation set first: it is the broadest check and the cheapest.
   'eval.js',
   'exact-match.js',
+  'trace.js',
   'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',
