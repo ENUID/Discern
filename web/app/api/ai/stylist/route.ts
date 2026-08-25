@@ -16,6 +16,7 @@ import {
   stylistRateLimited, modelLooksDown, noteModelFailure, noteModelSuccess,
   markProviderOut, providerOutUntil, isRateLimited, PROVIDER_OUT_MS,
 } from '@/lib/stylist/limits'
+import { logAiUsage, recordVocabMiss, estimateTokens, convexUsageClient } from '@/lib/stylist/usage'
 import { parseStylistAnswer } from '@/lib/stylist/answer'
 import { startTrace, step, note, shown, finishTrace, type Trace } from '@/lib/stylist/trace'
 import { saveTrace, tracingEnabled } from '@/lib/stylist/traceStore'
@@ -29,8 +30,6 @@ import { outfitTones } from '@/lib/fashion/lookbook'
 import { wantsProducts, routeReason } from '@/lib/fashion/intentRouter'
 import { cerebrasChat, cerebrasVisionChat, CEREBRAS_VISION_CONFIGURED } from '@/lib/cerebras'
 import { nvidiaChat, nvidiaVisionChat, NVIDIA_CONFIGURED } from '@/lib/nvidia'
-import { ConvexHttpClient } from 'convex/browser'
-import { anyApi } from 'convex/server'
 import { api } from '@/convex/_generated/api'
 
 export const maxDuration = 60
@@ -40,78 +39,6 @@ export const maxDuration = 60
  *  the shopper is looking at. */
 const imageOf = (p: any): string =>
   p?.media?.[0]?.url || p?.image_url || p?.image || p?.images?.[0] || ''
-
-// ── Usage visibility ─────────────────────────────────────────────────────────
-// This app runs entirely on free-tier AI quotas shared across every request —
-// there was previously no way to see consumption anywhere except after the
-// fact, in a provider's own dashboard. Every exit point of this route logs an
-// estimated token count (chars/4 — a standard rough approximation, not exact
-// provider-reported usage) via the existing trackEvent/user_events pipeline.
-// Read back through getAiUsageSummary, surfaced in /api/ai/stylist/health.
-// Fire-and-forget: never awaited by the response, a logging failure never
-// affects the shopper-facing reply.
-const convexUsageClient = process.env.NEXT_PUBLIC_CONVEX_URL
-  ? new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL)
-  : null
-
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4)
-}
-
-// Pure diagnostics — powers the admin dashboard's provider breakdown, nothing
-// the shopper or Fabrics depends on. It used to fire a Convex write on EVERY
-// LLM call, and a single request now makes several (reply + self-heal +
-// tokenizer + retries), so it was one of the heaviest Convex-function-call
-// drivers in the app. Sample it: a failure is ALWAYS written (that's the
-// signal worth catching), successes are written ~1 in AI_USAGE_SAMPLE_N. The
-// breakdown stays directionally correct at a fraction of the write volume, so
-// this never pushes the free tier toward a paid upgrade. Set AI_USAGE_SAMPLE_N=1
-// to log every call again.
-const AI_USAGE_SAMPLE_N = Math.max(1, Number(process.env.AI_USAGE_SAMPLE_N ?? 5))
-let aiUsageCounter = 0
-function logAiUsage(info: {
-  path: 'fast' | 'llm-light' | 'llm-heavy' | 'vision' | 'refine' | 'load-more'
-  provider: string
-  estPromptTokens: number
-  estCompletionTokensCap: number
-  ok: boolean
-}) {
-  if (!convexUsageClient) return
-  // Always keep failures; sample the (far more common) successes.
-  if (info.ok) {
-    aiUsageCounter = (aiUsageCounter + 1) % AI_USAGE_SAMPLE_N
-    if (aiUsageCounter !== 0) return
-  }
-  convexUsageClient.mutation(api.users.trackEvent, {
-    event: 'ai_usage',
-    properties: info,
-  }).catch(() => {}) // best-effort — never let logging affect the actual response
-}
-
-/**
- * Record a query the hand-curated vocabulary could not read — either it named
- * no garment we know, or a real search over it came back near-empty. This is
- * pure observation: the capture feeds a weekly cron and a human review page
- * (/admin/vocab), and nothing downstream reads it. The dictionaries stay
- * hand-edited, because a synonym auto-merged into the hot path is exactly the
- * kind of silent search regression that is miserable to trace.
- *
- * Fire-and-forget, like every other logging write here: a failure must never
- * touch the shopper's reply.
- */
-function recordVocabMiss(query: string, reason: 'no-results' | 'weak-match') {
-  if (!convexUsageClient || !process.env.CONVEX_AUTH_SECRET) return
-  const phrase = query.trim()
-  // Sentences cluster badly and read as PII risk; only short, term-like
-  // queries are worth proposing a dictionary entry for.
-  if (phrase.length < 3 || phrase.length > 60 || phrase.split(/\s+/).length > 6) return
-  // anyApi: the generated types only refresh on `npx convex dev/deploy`.
-  convexUsageClient.mutation(anyApi.vocabCandidates.recordMiss, {
-    phrase,
-    reason,
-    serverSecret: process.env.CONVEX_AUTH_SECRET,
-  }).catch(() => {})
-}
 
 // Best-of-best cap — applied to BOTH the first page of a fresh search AND
 // each "See more" page. The reranker (relevanceRerank.ts) already judges a

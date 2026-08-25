@@ -13504,7 +13504,7 @@ __export2(route_exports, {
   maxDuration: () => maxDuration
 });
 module.exports = __toCommonJS(route_exports);
-var import_server10 = __toESM(require_server());
+var import_server11 = __toESM(require_server());
 init_groq();
 
 // lib/gemini.ts
@@ -45296,6 +45296,41 @@ function isRateLimited(err) {
   return /\b429\b|rate limit|too many requests|quota/i.test(msg);
 }
 
+// convex/_generated/api.js
+var api = anyApi;
+var components = componentsGeneric();
+
+// lib/stylist/usage.ts
+var convexUsageClient = process.env.NEXT_PUBLIC_CONVEX_URL ? new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL) : null;
+function estimateTokens2(text) {
+  return Math.ceil(text.length / 4);
+}
+var AI_USAGE_SAMPLE_N = Math.max(1, Number(process.env.AI_USAGE_SAMPLE_N ?? 5));
+var aiUsageCounter = 0;
+function logAiUsage(info) {
+  if (!convexUsageClient) return;
+  if (info.ok) {
+    aiUsageCounter = (aiUsageCounter + 1) % AI_USAGE_SAMPLE_N;
+    if (aiUsageCounter !== 0) return;
+  }
+  convexUsageClient.mutation(api.users.trackEvent, {
+    event: "ai_usage",
+    properties: info
+  }).catch(() => {
+  });
+}
+function recordVocabMiss(query, reason) {
+  if (!convexUsageClient || !process.env.CONVEX_AUTH_SECRET) return;
+  const phrase = query.trim();
+  if (phrase.length < 3 || phrase.length > 60 || phrase.split(/\s+/).length > 6) return;
+  convexUsageClient.mutation(anyApi.vocabCandidates.recordMiss, {
+    phrase,
+    reason,
+    serverSecret: process.env.CONVEX_AUTH_SECRET
+  }).catch(() => {
+  });
+}
+
 // lib/stylist/answer.ts
 var Query = external_exports.string().trim().min(1).max(200);
 var StylistAnswerSchema = external_exports.object({
@@ -45824,42 +45859,7 @@ function wantsProducts(question) {
 
 // app/api/ai/stylist/route.ts
 init_cerebras();
-
-// convex/_generated/api.js
-var api = anyApi;
-var components = componentsGeneric();
-
-// app/api/ai/stylist/route.ts
 var maxDuration = 60;
-var convexUsageClient = process.env.NEXT_PUBLIC_CONVEX_URL ? new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL) : null;
-function estimateTokens2(text) {
-  return Math.ceil(text.length / 4);
-}
-var AI_USAGE_SAMPLE_N = Math.max(1, Number(process.env.AI_USAGE_SAMPLE_N ?? 5));
-var aiUsageCounter = 0;
-function logAiUsage(info) {
-  if (!convexUsageClient) return;
-  if (info.ok) {
-    aiUsageCounter = (aiUsageCounter + 1) % AI_USAGE_SAMPLE_N;
-    if (aiUsageCounter !== 0) return;
-  }
-  convexUsageClient.mutation(api.users.trackEvent, {
-    event: "ai_usage",
-    properties: info
-  }).catch(() => {
-  });
-}
-function recordVocabMiss(query, reason) {
-  if (!convexUsageClient || !process.env.CONVEX_AUTH_SECRET) return;
-  const phrase = query.trim();
-  if (phrase.length < 3 || phrase.length > 60 || phrase.split(/\s+/).length > 6) return;
-  convexUsageClient.mutation(anyApi.vocabCandidates.recordMiss, {
-    phrase,
-    reason,
-    serverSecret: process.env.CONVEX_AUTH_SECRET
-  }).catch(() => {
-  });
-}
 var INITIAL_RESULT_CAP = 8;
 var MULTI_CATEGORY_PER_GROUP_CAP = INITIAL_RESULT_CAP;
 function dedupeById(items) {
@@ -46701,7 +46701,7 @@ function parseWardrobeToken(text) {
 }
 async function POST(req) {
   if (stylistRateLimited(req)) {
-    return import_server10.NextResponse.json({ reply: "Too many requests \u2014 please slow down.", busy: false }, { status: 429 });
+    return import_server11.NextResponse.json({ reply: "Too many requests \u2014 please slow down.", busy: false }, { status: 429 });
   }
   const encoder = new TextEncoder();
   let streamClosed = false;
