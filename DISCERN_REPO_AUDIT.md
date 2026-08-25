@@ -4,10 +4,15 @@ Against `Discern_phases.md` v2.0 (§91 Phase 0, §112 master instruction).
 Repository: **`ENUID/From`** — the spec says `ENUID/Discern`; that is the first
 discrepancy and worth confirming before anything is filed against the wrong name.
 
-Commit audited: `dc66b2b`. No code was written for this document beyond one
-defect fix noted in §9, which predated it.
+First written at `dc66b2b` as audit-only. **Revised at `4d516a5`**, after
+Phases A, B and C were approved and shipped — because a gap report that
+describes a repository which no longer exists is worse than none when the
+question is what to build next. Rows that have moved are marked **DONE** with
+the commit that moved them; nothing has been deleted, so the original reading
+is still legible beside the current one.
 
-**Status: audit only. Awaiting approval before Phase 1, per §112.**
+**Status: Phases A, B, C shipped and verified on production. Phase D proposed,
+awaiting approval.**
 
 ---
 
@@ -21,22 +26,29 @@ already started moving toward the architecture described." That is true. But:
 |---|---|
 | §2.5 "garment-profile system already exists" | **Correct.** `lib/fashion/garmentProfile.ts` + `lib/services/enrichProduct.ts` |
 | §16 embeddings | **Absent.** No embedding, no vector index, nowhere |
-| §44 "already contains Zod. Use runtime validation" | **1 import in the entire codebase.** Effectively absent |
-| §42 recommendation trace | **Absent.** No trace id anywhere |
-| §55 evaluation dataset | **Absent.** 21 harnesses exist, none is a scenario set |
+| §44 "already contains Zod. Use runtime validation" | ~~1 import, effectively absent~~ → **DONE** `4d516a5`. The model's answer is Zod-validated at one boundary; the route holds zero prose regexes |
+| §42 recommendation trace | **Absent.** No trace id anywhere — this is Phase D |
+| §55 evaluation dataset | ~~Absent~~ → **DONE** `300d7ae`. 149 scenarios, 8 groups, 0.2s, no model, gating every push |
 
 The single most important structural fact is the one §72 already names, now
 measured:
 
 ```
-app/api/ai/stylist/route.ts     2,992 lines,  25 imports
-features/v2/DiscernV2.tsx       3,892 lines
-lib/stores.ts                   5,929 lines
-lib/services/GlobalCatalogService.ts  1,764 lines
+                                      at audit    now (4d516a5)
+app/api/ai/stylist/route.ts        2,992 lines    2,978 lines, 26 imports
+features/v2/DiscernV2.tsx          3,892 lines    3,892 lines
+lib/stores.ts                      5,929 lines    5,929 lines
+lib/services/GlobalCatalogService  1,764 lines    1,764 lines
 ```
 
-Two files hold ~6,900 lines of decision logic and UI. That is the compression
-§3 describes, and it is the reason "why did it show this?" cannot be answered.
+Two files still hold ~6,900 lines of decision logic and UI. Phases A–C moved
+almost none of that, and deliberately: they put contracts and measurement
+AROUND the compression rather than cutting into it. That was the right order —
+route.ts encodes dozens of specific fixes, each with a comment naming the bug
+it prevents, and there was until this week no evaluation set that could tell
+you if a refactor had dropped one. There is now.
+
+The compression itself is Phase E, and it is still the largest risk here.
 
 ---
 
@@ -96,6 +108,15 @@ lib → app/api/ai/stylist/route.ts
   /\[PRODUCT:\d{1,2}\]/
 ```
 
+> **DONE — `4d516a5` (Phase C).** One Zod-validated boundary
+> (`lib/stylist/answer.ts`) with three strategies tried in turn: json →
+> tokens → prose. The grammar was MOVED, not rewritten — nothing about what
+> the model is asked for changed, because doing that while three of four
+> providers are out of quota is the most dangerous edit available here. The
+> route now holds zero prose regexes; everything downstream reads a typed
+> object. `answerVia` reports which strategy answered, so the migration to
+> JSON is visible rather than assumed. Live, it currently reads `tokens`.
+
 This is exactly the `LLM prose → frontend regex` pattern §44 forbids, one layer
 earlier. Everything downstream — whether products appear at all — depends on a
 model remembering a bracket grammar. Measured this week: the token was missed
@@ -150,6 +171,16 @@ colour, formality, aesthetic, season, details, quality).
 lib/services/enrichProduct.ts:29
   const mem = new BoundedCache<string, GarmentProfile>(10_000)
 ```
+
+> **DONE — `cbc611b` (Phase A).** Profiles now persist to a `garment_profiles`
+> table, keyed by the full §15 identity (product + image + schema + prompt +
+> model), no TTL, on by default. Proven by running the enrichment twice with
+> the module registry cleared between: a cold start returns three profiles and
+> makes **zero** vision calls. A dead cache still returns profiles by falling
+> back to vision, so it can never be worse than before it existed.
+>
+> The paragraph below is the original finding, kept because it is the clearest
+> statement of why this mattered.
 
 **In-memory only.** Not in any of the 20 Convex tables. Every cold start throws
 away every profile and re-pays the vision cost, on providers that are out of
@@ -230,16 +261,16 @@ system simply had no way to notice it was doing the same work twice.
 | 8 | Canonical `DiscernProduct` | **MISSING** — `UcpProduct` and `V2Product` are two shapes, mapped by hand |
 | 9 | source vs derived provenance | **MISSING** — `GarmentProfile` has `readBy`/`readAt`, nothing else does |
 | 13 | attribute conflict resolution | **MISSING** — vision never meets merchant metadata |
-| 15 | durable enrichment cache | **MISSING** — in-memory, see §5 |
+| 15 | durable enrichment cache | **DONE** `cbc611b` — Convex, full §15 cache identity |
 | 16 | embeddings | **MISSING** — entirely |
 | 18 | preference confidence | **MISSING** |
-| 21 | validated intent schema | **PARTIAL** — `intentCompiler` returns typed args, unvalidated |
+| 21 | validated intent schema | **PARTIAL** — the model's ANSWER is validated (`4d516a5`); the shopper's INTENT still is not |
 | 22–23 | session state + refinement ops | **MISSING** — no session object; follow-ups re-parse from history |
 | 42 | recommendation trace | **MISSING** |
-| 44 | structured contract, no prose parsing | **VIOLATED** — see §2 |
+| 44 | structured contract, no prose parsing | **DONE** `4d516a5` — Zod boundary, zero regexes in the route |
 | 49 | provider adapters | **PARTIAL** — 4 clients, no shared interface |
 | 50 | prompt registry | **MISSING** — the heavy prompt is ~700 lines inline in route.ts |
-| 55–58 | evaluation set, criteria, error taxonomy | **MISSING** |
+| 55–58 | evaluation set, criteria, error taxonomy | **DONE** `300d7ae` — 149 scenarios, §58 labels, gates every push |
 | 71 | decision-trace admin view | **PARTIAL** — analytics/community/vocab exist; no per-request trace |
 | 77–78 | product quality score | **MISSING** |
 
@@ -291,37 +322,76 @@ system simply had no way to notice it was doing the same work twice.
 
 ---
 
-## 13. PROPOSED MIGRATION PLAN
+## 13. MIGRATION PLAN — THREE DONE, THREE TO GO
 
-Ordered by value-per-risk, not by the spec's numbering.
+Ordered by value-per-risk rather than by the spec's numbering, and revised
+against what is now true rather than what was true when it was written.
 
-**Phase A — persist enrichment (§15).** Smallest change, largest immediate
-return: profiles already work, they just die on cold start. Add a Convex table
-with the full §15 cache identity. No behaviour change, immediate cost drop.
+**Phase A — persist enrichment (§15). DONE, `cbc611b`.** Smallest change,
+largest immediate return: the reading already worked, it just did not survive
+a cold start. Zero vision calls on a fresh process, proven by clearing the
+module registry between runs.
 
-**Phase B — evaluation set (§55–56).** 100–300 scenarios with expected intent
-and criteria, run by `npm run verify`. Everything after this is measurable;
-nothing before it is. This is the highest-leverage item in the document.
+**Phase B — evaluation set (§55–56). DONE, `300d7ae`.** 149 scenarios, no
+model, 0.2s, §58 labels, gating every push. It found four real bugs on its
+first run — plural t-shirts resolving to button-ups, "tshirts" matching
+nothing at all, "shirt dress" and "dress shirt" both resolving to `shirt`, and
+seven cultural occasions compiling to nothing whatsoever. Everything after
+this is measurable; nothing before it was.
 
-**Phase C — structured output (§44).** Replace token-grammar parsing with a
-validated JSON contract, Zod at the boundary. Removes the fallbacks in §2 and
-the whole class of "the model forgot the bracket".
-
-**Phase D — trace + admin view (§42, §71).** Now that B exists to prove nothing
-broke. Answers "why did it show this?" — the question §3 says is currently
-unanswerable.
-
-**Phase E — extract the pipeline (§72).** Only after B and D. Refactoring 2,992
-lines without an evaluation set and a trace is how the hard-won fixes get lost.
-
-**Phase F — embeddings (§16).** Real visual retrieval. Correctly the last of
-these: it is the largest build and the current `sameGarment` verification
-covers the common case.
-
-**Deliberately deferred:** §60/§88 — no Postgres, no Redis, no vector DB, no
-Kubernetes. Convex is not the constraint.
+**Phase C — structured output (§44). DONE, `4d516a5`.** One Zod boundary,
+three strategies, grammar preserved. Zero prose regexes left in the route.
 
 ---
+
+**Phase D — trace + admin view (§42, §71). NEXT.**
+
+§3 lists thirteen questions the architecture cannot answer, and every one of
+them is a variant of *why did we show this?* Three of the pieces now exist and
+are not joined up: the judge reports its outcome, `answerVia` reports which
+strategy read the model, `modelTrace` reports why the chain gave up. What is
+missing is a recommendation id that ties them together and survives the
+request.
+
+It is next for a specific reason rather than by elimination. Every quality
+question asked this week — why leather sandals for a denim clog, why blazers
+for a casual party, why an outfit with nothing under it — was answered by me
+re-running the request by hand and reading intermediate output that is thrown
+away in production. That does not scale past one person, and it is the
+difference between diagnosing a bad recommendation and guessing at it. It is
+also the prerequisite for §59's learning loop: an event cannot be tied to the
+decision that produced it if the decision has no id.
+
+**Phase E — extract the pipeline (§72).** After D, not before. route.ts is
+still 2,978 lines with 26 imports, and it encodes dozens of hard-won fixes
+each carrying a comment naming the bug it prevents. Refactoring that without
+an evaluation set was reckless; with B in place it is merely difficult, and
+with D in place a regression becomes traceable rather than mysterious. This
+remains the largest risk in the repository.
+
+**Phase F — embeddings (§16).** Real visual retrieval, and correctly last: it
+is the biggest build, and `sameGarment` already covers the common case by
+verifying the shortlist the word search returned. What it cannot do is
+RETRIEVE a piece the words never found — that is what an index buys, and it is
+the honest answer to "find me this exact one" for a catalogue of 472 brands.
+
+**Deliberately deferred:** §60/§88 — no Postgres, no Redis, no vector DB, no
+Kubernetes. Convex is not the constraint; it took Phase A without complaint.
+
+---
+
+### Carried, not forgotten
+
+Held at the founder's instruction to finish the phases first. Each is real and
+each is small:
+
+| | what | why it is not urgent |
+|---|---|---|
+| t-shirt retrieval leak | parsing is correct now; the catalogue still pads a thin result with near-misses rather than showing an empty page | a deliberate existing tradeoff that conflicts with §26's hard-constraint rule — a product call, not an engineering one |
+| fit vocabulary | the parser says `wide-leg`, §10.2 canonises `wide` | the parser is more precise, not wrong; the two have simply never been reconciled |
+| root `convex/` | dead duplicate, 6 files, single-table schema, not deployed | harmless until someone reads it and believes it |
+| module-level globals | `lastJudgeOutcome`, `providerOut` are shared across concurrent requests | `lastSameGarment` is keyed by image and cannot bleed; the others can, and Phase D is where per-request state gets a home |
+| Cerebras | `HTTP 402 payment required` | not a code problem, and no phase fixes it |
 
 ## 14. THE ONE QUESTION I CANNOT ANSWER FROM THE SPEC
 
@@ -330,5 +400,18 @@ proposes an order that differs from the spec's numbering, because the spec's
 Phase 1 (domain schemas) has no measurable effect until Phase 4, whereas
 persisting enrichment pays for itself on the next cold start.
 
-**Which order do you want — the spec's, or this one?** Per §90.20, that is a
-product-judgment call and I am stopping rather than assuming.
+**Answered:** this order was chosen, and A, B and C are shipped.
+
+The question that replaces it is narrower. Phase D adds a recommendation trace
+and an internal view onto it — which is engineering, not product judgment, and
+needs no decision from anyone. Phase E does need one, and it is worth asking
+before rather than during: **route.ts holds dozens of fixes whose only record
+is a comment naming the bug each one prevents.** The evaluation set now covers
+the deterministic layers, and it does not cover retrieval purity or anything
+that needs a live catalogue. So an extraction can be verified against 149
+scenarios and a production build, and NOT against "does the app still behave".
+
+That gap is closeable — a live end-to-end suite is a real thing to build — but
+it costs provider quota to run, which is the one resource currently absent.
+Phase E should either wait for that, or proceed knowing the safety net has a
+hole in it. Per §90.20, which of those is a call I am not making alone.
