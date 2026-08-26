@@ -2,13 +2,11 @@
   "name": "discern",
   "version": "0.1.0",
   "private": true,
+  "comment": "The app lives in web/. This root package exists for the Vercel build and for convenience scripts; it is not where dependencies belong.",
   "scripts": {
     "vercel-build": "cd web && npm install && npm run build",
-    "dev:convex": "convex dev",
-    "dev:web": "cd web && next dev",
-    "deploy:convex": "convex deploy",
-    "embed:pending": "node scripts/embed-pending-local.cjs",
-    "worker:embed": "node scripts/embed-pending-local.cjs"
+    "dev:convex": "cd web && npx convex dev",
+    "dev:web": "cd web && next dev"
   },
   "dependencies": {
     "convex": "^1.12.0"

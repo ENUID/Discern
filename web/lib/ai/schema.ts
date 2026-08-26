@@ -11,45 +11,17 @@ export const SearchToolSchema = z.object({
 
 export type SearchToolArgs = z.infer<typeof SearchToolSchema>;
 
-export const SEARCH_TOOL_DEF = {
-  type: "function",
-  function: {
-    name: "search_ucp",
-    description: "Search for NEW products across hundreds of millions of Shopify stores. DO NOT use this tool if the user is asking you to compare products already in the chat. If the user asks for 'more' products or 'others', you MUST use the EXACT SAME searchQuery as your previous search. Do not add words like 'more' or 'other' to the query, the system will automatically handle pagination.",
-    parameters: {
-      type: "object",
-      properties: {
-        searchQuery: {
-          type: "string",
-          description: "A clean, simple search query containing only keywords in the dominant language of the target storefront(s) (e.g. 'linen shirt' for English stores, 'シャツ' for Japanese stores). Do NOT use logical OR, synonyms, or multiple languages."
-        },
-        budgetMax: {
-          type: "number",
-          description: "The maximum budget the user is willing to spend, if specified."
-        },
-        budgetCurrency: {
-          type: "string",
-          description: "Three-letter ISO currency code for budgetMax if the user explicitly specifies one, e.g. USD, EUR, VND, JPY. Omit it when the currency is implicit."
-        },
-        isClothing: {
-          type: "boolean",
-          description: "Set to true if the search query targets clothing, shoes, apparel, garments, jewelry, bags, or other fashion/style accessories."
-        },
-        mandatoryConcepts: {
-          type: "array",
-          items: {
-            type: "array",
-            items: { type: "string" }
-          },
-          description: "Extract the most critical concepts the user requested (e.g. product type, origin, material). For each concept, provide an array of synonyms and translations. Example for 'leather bags vietnam': [['bag', 'bags', 'túi'], ['leather', 'da'], ['vietnam', 'việt nam', 'vietnamese']]. The system will filter out any products that don't match ALL concept groups."
-        },
-        sort: {
-          type: "string",
-          enum: ["price_asc", "price_desc", "relevance", "trust_desc"],
-          description: "Requested sorting order. 'price_asc' (cheapest first), 'price_desc' (most expensive first), 'relevance', or 'trust_desc' (prioritize shops with highest prestige/reputation). Default is trust_desc."
-        }
-      },
-      required: ["searchQuery"]
-    }
-  }
-};
+/**
+ * NOTE ON WHAT IS *NOT* HERE.
+ *
+ * This file used to also export `SEARCH_TOOL_DEF`, an OpenAI tool-calling
+ * definition for a `search_ucp` function. Its only consumer was the parked
+ * grid-search route deleted in Stage 0, and search has been compiled
+ * deterministically by `lib/intentCompiler.ts` since — no model is asked to
+ * call a tool. The definition was removed in Phase 1 as unreachable.
+ *
+ * The schema below stays, and is not a leftover of that: `intentCompiler`
+ * validates its own deterministic output against it (`intentCompiler.ts:382`),
+ * which is what keeps the compiler and the catalogue agreeing on the shape of
+ * a search.
+ */
