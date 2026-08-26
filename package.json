@@ -2,13 +2,9 @@
   "name": "discern",
   "version": "0.1.0",
   "private": true,
-  "comment": "The app lives in web/. This root package exists for the Vercel build and for convenience scripts; it is not where dependencies belong.",
+  "comment": "The application is web/. Vercel's Root Directory is set to 'web', so Vercel reads web/package.json and web/vercel.json and never installs or builds from this file — it exists only for local convenience scripts. Do not add a build command, a vercel.json or dependencies at this level: a second deployment config here is what left /vercel.json silently inert for months, taking the from.enuid.com redirect with it.",
   "scripts": {
-    "vercel-build": "cd web && npm install && npm run build",
     "dev:convex": "cd web && npx convex dev",
     "dev:web": "cd web && next dev"
-  },
-  "dependencies": {
-    "convex": "^1.12.0"
   }
 }

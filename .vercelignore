@@ -1,4 +1,0 @@
-# Debug/scratch tooling — never ship to production.
-# Contains one-off .mjs probes and a nested experimental app tree
-# (web/scratch/ollama/.../app/api/*) that must not be scanned or bundled.
-web/scratch/

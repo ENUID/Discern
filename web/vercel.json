@@ -28,5 +28,13 @@
       "path": "/api/cron/vocab-review",
       "schedule": "0 9 * * 1"
     }
+  ],
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "from.enuid.com" }],
+      "destination": "https://discern.enuid.com/:path*",
+      "permanent": true
+    }
   ]
 }
