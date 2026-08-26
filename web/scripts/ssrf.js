@@ -396,6 +396,128 @@ async function main() {
     }
   }
 
+
+  // ── the palette fetch ─────────────────────────────────────────────────────
+  console.log('\n── the colour read, which anyone could aim ' + '─'.repeat(31))
+  {
+    // paletteOf reads four colours off a product photograph. The URL reaches it
+    // from a store's catalogue AND — through /api/style-with, which takes
+    // `product` straight out of an unauthenticated request body — from anyone
+    // at all. Before P4b-1 it was a bare fetch: no guard, redirects followed,
+    // arrayBuffer() unbounded. Every case below was REQUESTED by the previous
+    // implementation; that was verified by running these same assertions
+    // against it.
+    const P = build('lib/fashion/palette.ts', 'palette-guarded')
+
+    const attacker = [
+      ['http://127.0.0.1/x.jpg', 'loopback'],
+      ['http://10.0.0.5/x.jpg', 'private 10/8'],
+      ['http://169.254.169.254/latest/meta-data/', 'cloud metadata'],
+      ['http://[::ffff:7f00:1]/x.jpg', 'IPv4-mapped IPv6 loopback'],
+      ['http://localhost./x.jpg', 'localhost with the root dot'],
+    ]
+    for (const [url, why] of attacker) {
+      const asked = stubFetch(() => ok('bytes'))
+      const pal = await P.paletteOf(url, 2000)
+      restore()
+      check(asked.length === 0, `${why} is never requested`, `${asked.length} requests`)
+      check(pal === null, '  and the caller gets null, exactly as for an unreadable image')
+    }
+
+    // A redirect away from a legitimate CDN must not be followed.
+    {
+      const asked = stubFetch((_u, _i, n) =>
+        n === 0 ? redirectTo('http://169.254.169.254/latest/meta-data/') : ok('SECRET'))
+      const pal = await P.paletteOf('https://cdn.shopify.com/s/files/x.jpg', 2000)
+      restore()
+      check(asked.length === 1, 'a redirect to the metadata address is never contacted', `${asked.length} request(s)`)
+      check(pal === null, '  and the read fails closed')
+    }
+
+    // An oversized image is abandoned mid-stream, not measured afterwards.
+    {
+      const counter = { pulled: 0 }
+      const CHUNK = 256 * 1024
+      global.fetch = async () => new Response(chunkedBody(CHUNK, 200, counter), { status: 200 })
+      const pal = await P.paletteOf('https://cdn.shopify.com/s/files/huge.jpg', 4000)
+      restore()
+      check(pal === null, 'an oversized image yields null')
+      check(counter.pulled <= 24, '  and the stream stopped early rather than buffering 50MB',
+        `${counter.pulled} of 200 chunks (${Math.round(counter.pulled * CHUNK / 1024 / 1024)}MB touched)`)
+    }
+  }
+
+  console.log('\n── and the images that must still work ' + '─'.repeat(35))
+  {
+    const P = build('lib/fashion/palette.ts', 'palette-guarded')
+
+    // A real PNG, so the decode path runs for real rather than being stubbed —
+    // and a big enough one to mean something. The 1x1 fixture this would
+    // otherwise reach for decodes fine and yields nothing: paletteOf resizes to
+    // 48x48 and then reads only the central band (0.22..0.78 of each axis),
+    // which on a 1x1 image is empty. 128x128 in two colours is the smallest
+    // fixture that actually exercises the crop and the quantiser.
+    const sharp = require(path.join(WEB, 'node_modules/sharp'))
+    const raw = Buffer.alloc(128 * 128 * 3)
+    for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) {
+      const i = (y * 128 + x) * 3
+      const left = x < 64
+      raw[i] = left ? 0xc8 : 0x20
+      raw[i + 1] = left ? 0x50 : 0x60
+      raw[i + 2] = left ? 0x3c : 0xa0
+    }
+    const PNG = await sharp(raw, { raw: { width: 128, height: 128, channels: 3 } }).png().toBuffer()
+    {
+      const asked = stubFetch(() => new Response(PNG, { status: 200, headers: { 'content-type': 'image/png' } }))
+      const pal = await P.paletteOf('https://cdn.shopify.com/s/files/real.png', 4000)
+      restore()
+      check(asked.length === 1, 'a legitimate CDN image is fetched')
+      check(pal !== null && Array.isArray(pal.colours), '  and still yields a Palette',
+        pal ? `${pal.colours.length} colours` : 'null')
+    }
+    {
+      // A multi-MB original from a CDN nothing rewrites — the case a 2MB cap
+      // would have broken, which is why the cap here is explicit.
+      const big = Buffer.concat([PNG, Buffer.alloc(3 * 1024 * 1024)])
+      const asked = stubFetch(() => new Response(big, { status: 200 }))
+      await P.paletteOf('https://images.example-cdn.net/original.png', 4000)
+      restore()
+      check(asked.length === 1, 'a 3MB original from a non-Shopify CDN is still fetched, not rejected')
+    }
+    {
+      const asked = stubFetch(() => ok('this is not an image'))
+      const pal = await P.paletteOf('https://cdn.shopify.com/s/files/notanimage.jpg', 4000)
+      restore()
+      check(asked.length === 1 && pal === null, 'non-image bytes still yield null, as before')
+    }
+    {
+      // small() must still narrow a Shopify URL and leave everything else alone.
+      let sent = null
+      global.fetch = async (u) => { sent = String(u); return new Response(PNG, { status: 200 }) }
+      await P.paletteOf('https://cdn.shopify.com/s/files/x.jpg?width=400', 4000)
+      restore()
+      check(sent === 'https://cdn.shopify.com/s/files/x.jpg?width=64',
+        'small() still rewrites a Shopify URL to width=64', sent)
+
+      global.fetch = async (u) => { sent = String(u); return new Response(PNG, { status: 200 }) }
+      await P.paletteOf('https://images.example-cdn.net/photo.jpg', 4000)
+      restore()
+      check(sent === 'https://images.example-cdn.net/photo.jpg',
+        'and leaves a non-Shopify URL untouched', sent)
+    }
+    {
+      // The 6s default is preserved: the caller's signal still reaches fetch.
+      let signalled = false
+      global.fetch = async (_u, init) => { signalled = !!init.signal; return new Response(PNG, { status: 200 }) }
+      await P.paletteOf('https://cdn.shopify.com/s/files/x.jpg')
+      restore()
+      check(signalled, 'the abort signal still reaches the fetch')
+      const src = fs.readFileSync(path.join(WEB, 'lib/fashion/palette.ts'), 'utf8')
+      check(/timeoutMs = 6000/.test(src), 'and the 6-second default is unchanged')
+      check(/AbortSignal\.timeout\(timeoutMs\)/.test(src), 'wired the same way as before')
+    }
+  }
+
   console.log('\n' + (bad === 0
     ? 'every hop is checked before it is followed, and the body stops at the cap'
     : `${bad} FAILED`))

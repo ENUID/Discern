@@ -23,6 +23,7 @@
 
 import sharp from 'sharp'
 import { BoundedCache } from '../boundedCache'
+import { safeFetch } from '../ssrfGuard'
 
 export type Rgb = { r: number; g: number; b: number }
 export type Family = 'neutral' | 'earth' | 'cool' | 'warm' | 'jewel' | 'pastel'
@@ -186,11 +187,33 @@ function small(src: string, px = 64): string {
   } catch { return src }
 }
 
+/** How much of a photograph is worth downloading to read four colours off it.
+ *
+ *  A Shopify image arrives already narrowed — parseProduct runs image_url
+ *  through normalizeImageUrl (?width=400, ~20-40KB) and small() below asks for
+ *  64px on top of that. Nothing rewrites a non-Shopify CDN, so those still
+ *  arrive as the multi-MB original, and a cap that rejected them would quietly
+ *  stop colour working for a slice of the catalogue.
+ *
+ *  Five megabytes covers a 2048px original with room to spare, and bounds the
+ *  worst case: palettesFor runs twelve of these at once, so this is the
+ *  difference between 60MB in flight and no ceiling at all. Beyond it, the
+ *  bytes are not a product photograph — and this whole function throws all but
+ *  48x48 of them away regardless. */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
 export async function paletteOf(imageUrl: string, timeoutMs = 6000): Promise<Palette | null> {
   if (!imageUrl) return null
   let buf: Buffer
   try {
-    const res = await fetch(small(imageUrl), { signal: AbortSignal.timeout(timeoutMs) })
+    // safeFetch, not fetch. This URL is not ours: it reaches here from a
+    // store's own catalogue AND, through /api/style-with, straight out of an
+    // unauthenticated request body — so before this it was a way to make the
+    // server fetch 169.254.169.254 on request. Every hop is checked and the
+    // body stops at the cap; a blocked destination, an oversized image and an
+    // unreachable host all throw, and the catch below turns every one of them
+    // into the null this function already returned for a bad image.
+    const res = await safeFetch(small(imageUrl), { signal: AbortSignal.timeout(timeoutMs) }, { maxBytes: MAX_IMAGE_BYTES })
     if (!res.ok) return null
     buf = Buffer.from(await res.arrayBuffer())
   } catch { return null }
