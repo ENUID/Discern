@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BoundedCache } from '@/lib/boundedCache'
-import { safeParseStoreUrl } from '@/lib/ssrfGuard'
+import { safeParseStoreUrl, safeFetch } from '@/lib/ssrfGuard'
 
 const SIZE_KWS = /\b(size|chest|waist|hip|inseam|sleeve|shoulder|length|neck|bust|height|weight|measurements?|XS|XL|XXL)\b/i
 
@@ -81,7 +81,7 @@ const BROWSER_HEADERS = {
 async function getJson(url: string, ms = 8000): Promise<any> {
   const c = new AbortController(); const t = setTimeout(() => c.abort(), ms)
   try {
-    const r = await fetch(url, { signal: c.signal, headers: { Accept: 'application/json', 'User-Agent': UA } })
+    const r = await safeFetch(url, { signal: c.signal, headers: { Accept: 'application/json', 'User-Agent': UA } })
     if (!r.ok) return null
     return await r.json()
   } catch { return null } finally { clearTimeout(t) }
@@ -90,7 +90,7 @@ async function getJson(url: string, ms = 8000): Promise<any> {
 async function getHtml(url: string, ms = 7000): Promise<string | null> {
   const c = new AbortController(); const t = setTimeout(() => c.abort(), ms)
   try {
-    const r = await fetch(url, {
+    const r = await safeFetch(url, {
       signal: c.signal,
       headers: { Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', ...BROWSER_HEADERS },
     })

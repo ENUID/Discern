@@ -45,6 +45,8 @@ const UNIT = [
   // Not a behaviour test: it proves merchant and client text cannot become
   // prompt structure. See lib/stylist/promptSafety.ts.
   'prompt-safety.js',
+  // Where this server may send a request, and how much it will read back.
+  'ssrf.js',
   'retrieval.js',
   'ladder.js',
   'judge-scope.js',

@@ -96,3 +96,153 @@ export function safeParseStoreUrl(raw: string): { protocol: string; hostname: st
     return null
   }
 }
+
+// ── Following a link is a second request, and it deserves a second check ─────
+//
+// `safeParseStoreUrl` above validates the URL a caller hands us. It cannot
+// validate the one the server then redirects us to, and `fetch` follows
+// redirects by default — so a host that passes the check can answer 302 and
+// send the next request wherever it likes, including 169.254.169.254. Every
+// user-facing fetch in this app was doing exactly that.
+//
+// `safeFetch` walks the chain itself: `redirect: 'manual'`, and each hop is put
+// through the same predicate before it is followed. Nothing about the predicate
+// changes — it is the same `isBlockedHost` the three routes already trusted,
+// applied at every hop instead of only the first.
+//
+// THE BODY IS BOUNDED WHILE IT ARRIVES, not afterwards. Reading a response and
+// then checking its length is a size check that still lets an attacker post a
+// gigabyte through this process's memory first. The reader below stops and
+// cancels the stream the moment the cap is passed, and fails closed rather than
+// handing back a silently truncated document that a caller would parse as if it
+// were whole.
+
+/** A destination this app must not reach. Thrown, never returned, so a caller
+ *  cannot mistake a blocked request for an empty one. */
+export class BlockedDestinationError extends Error {
+  constructor(readonly url: string, readonly reason: string) {
+    super(`blocked destination: ${reason}`)
+    this.name = 'BlockedDestinationError'
+  }
+}
+
+/** The response was larger than the caller allowed. Fail closed: a truncated
+ *  document parsed as a whole one is worse than no document. */
+export class ResponseTooLargeError extends Error {
+  constructor(readonly url: string, readonly limit: number) {
+    super(`response exceeded ${limit} bytes`)
+    this.name = 'ResponseTooLargeError'
+  }
+}
+
+export type SafeFetchOptions = {
+  /** Hops to follow before giving up. Three covers every real store redirect
+   *  (apex → www, http → https, locale) and stops a loop cheaply. */
+  maxRedirects?: number
+  /** Hard ceiling on the body, enforced as it streams. */
+  maxBytes?: number
+}
+
+const DEFAULT_MAX_REDIRECTS = 3
+const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
+
+/** The same check `safeParseStoreUrl` makes, as a reusable step. */
+function assertAllowed(url: string): URL {
+  let u: URL
+  try { u = new URL(url) } catch { throw new BlockedDestinationError(url, 'unparseable') }
+  if (!['http:', 'https:'].includes(u.protocol)) {
+    throw new BlockedDestinationError(url, `scheme ${u.protocol}`)
+  }
+  if (isBlockedHost(u.hostname)) throw new BlockedDestinationError(url, `host ${u.hostname}`)
+  return u
+}
+
+/**
+ * Fetch a URL that came from outside this app.
+ *
+ * Every hop is validated, the body is capped as it arrives, and an
+ * `Authorization` header is dropped the moment the host changes. The returned
+ * Response carries the already-read body, so a caller's `.text()`/`.json()`
+ * works exactly as before and cannot re-read past the cap.
+ */
+export async function safeFetch(
+  rawUrl: string,
+  init: RequestInit = {},
+  opts: SafeFetchOptions = {},
+): Promise<Response> {
+  const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS
+  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES
+
+  let current = assertAllowed(rawUrl)
+  const originHost = current.hostname
+  const seen = new Set<string>([current.toString()])
+  let headers = new Headers(init.headers as HeadersInit | undefined)
+
+  for (let hop = 0; ; hop++) {
+    const res = await fetch(current.toString(), { ...init, headers, redirect: 'manual' })
+
+    const isRedirect = res.status >= 300 && res.status < 400 && res.headers.has('location')
+    if (!isRedirect) return capture(res, current.toString(), maxBytes)
+
+    if (hop >= maxRedirects) {
+      throw new BlockedDestinationError(current.toString(), `more than ${maxRedirects} redirects`)
+    }
+
+    // A Location may be relative; resolve it against the hop we are on, then
+    // put the RESULT through the same predicate. This is the whole point.
+    const location = res.headers.get('location') as string
+    const next = assertAllowed(new URL(location, current).toString())
+
+    if (seen.has(next.toString())) {
+      throw new BlockedDestinationError(next.toString(), 'redirect loop')
+    }
+    seen.add(next.toString())
+
+    // Credentials do not cross a host boundary.
+    if (next.hostname !== originHost && headers.has('authorization')) {
+      headers = new Headers(headers)
+      headers.delete('authorization')
+    }
+    current = next
+  }
+}
+
+/**
+ * Read a response body, stopping at the cap.
+ *
+ * The read is incremental and the stream is cancelled as soon as the limit is
+ * passed — the oversized bytes are never all held at once, which is the
+ * difference between a size limit and a size report.
+ */
+async function capture(res: Response, url: string, maxBytes: number): Promise<Response> {
+  if (!res.body) return res
+
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel('response too large').catch(() => {})
+        throw new ResponseTooLargeError(url, maxBytes)
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock?.()
+  }
+
+  const body = new Uint8Array(total)
+  let at = 0
+  for (const c of chunks) { body.set(c, at); at += c.byteLength }
+
+  return new Response(body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  })
+}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BoundedCache } from '@/lib/boundedCache'
-import { safeParseStoreUrl } from '@/lib/ssrfGuard'
+import { safeParseStoreUrl, safeFetch } from '@/lib/ssrfGuard'
+import { UCP_REGISTRY } from '@/lib/stores'
 
 /**
  * Every photograph a store publishes for one product.
@@ -20,8 +21,19 @@ import { safeParseStoreUrl } from '@/lib/ssrfGuard'
  */
 
 /** A UCP tool call against a store's own MCP endpoint. */
+/** True when this host is one of the brands Discern actually carries.
+ *
+ *  GlobalCatalogService only ever calls a registry domain — its fetch list is
+ *  closed over UCP_REGISTRY. This route was not: the hostname came from the
+ *  caller's own ?url=, so an unauthenticated request could make the server POST
+ *  a JSON-RPC body to any public host it named. Same rule, applied here. */
+function isRegisteredStore(hostname: string): boolean {
+  const h = hostname.toLowerCase().trim()
+  return UCP_REGISTRY.some(s => s.domain.toLowerCase().trim() === h)
+}
+
 async function ucp(domain: string, name: string, args: Record<string, unknown>) {
-  const res = await fetch(`https://${domain}/api/mcp`, {
+  const res = await safeFetch(`https://${domain}/api/mcp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', id: 1, params: { name, arguments: args } }),
@@ -68,6 +80,11 @@ export async function GET(req: NextRequest) {
 
   const parsed = safeParseStoreUrl(raw)
   if (!parsed) return NextResponse.json({ images: [], colors: [], byColor: {}, reason: 'unreadable-store-url' })
+  // Only a brand we carry. Same shape of answer as an unreadable URL, so the
+  // public contract of this route does not change.
+  if (!isRegisteredStore(parsed.hostname)) {
+    return NextResponse.json({ images: [], colors: [], byColor: {}, reason: 'unreadable-store-url' })
+  }
 
   if (cache.has(raw)) return NextResponse.json(cache.get(raw))
 
@@ -113,7 +130,7 @@ export async function GET(req: NextRequest) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 7000)
     try {
-      const res = await fetch(url, {
+      const res = await safeFetch(url, {
         signal: controller.signal,
         headers: { 'User-Agent': UA, Accept: 'application/json' },
       })

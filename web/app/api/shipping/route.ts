@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { groqChat, FAST_MODEL } from '@/lib/groq'
 import { BoundedCache } from '@/lib/boundedCache'
-import { safeParseStoreUrl } from '@/lib/ssrfGuard'
+import { safeParseStoreUrl, safeFetch } from '@/lib/ssrfGuard'
 import { makeIpRateLimiter } from '@/lib/rateLimit'
 
 const cache = new BoundedCache<string, { shipping: string; returns: string } | null>(2000)
@@ -57,7 +57,7 @@ async function fetchPage(urls: string[]): Promise<string | null> {
     try {
       const controller = new AbortController()
       const id = setTimeout(() => controller.abort(), 6000)
-      const res = await fetch(url, {
+      const res = await safeFetch(url, {
         signal: controller.signal,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
