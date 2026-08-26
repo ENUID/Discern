@@ -196,11 +196,37 @@ function small(src: string, px = 64): string {
  *  stop colour working for a slice of the catalogue.
  *
  *  Five megabytes covers a 2048px original with room to spare, and bounds the
- *  worst case: palettesFor runs twelve of these at once, so this is the
- *  difference between 60MB in flight and no ceiling at all. Beyond it, the
+ *  worst case: palettesFor runs eight of these at once by default, and twelve
+ *  where GlobalCatalogService asks for twelve, so this is the difference
+ *  between tens of megabytes in flight and no ceiling at all. Beyond it, the
  *  bytes are not a product photograph — and this whole function throws all but
  *  48x48 of them away regardless. */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+/** And how many pixels of it are worth decoding.
+ *
+ *  MAX_IMAGE_BYTES bounds the transfer. It does not bound the decode, and
+ *  nothing relates the two that an attacker has to respect: PNG declares its
+ *  width and height in the header, and a 0.53MB interlaced file can declare
+ *  12000x12000 perfectly legally. Measured through the exact pipeline below,
+ *  that file took peak RSS from 66MB to 660MB — inside the 5MB cap the whole
+ *  way, and out the other side of what a 1GB function survives, from one
+ *  unauthenticated /api/style-with request. Interlacing is what makes it
+ *  work: libvips streams a normal PNG and shrinks it on load, but Adam7 has
+ *  to materialise the whole raster first.
+ *
+ *  So the decode gets a ceiling of its own, and sharp enforces it off the
+ *  header — over the limit it throws before allocating anything, which
+ *  measured at 72MB rather than 660MB.
+ *
+ *  Twenty-four megapixels is 6000x4000: a full-frame camera original at
+ *  native resolution, which is already far past anything this app asks for.
+ *  The widest image it ever requests is the 2048px gallery shot
+ *  (product-images' toGalleryUrl); parseProduct asks Shopify for 400px,
+ *  small() above asks for 64px, and every path through here ends at 48x48.
+ *  Real product photography sits well under this; the demonstrated attack
+ *  sits at six times it, and sharp's own default at eleven times it. */
+const MAX_IMAGE_PIXELS = 24_000_000
 
 export async function paletteOf(imageUrl: string, timeoutMs = 6000): Promise<Palette | null> {
   if (!imageUrl) return null
@@ -223,7 +249,8 @@ export async function paletteOf(imageUrl: string, timeoutMs = 6000): Promise<Pal
     // Down to a postage stamp on purpose. Colour survives; JPEG noise, weave
     // and stitching do not, and 48x48 is 2,304 pixels to walk instead of four
     // million.
-    const out = await sharp(buf).resize(48, 48, { fit: 'inside' }).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    const out = await sharp(buf, { limitInputPixels: MAX_IMAGE_PIXELS })
+      .resize(48, 48, { fit: 'inside' }).removeAlpha().raw().toBuffer({ resolveWithObject: true })
     px = out.data; w = out.info.width; h = out.info.height
   } catch { return null }
 

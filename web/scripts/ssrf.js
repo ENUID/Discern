@@ -27,6 +27,7 @@
  */
 const path = require('path')
 const fs = require('fs')
+const zlib = require('zlib')
 const { execFileSync } = require('child_process')
 
 const WEB = path.resolve(__dirname, '..')
@@ -515,6 +516,140 @@ async function main() {
       const src = fs.readFileSync(path.join(WEB, 'lib/fashion/palette.ts'), 'utf8')
       check(/timeoutMs = 6000/.test(src), 'and the 6-second default is unchanged')
       check(/AbortSignal\.timeout\(timeoutMs\)/.test(src), 'wired the same way as before')
+    }
+  }
+
+  console.log('\n── the bytes that arrive small and decode enormous ' + '─'.repeat(23))
+  {
+    const P = build('lib/fashion/palette.ts', 'palette-guarded')
+    const sharp = require(path.join(WEB, 'node_modules/sharp'))
+
+    /** A PNG that declares w*h but carries almost nothing.
+     *
+     *  The transfer cap counts bytes on the wire; a decoder counts the pixels
+     *  the HEADER claims. Adam7 interlacing is what turns the gap into a
+     *  weapon — libvips streams an ordinary PNG and shrinks it on load, but an
+     *  interlaced one has to be materialised whole before anything can be
+     *  resized. All-zero scanlines deflate to nothing, so the file stays tiny. */
+    const interlaced = (w, h) => {
+      const table = []
+      for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; table[n] = c >>> 0 }
+      const crc = b => { let r = 0xffffffff; for (const x of b) r = table[(r ^ x) & 0xff] ^ (r >>> 8); return (r ^ 0xffffffff) >>> 0 }
+      const chunk = (type, data) => {
+        const len = Buffer.alloc(4); len.writeUInt32BE(data.length)
+        const td = Buffer.concat([Buffer.from(type, 'ascii'), data])
+        const c = Buffer.alloc(4); c.writeUInt32BE(crc(td))
+        return Buffer.concat([len, td, c])
+      }
+      const ihdr = Buffer.alloc(13)
+      ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4)
+      ihdr[8] = 8; ihdr[9] = 6; ihdr[12] = 1        // 8-bit RGBA, Adam7
+      let raw = 0
+      const xo = [0, 4, 0, 2, 0, 1, 0], yo = [0, 0, 4, 0, 2, 0, 1]
+      const xs = [8, 8, 4, 4, 2, 2, 1], ys = [8, 8, 8, 4, 4, 2, 2]
+      for (let p = 0; p < 7; p++) {
+        const pw = Math.ceil((w - xo[p]) / xs[p]), ph = Math.ceil((h - yo[p]) / ys[p])
+        if (pw > 0 && ph > 0) raw += ph * (1 + pw * 4)
+      }
+      return Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.alloc(raw), { level: 9 })), chunk('IEND', Buffer.alloc(0)),
+      ])
+    }
+
+    /** The half-and-half fixture above, at any size. Corners that disagree, so
+     *  the backdrop heuristic drops nothing and a real Palette comes out. */
+    const shot = (w, h) => {
+      const px = Buffer.alloc(w * h * 3)
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 3, left = x < w / 2
+        px[i] = left ? 0xc8 : 0x20
+        px[i + 1] = left ? 0x50 : 0x60
+        px[i + 2] = left ? 0x3c : 0xa0
+      }
+      return sharp(px, { raw: { width: w, height: h, channels: 3 } }).png().toBuffer()
+    }
+
+    {
+      const bomb = interlaced(12000, 12000)     // 144 MP declared
+      check(bomb.length < 5 * 1024 * 1024,
+        'the bomb passes the byte cap — so the byte cap is not what stops it',
+        `${(bomb.length / 1048576).toFixed(2)}MB of a 5MB allowance`)
+      const asked = stubFetch(() => new Response(bomb, { status: 200, headers: { 'content-type': 'image/png' } }))
+      let threw = null
+      let pal
+      try { pal = await P.paletteOf('https://images.example-cdn.net/bomb.png', 8000) } catch (e) { threw = e }
+      restore()
+      check(asked.length === 1, '  it is fetched, as any image would be')
+      check(threw === null, '  and no exception escapes to the caller', threw ? String(threw) : 'none')
+      check(pal === null, '  the caller gets null, exactly as for an unreadable image')
+    }
+
+    // THE BOUND ITSELF, from both sides. This is the load-bearing pair: before
+    // the limit existed the 25MP image decoded happily and returned a Palette,
+    // so an assertion that only checked the bomb would have passed against the
+    // vulnerable code too — the bomb returns null either way, just 660MB later.
+    {
+      const at = await shot(6000, 4000)         // 24.0 MP — exactly the ceiling
+      stubFetch(() => new Response(at, { status: 200, headers: { 'content-type': 'image/png' } }))
+      const palAt = await P.paletteOf('https://images.example-cdn.net/at.png', 8000)
+      restore()
+      check(palAt !== null && Array.isArray(palAt.colours),
+        'a 6000x4000 original — 24.0 MP, a full-frame camera file — still reads',
+        palAt ? `${palAt.colours.length} colours` : 'null')
+
+      const over = await shot(5000, 5000)       // 25.0 MP — one megapixel past it
+      stubFetch(() => new Response(over, { status: 200, headers: { 'content-type': 'image/png' } }))
+      const palOver = await P.paletteOf('https://images.example-cdn.net/over.png', 8000)
+      restore()
+      check(palOver === null,
+        '  and 5000x5000 — 25.0 MP, one past the ceiling — is refused',
+        palOver ? 'RETURNED A PALETTE (the bound is not being applied)' : 'null')
+    }
+
+    // Nothing legitimate moved. These are the exact fixtures and the exact
+    // values the section above produces, compared as text.
+    {
+      const same = async (w, h, label, expected) => {
+        const png = await shot(w, h)
+        stubFetch(() => new Response(png, { status: 200, headers: { 'content-type': 'image/png' } }))
+        const pal = await P.paletteOf('https://images.example-cdn.net/x.png', 8000)
+        restore()
+        check(JSON.stringify(pal) === expected, label, JSON.stringify(pal))
+      }
+      const BLUE = '{"colours":[{"r":33,"g":96,"b":160}],"families":["cool"],"variety":1,"plain":true}'
+      await same(128, 128, 'the 128x128 fixture is byte-identical to before the bound', BLUE)
+      await same(2048, 2048, 'so is a 2048px shot — the widest this app ever asks for', BLUE)
+      await same(4000, 4000, 'so is a 16MP original', BLUE)
+    }
+
+    {
+      const src = fs.readFileSync(path.join(WEB, 'lib/fashion/palette.ts'), 'utf8')
+      check(/limitInputPixels:\s*MAX_IMAGE_PIXELS/.test(src), 'the bound is wired into the decode itself')
+      check(/const MAX_IMAGE_PIXELS = 24_000_000/.test(src), '  and it is 24 megapixels, stated once')
+      check(/const MAX_IMAGE_BYTES = 5 \* 1024 \* 1024/.test(src), '  the transfer cap is untouched beside it')
+    }
+
+    // Supporting evidence, not the assertion. Peak RSS is a real number but a
+    // noisy one, so the threshold sits nowhere near either side: the same
+    // fixture measured 660MB before the bound and 81MB after.
+    {
+      const bomb = interlaced(12000, 12000)
+      const bombPath = path.join(WEB, '.vt', 'bomb.png')
+      fs.writeFileSync(bombPath, bomb)
+      const child = `
+        const P = require(${JSON.stringify(path.join(WEB, '.vt', 'palette-guarded.cjs'))})
+        const fs = require('fs')
+        const b = fs.readFileSync(${JSON.stringify(bombPath)})
+        global.fetch = async () => new Response(b, { status: 200 })
+        P.paletteOf('https://images.example-cdn.net/bomb.png', 8000).then(() => {
+          const m = fs.readFileSync('/proc/self/status', 'utf8').match(/VmHWM:\\s+(\\d+) kB/)
+          process.stdout.write(m ? String(Math.round(m[1] / 1024)) : 'NA')
+        })`
+      let mb = NaN
+      try { mb = Number(execFileSync(process.execPath, ['-e', child], { encoding: 'utf8' }).trim()) } catch { /* reported below */ }
+      check(Number.isFinite(mb) && mb < 250,
+        'and decoding it never allocates the raster', `peak RSS ${Number.isFinite(mb) ? mb + 'MB' : 'unavailable'} (was 660MB)`)
     }
   }
 
