@@ -42,6 +42,9 @@ const UNIT = [
   'usage.js',
   // Not a behaviour test: it hashes the prompts, so text cannot drift silently.
   'prompts.js',
+  // Not a behaviour test: it proves merchant and client text cannot become
+  // prompt structure. See lib/stylist/promptSafety.ts.
+  'prompt-safety.js',
   'retrieval.js',
   'ladder.js',
   'judge-scope.js',

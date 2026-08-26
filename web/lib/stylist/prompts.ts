@@ -35,6 +35,8 @@
  * brings the last prompt under the guard.
  */
 
+import { fenceUntrusted, untrustedBlock } from './promptSafety'
+
 // ── The shapes a prompt renders ─────────────────────────────────────────────
 export type StylistProduct = {
   id: string
@@ -63,26 +65,34 @@ export function enrichHistory(messages: StylistMessage[]): Array<{ role: 'user' 
     if (m.role === 'assistant' && m.foundProducts && m.foundProducts.length > 0) {
       const summary = m.foundProducts
         .slice(0, 6)
-        .map((p, i) => `- Product ${i + 1}: ${p.title}${p.vendor ? ` by ${p.vendor}` : ''}${p.price ? ` (${p.price} ${p.currency || 'USD'})` : ''}`)
+        .map((p, i) => `- Product ${i + 1}: ${fenceUntrusted(p.title, 200)}${p.vendor ? ` by ${fenceUntrusted(p.vendor, 80)}` : ''}${p.price ? ` (${p.price} ${fenceUntrusted(p.currency, 8) || 'USD'})` : ''}`)
         .join('\n')
-      out.push({ role: 'system', content: `Products the UI showed below this reply:\n${summary}` })
+      // These titles and vendors arrive in the REQUEST BODY from the browser,
+      // and this message carries the system role. Fenced rather than trusted:
+      // the fields are single-line and structurally inert, and the block says
+      // plainly where Discern stops speaking.
+      out.push({ role: 'system', content: `Products the UI showed below this reply:\n${untrustedBlock(summary)}` })
     }
   }
   return out
 }
 
 // ── Prompt building ─────────────────────────────────────────────────────────
+/** The pinned-product block. Every field here is written by the merchant, and
+ *  this block is concatenated into the SYSTEM message — so each field is
+ *  reduced to one inert line and the whole thing is fenced. The labels, the
+ *  order and the caps are unchanged; only the trust boundary is new. */
 export function productBlock(p: StylistProduct, i: number): string {
   const lines = [
-    `PRODUCT ${i + 1}: ${p.title || 'Untitled'}`,
-    p.vendor && `Brand: ${p.vendor}`,
-    (p.price != null) && `Price: ${p.price} ${p.currency || 'USD'}`,
-    p.material && `Material: ${p.material}`,
-    p.options?.length && `Options: ${p.options.map(o => `${o.name}: ${o.values.slice(0, 12).join('/')}`).join('; ')}`,
-    p.description && `Details: ${p.description.replace(/\s+/g, ' ').slice(0, 700)}`,
-    p.tags?.length && `Tags: ${p.tags.slice(0, 15).join(', ')}`,
+    `PRODUCT ${i + 1}: ${fenceUntrusted(p.title, 200) || 'Untitled'}`,
+    p.vendor && `Brand: ${fenceUntrusted(p.vendor, 80)}`,
+    (p.price != null) && `Price: ${p.price} ${fenceUntrusted(p.currency, 8) || 'USD'}`,
+    p.material && `Material: ${fenceUntrusted(p.material, 80)}`,
+    p.options?.length && `Options: ${p.options.map(o => `${fenceUntrusted(o.name, 40)}: ${o.values.slice(0, 12).map(v => fenceUntrusted(v, 40)).join('/')}`).join('; ')}`,
+    p.description && `Details: ${fenceUntrusted(p.description, 700)}`,
+    p.tags?.length && `Tags: ${p.tags.slice(0, 15).map(t => fenceUntrusted(t, 40)).filter(Boolean).join(', ')}`,
   ].filter(Boolean)
-  return lines.join('\n')
+  return untrustedBlock(lines.join('\n'))
 }
 
 // ── Shared deep fashion expertise ─────────────────────────────────────────────
@@ -281,13 +291,12 @@ export const GROUNDING_SYSTEM = `You are Fabrics, a sharp, warm personal stylist
 Output ONLY the reply text with [PRODUCT:N] tokens. Never output [SEARCH:], [OUTFIT:], or [COMPARE:].`
 
 export function compactProductLine(p: any, i: number): string {
-  const bits = [`${i + 1}. ${String(p?.title || 'Untitled').slice(0, 90)}`]
+  const bits = [`${i + 1}. ${fenceUntrusted(p?.title, 90) || 'Untitled'}`]
   const vendor = p?.vendor || p?.brand
-  if (vendor) bits.push(`by ${String(vendor).slice(0, 40)}`)
-  if (p?.price != null) bits.push(`${p.price} ${p.currency || p.base_currency || ''}`.trim())
-  const desc = typeof p?.description === 'string'
-    ? p.description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) : ''
-  const tags = Array.isArray(p?.tags) ? p.tags.filter((t: any) => typeof t === 'string' && !t.startsWith('__') && !t.includes(':')).slice(0, 8).join(', ') : ''
+  if (vendor) bits.push(`by ${fenceUntrusted(vendor, 40)}`)
+  if (p?.price != null) bits.push(`${p.price} ${fenceUntrusted(p.currency || p.base_currency, 8)}`.trim())
+  const desc = fenceUntrusted(p?.description, 160)
+  const tags = Array.isArray(p?.tags) ? p.tags.filter((t: any) => typeof t === 'string' && !t.startsWith('__') && !t.includes(':')).slice(0, 8).map((t: string) => fenceUntrusted(t, 40)).filter(Boolean).join(', ') : ''
   const extra = [desc, tags].filter(Boolean).join(' | ')
   return extra ? `${bits.join(' — ')} — ${extra}` : bits.join(' — ')
 }

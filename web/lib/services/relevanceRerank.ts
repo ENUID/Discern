@@ -9,6 +9,7 @@ import { intentKey, planPromptBlock } from '../fashion/outfitKnowledge'
 import { infer } from '../ai/infer'
 import { houseTaste } from '../fashion/lookbook'
 import { runAfterResponse } from '../afterResponse'
+import { fenceUntrusted, untrustedBlock } from '../stylist/promptSafety'
 
 // ── Feature flags ─────────────────────────────────────────────────────────────
 // LLM rerank is ON by default — set RELEVANCE_RERANK=off to disable.
@@ -292,16 +293,21 @@ function stripHtml(s: string): string {
   return s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
+/** One product, as the judge sees it. Every field is merchant-written, so each
+ *  is reduced to a single inert line by the same function the stylist prompt
+ *  uses — one sanitiser, not two. The shape, the order and the caps are
+ *  unchanged. */
 function compactProduct(p: UcpProduct, idx: number): string {
-  const title    = p.title || 'Untitled'
-  const vendor   = p.vendor && p.vendor !== 'Independent Seller' ? ` | ${p.vendor}` : ''
-  const tags     = p.tags?.length ? ` | tags: ${p.tags.slice(0, 8).join(',')}` : ''
+  const title    = fenceUntrusted(p.title, 160) || 'Untitled'
+  const vendorRaw = p.vendor && p.vendor !== 'Independent Seller' ? fenceUntrusted(p.vendor, 60) : ''
+  const vendor   = vendorRaw ? ` | ${vendorRaw}` : ''
+  const tagList  = p.tags?.length ? p.tags.slice(0, 8).map(t => fenceUntrusted(t, 40)).filter(Boolean).join(',') : ''
+  const tags     = tagList ? ` | tags: ${tagList}` : ''
   const opts     = p.options?.length
-    ? ' | opts: ' + p.options.map(o => `${o.name}[${o.values.slice(0, 4).join(',')}]`).join(' ')
+    ? ' | opts: ' + p.options.map(o => `${fenceUntrusted(o.name, 40)}[${o.values.slice(0, 4).map(v => fenceUntrusted(v, 40)).join(',')}]`).join(' ')
     : ''
-  const desc     = p.description
-    ? ' | ' + stripHtml(p.description).slice(0, DESC_CHARS)
-    : ''
+  const descText = fenceUntrusted(p.description, DESC_CHARS)
+  const desc     = descText ? ' | ' + descText : ''
   return `[${idx}] ${title}${vendor}${tags}${opts}${desc}`
 }
 
@@ -317,8 +323,13 @@ async function llmRelevanceScores(
 ): Promise<Map<string, LLMScore> | null> {
   if (!products.length) return null
 
-  const productLines = products.map((p, i) => compactProduct(p, i)).join('\n')
-  const profileLine = tasteProfile ? `\nShopper profile: ${tasteProfile}\n` : ''
+  const productLines = untrustedBlock(products.map((p, i) => compactProduct(p, i)).join('\n'))
+  // tasteProfile is assembled in the stylist route from, among other things,
+  // the vendor names of the shopper's saved products — which arrive in the
+  // request body from the browser. It is interpolated into the SYSTEM message
+  // below, so it is fenced like any other untrusted field.
+  const profileSafe = fenceUntrusted(tasteProfile, 400)
+  const profileLine = profileSafe ? `\nShopper profile: ${profileSafe}\n` : ''
 
   const matched = matchStyles(query)
   const vocabBlock = vocabPromptBlock(matched)
