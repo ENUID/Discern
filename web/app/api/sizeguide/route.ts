@@ -1,6 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BoundedCache } from '@/lib/boundedCache'
 import { safeParseStoreUrl, safeFetch } from '@/lib/ssrfGuard'
+import { UCP_REGISTRY } from '@/lib/stores'
+
+/** True when this host is one of the brands Discern actually carries.
+ *
+ *  Same check, same registry and same exact-match rule as
+ *  /api/product-images and GlobalCatalogService — not a second allowlist.
+ *  Without it this route would fetch any public host a caller named, which
+ *  combined with the hostname-predicate bypasses closed alongside it was a
+ *  working unauthenticated request forgery. */
+function isRegisteredStore(hostname: string): boolean {
+  const h = hostname.toLowerCase().trim()
+  return UCP_REGISTRY.some(s => s.domain.toLowerCase().trim() === h)
+}
 
 const SIZE_KWS = /\b(size|chest|waist|hip|inseam|sleeve|shoulder|length|neck|bust|height|weight|measurements?|XS|XL|XXL)\b/i
 
@@ -209,6 +222,11 @@ export async function GET(req: NextRequest) {
 
   const parsed = safeParseStoreUrl(raw)
   if (!parsed) return NextResponse.json({ html: null })
+  // Every path this route builds is Shopify-shaped — /pages.json,
+  // /pages/{handle}, /products/{handle}.json — so a store is the only
+  // destination it was ever meant to reach. Same answer shape as an
+  // unreadable URL, so the public contract does not change.
+  if (!isRegisteredStore(parsed.hostname)) return NextResponse.json({ html: null })
   const origin = parsed.origin
 
   // Check cache first

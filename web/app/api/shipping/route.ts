@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { groqChat, FAST_MODEL } from '@/lib/groq'
 import { BoundedCache } from '@/lib/boundedCache'
 import { safeParseStoreUrl, safeFetch } from '@/lib/ssrfGuard'
+import { UCP_REGISTRY } from '@/lib/stores'
 import { makeIpRateLimiter } from '@/lib/rateLimit'
 
 const cache = new BoundedCache<string, { shipping: string; returns: string } | null>(2000)
@@ -10,6 +11,18 @@ const cache = new BoundedCache<string, { shipping: string; returns: string } | n
 // plus one LLM call — limit per IP so it can't be scripted into a quota
 // drain or used to hammer stores' policy pages through us.
 const isRateLimited = makeIpRateLimiter(20, 60_000)
+
+/** True when this host is one of the brands Discern actually carries.
+ *
+ *  Same check, same registry and same exact-match rule as
+ *  /api/product-images and GlobalCatalogService — not a second allowlist.
+ *  Without it this route would fetch any public host a caller named, which
+ *  combined with the hostname-predicate bypasses closed alongside it was a
+ *  working unauthenticated request forgery. */
+function isRegisteredStore(hostname: string): boolean {
+  const h = hostname.toLowerCase().trim()
+  return UCP_REGISTRY.some(s => s.domain.toLowerCase().trim() === h)
+}
 
 // Shopify standard policy pages + common custom slugs
 function policyUrls(base: string) {
@@ -100,7 +113,12 @@ export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get('url')
   if (!raw) return NextResponse.json({ data: null })
 
-  if (!safeParseStoreUrl(raw)) return NextResponse.json({ data: null })
+  const parsed = safeParseStoreUrl(raw)
+  if (!parsed) return NextResponse.json({ data: null })
+  // policyUrls below builds /policies/* and /pages/* on the given origin — a
+  // storefront is the only destination this was meant for. Same null answer as
+  // an unreadable URL, so the public contract does not change.
+  if (!isRegisteredStore(parsed.hostname)) return NextResponse.json({ data: null })
 
   const cached = cache.get(raw)
   if (cached !== undefined) return NextResponse.json({ data: cached })

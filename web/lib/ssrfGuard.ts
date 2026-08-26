@@ -41,6 +41,71 @@ function parseIPv4(host: string): number | null {
   return ip >>> 0
 }
 
+/** Parse an IPv6 literal into its eight 16-bit groups, or null.
+ *
+ *  The guard below used to look for an embedded IPv4 by matching a trailing
+ *  dotted-quad on the raw string. `new URL()` does not preserve that form:
+ *  `[::ffff:127.0.0.1]` is normalised to `[::ffff:7f00:1]` before the guard
+ *  ever sees it, so the dotted-quad was gone and the address — plain 127.0.0.1
+ *  — was allowed through. Parsing properly is the only way to see it. */
+function parseIPv6(host: string): number[] | null {
+  let h = host.toLowerCase().trim()
+  if (!h.includes(':')) return null
+  // A zone index ("fe80::1%eth0") names an interface, never a destination.
+  const pct = h.indexOf('%')
+  if (pct !== -1) h = h.slice(0, pct)
+
+  const halves = h.split('::')
+  if (halves.length > 2) return null
+
+  // A trailing dotted-quad occupies the last two groups.
+  const expand = (part: string): number[] | null => {
+    if (part === '') return []
+    const out: number[] = []
+    const bits = part.split(':')
+    for (let i = 0; i < bits.length; i++) {
+      const b = bits[i]
+      if (i === bits.length - 1 && b.includes('.')) {
+        const v4 = parseIPv4(b)
+        if (v4 === null) return null
+        out.push((v4 >>> 16) & 0xffff, v4 & 0xffff)
+        continue
+      }
+      if (!/^[0-9a-f]{1,4}$/.test(b)) return null
+      out.push(parseInt(b, 16))
+    }
+    return out
+  }
+
+  if (halves.length === 1) {
+    const only = expand(halves[0])
+    return only && only.length === 8 ? only : null
+  }
+  const left = expand(halves[0])
+  const right = expand(halves[1])
+  if (!left || !right) return null
+  const gap = 8 - left.length - right.length
+  if (gap < 1) return null
+  return [...left, ...new Array(gap).fill(0), ...right]
+}
+
+/** The IPv4 address an IPv6 literal actually reaches, or null.
+ *
+ *  Two prefixes carry a real IPv4 destination in their last 32 bits, and both
+ *  were reachable before this: `::ffff:a.b.c.d` (IPv4-mapped, RFC 4291) and
+ *  `64:ff9b::a.b.c.d` (NAT64 well-known, RFC 6052). Nothing else is treated
+ *  this way on purpose — 2001:db8::7f00:1 is a perfectly ordinary address that
+ *  merely ends in the same 32 bits, and blocking it would be wrong. */
+function embeddedIPv4(groups: number[]): number | null {
+  const zeros = (from: number, to: number) => groups.slice(from, to).every(g => g === 0)
+  const tail = ((groups[6] << 16) | groups[7]) >>> 0
+
+  if (zeros(0, 5) && groups[5] === 0xffff) return tail          // ::ffff:0:0/96
+  if (zeros(0, 6)) return tail                                  // ::a.b.c.d (deprecated)
+  if (groups[0] === 0x0064 && groups[1] === 0xff9b && zeros(2, 6)) return tail  // 64:ff9b::/96
+  return null
+}
+
 function isBlockedIPv4(ip: number): boolean {
   const a = (ip >>> 24) & 0xff
   const b = (ip >>> 16) & 0xff
@@ -59,6 +124,11 @@ export function isBlockedHost(hostname: string): boolean {
   if (!h) return true
   // Strip brackets from IPv6 literals ([::1] → ::1)
   if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1)
+  // A trailing dot is the DNS root and resolves identically: "localhost." is
+  // "localhost". `new URL()` strips it from IP literals but NOT from names, so
+  // every suffix rule below was one keystroke from being bypassed.
+  h = h.replace(/\.+$/, '')
+  if (!h) return true
 
   // Internal / loopback hostnames and suffixes
   if (
@@ -69,9 +139,16 @@ export function isBlockedHost(hostname: string): boolean {
 
   // IPv6: loopback, unspecified, link-local (fe80::/10), unique-local (fc00::/7)
   if (h === '::1' || h === '::' || h.startsWith('fe80:') || /^f[cd][0-9a-f]*:/.test(h)) return true
-  // IPv4-mapped / -embedded IPv6 (::ffff:127.0.0.1, ::ffff:7f00:1) — pull out any
-  // trailing dotted-quad and range-check it.
+  // IPv4 carried inside an IPv6 address — ::ffff:127.0.0.1, its normalised form
+  // ::ffff:7f00:1, and the NAT64 well-known prefix. Parsed rather than pattern-
+  // matched, because normalisation removes the dotted-quad the old check needed.
   if (h.includes(':')) {
+    const groups = parseIPv6(h)
+    if (groups) {
+      const embedded = embeddedIPv4(groups)
+      if (embedded !== null && isBlockedIPv4(embedded)) return true
+    }
+    // Kept: a trailing dotted-quad in any other IPv6 shape still range-checks.
     const tail = h.match(/(\d{1,3}(?:\.\d{1,3}){3})$/)
     if (tail) {
       const ip = parseIPv4(tail[1])

@@ -322,6 +322,80 @@ async function main() {
     }
   }
 
+
+  // ── the bypasses closed in P4a ────────────────────────────────────────────
+  console.log('\n── three ways the predicate used to be walked past ' + '─'.repeat(24))
+  {
+    // Each of these was ALLOWED before P4a — verified by rebuilding the previous
+    // ssrfGuard and running these same assertions against it, where all eight
+    // failed. They are grouped here so a regression is obvious rather than
+    // buried among the cases that always passed.
+    const closed = [
+      ['http://[::ffff:7f00:1]/x', 'IPv4-mapped IPv6 in hex — what new URL() normalises [::ffff:127.0.0.1] into'],
+      ['http://[::ffff:7f00:0001]/x', 'the same address zero-padded'],
+      ['http://[::ffff:127.0.0.1]/x', 'and the dotted form it started as'],
+      ['http://localhost./x', 'localhost with the DNS root dot'],
+      ['http://foo.internal./x', '.internal with the root dot'],
+      ['http://foo.local./x', '.local with the root dot'],
+      ['http://[64:ff9b::7f00:1]/x', 'NAT64 well-known prefix carrying loopback'],
+      ['http://[64:ff9b::127.0.0.1]/x', 'NAT64 in dotted form'],
+    ]
+    for (const [url, why] of closed) {
+      check(safeParseStoreUrl(url) === null, `${url} — ${why}`)
+    }
+
+    // As a direct request: never contacted.
+    for (const [url] of closed) {
+      const asked = stubFetch(() => ok('SECRET'))
+      let threw = null
+      try { await safeFetch(url) } catch (e) { threw = e }
+      restore()
+      check(threw instanceof BlockedDestinationError && asked.length === 0,
+        `  direct request to ${url} is refused and never sent`, `${asked.length} requests`)
+    }
+
+    // As a redirect target: the second hop is never made.
+    for (const [url] of closed) {
+      const asked = stubFetch((_u, _i, n) => n === 0 ? redirectTo(url) : ok('SECRET'))
+      let threw = null
+      try { await safeFetch('https://taylorstitch.com/start') } catch (e) { threw = e }
+      restore()
+      check(threw instanceof BlockedDestinationError, `  redirect to ${url} is blocked`)
+      check(asked.length === 1, '    and the blocked destination was never contacted', `${asked.length} request(s)`)
+    }
+  }
+
+  console.log('\n── and the addresses that merely look similar ' + '─'.repeat(28))
+  {
+    // 2001:db8::7f00:1 ends in the same 32 bits as loopback and is an ordinary
+    // address. Blocking it would be a bug, so the prefix check is narrow.
+    for (const url of ['http://[2001:db8::7f00:1]/', 'http://[2606:4700::1111]/',
+                       'http://[64:ff9b::8.8.8.8]/', 'http://[::ffff:8.8.8.8]/',
+                       'https://sub.example.co.uk/', 'https://example.com./']) {
+      check(safeParseStoreUrl(url) !== null, `${url} is still allowed`)
+    }
+  }
+
+  // ── the destination allowlist on the two open routes ──────────────────────
+  console.log('\n── sizeguide and shipping may only reach a brand we carry ' + '─'.repeat(16))
+  {
+    const S = build('lib/stores.ts', 'ssrf-stores-2')
+    const registered = (d) => S.UCP_REGISTRY.some(s => s.domain.toLowerCase().trim() === d)
+    check(registered('taylorstitch.com'), 'a registry domain is recognised')
+    check(!registered('example.com'), 'an unregistered public host is not')
+    check(!registered('taylorstitch.com.evil.com'), 'nor a suffix-confusion attempt')
+
+    for (const f of ['app/api/sizeguide/route.ts', 'app/api/shipping/route.ts']) {
+      const name = f.split('/').slice(-2)[0]
+      const src = fs.readFileSync(path.join(WEB, f), 'utf8')
+      check(/function isRegisteredStore/.test(src), `${name} defines the registry check`)
+      check(/if \(!isRegisteredStore\(parsed\.hostname\)\)/.test(src),
+        `  and applies it to the caller's hostname before fetching`)
+      check(/from '@\/lib\/stores'/.test(src), '  using UCP_REGISTRY, not a second allowlist')
+      check(!/await fetch\(/.test(src), '  with no bare fetch remaining')
+    }
+  }
+
   console.log('\n' + (bad === 0
     ? 'every hop is checked before it is followed, and the body stops at the cap'
     : `${bad} FAILED`))
