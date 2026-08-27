@@ -43,9 +43,9 @@ jobs:
     # default gives up.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           # The version this repository already deploys on — see
           # convex-deploy.yml. There is no .nvmrc and no engines field, so that
