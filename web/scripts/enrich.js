@@ -20,8 +20,8 @@ const server = http.createServer((req,res) => {
 })
 server.listen(4949, async () => {
   process.env.GROQ_API_KEY='mock'; process.env.GROQ_BASE_URL='http://127.0.0.1:4949'
-  const { profilesFor } = require('/home/user/From/web/.vt/en.cjs')
-  const { worksWith } = require('/home/user/From/web/.vt/gp.cjs')
+  const { profilesFor } = require('../.vt/en.cjs')
+  const { worksWith } = require('../.vt/gp.cjs')
   const P=(id,title)=>({id,title,description:'',image_url:'https://cdn.shopify.com/'+id+'.jpg'})
   const products=[
     P('a','Boxy Linen Camp Shirt'), P('b','Large Floral Rayon Shirt'),

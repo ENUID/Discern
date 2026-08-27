@@ -1,5 +1,5 @@
 // Does answering "Shopping for" actually change what the server is told?
-const { chromium } = require('/home/user/From/web/node_modules/playwright-core')
+const { chromium } = require('playwright-core')
 ;(async () => {
   const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] })
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })

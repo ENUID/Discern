@@ -22,7 +22,7 @@
  * comes from the store's products.json, the other from the UCP feed), and
  * catalogue URLs at width=400.
  */
-const { chromium } = require('/home/user/From/web/node_modules/playwright-core')
+const { chromium } = require('playwright-core')
 
 const CDN = 'https://cdn.shopify.com/s/files/1/0001/agama'
 const shot = (name, w = 400) => `${CDN}/${name}.jpg?width=${w}`

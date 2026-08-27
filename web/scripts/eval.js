@@ -28,7 +28,7 @@ const fs = require('fs')
 const path = require('path')
 const { execFileSync } = require('child_process')
 
-const WEB = '/home/user/From/web'
+const WEB = path.resolve(__dirname, '..')
 function load(tsPath, name) {
   const out = path.join(WEB, '.vt', name + '.cjs')
   fs.mkdirSync(path.join(WEB, '.vt'), { recursive: true })

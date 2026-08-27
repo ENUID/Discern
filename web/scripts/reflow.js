@@ -1,7 +1,7 @@
 // "When I resize the window on iPad or laptop it collapses on each other
 // rather than resizing itself." Measured: the status pill against the
 // composer, at three sizes and across live resizes, while a search runs.
-const { chromium } = require('/home/user/From/web/node_modules/playwright-core')
+const { chromium } = require('playwright-core')
 
 const geom = () => {
   const pill = document.querySelector('.v2-crafting')

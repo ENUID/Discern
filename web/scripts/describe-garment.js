@@ -11,7 +11,7 @@ const server = http.createServer((req, res) => {
 })
 server.listen(4848, async () => {
   process.env.GROQ_API_KEY = 'mock'; process.env.GROQ_BASE_URL = 'http://127.0.0.1:4848'
-  const { describeGarment } = require('/home/user/From/web/.vt/dg.cjs')
+  const { describeGarment } = require('../.vt/dg.cjs')
   const cases = [
     ['a clean answer',        'farda men ecru cotton short sleeve embroidered shirt'],
     ['quoted and shouty',     '"MEN NAVY LINEN SHIRT"'],

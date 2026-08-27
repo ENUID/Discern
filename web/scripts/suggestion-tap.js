@@ -10,7 +10,7 @@
 // appearing, the tap loading the field, the row clearing itself, and the send
 // carrying the suggested query rather than the advice. The wording of the
 // query is scripts/suggest-query.js's job.
-const { chromium } = require('/home/user/From/web/node_modules/playwright-core')
+const { chromium } = require('playwright-core')
 
 const REPLY =
   'For a casual party, you want to look intentional without looking like you ' +

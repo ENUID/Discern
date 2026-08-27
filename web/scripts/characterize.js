@@ -29,7 +29,7 @@ const path = require('path')
 const fs = require('fs')
 const { execFileSync } = require('child_process')
 
-const WEB = '/home/user/From/web'
+const WEB = path.resolve(__dirname, '..')
 const BUNDLE = path.join(WEB, '.vt', 'route.cjs')
 
 function build() {

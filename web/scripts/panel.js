@@ -1,6 +1,6 @@
 // The HOW TO STYLE panel on a wide screen: does the look sit under its
 // heading, or in a column of its own with a gap between them?
-const { chromium } = require('/home/user/From/web/node_modules/playwright-core')
+const { chromium } = require('playwright-core')
 const PLATE = c => 'data:image/svg+xml;base64,' + Buffer.from(
   `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800"><rect width="600" height="800" fill="${c}"/></svg>`).toString('base64')
 const piece = (id, title) => ({ id, title, handle: id, price: 4498, currency: 'INR',
