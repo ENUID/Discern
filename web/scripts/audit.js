@@ -108,7 +108,6 @@ const PROBES = [
   ['/api/product-images?handle=x&store=example.com', 'GET', null, 'gallery ordering'],
   ['/api/sizeguide?url=https%3A%2F%2Fexample.com', 'GET', null, 'size guide'],
   ['/api/shipping?url=https%3A%2F%2Fexample.com&country=IN', 'GET', null, 'shipping read'],
-  ['/api/description', 'POST', { title: 'Oxford shirt', vendor: 'x' }, 'written description'],
   ['/api/feedback', 'POST', { message: 'audit probe, please ignore', email: 'audit@example.com' }, 'feedback'],
   ['/api/ai/stylist/status', 'GET', null, 'which providers are up'],
   ['/api/ai/stylist/health', 'GET', null, 'provider detail (guarded)'],

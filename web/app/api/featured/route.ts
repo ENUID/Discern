@@ -1,8 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GlobalCatalogService } from '@/lib/services/GlobalCatalogService'
 import { UCP_REGISTRY, bestBrandDomains } from '@/lib/stores'
+import { makeIpRateLimiter } from '@/lib/rateLimit'
 
 export const maxDuration = 60
+
+/** The feed is the one public route that spends other people's quota for free.
+ *
+ *  Every other endpoint that fans out or calls a model already carries this;
+ *  this one carried it on neither verb. Thirty a minute is far above a shopper
+ *  scrolling the grid, and far below a script. */
+const isRateLimited = makeIpRateLimiter(30, 60_000)
 
 // Map a brand domain → the genders it serves (from the registry).
 const BRAND_GENDERS: Map<string, string[]> = new Map(
@@ -101,8 +109,24 @@ async function buildFeatured(
   // stays wide enough to fill the grid.
   let pool = bestBrandDomains()
   if (gender) pool = pool.filter(d => brandServesGender(d, gender))
-  const all = seededShuffle(pool, page * 7 + 11)
   const WINDOW = 28
+  // How many pages the pool actually holds, and the wrap that keeps `page`
+  // inside them.
+  //
+  // `page` seeds the shuffle below AND picks the window, so every value gave a
+  // different set of brands — a different catalogue cache key, a guaranteed
+  // miss, and another WINDOW store fetches. Nothing bounded it, so the number
+  // of distinct keys one caller could mint was unbounded too and the cache
+  // stopped being a ceiling on anything: a walk of pages 0..200 cost 5,040
+  // outbound store calls.
+  //
+  // Wrapping rather than rejecting. A page inside the range is untouched, so
+  // the feed, its order and its brands are exactly what they were; a page past
+  // the end lands deterministically on a real one. This route has always
+  // answered every page with a feed, and it still does.
+  const pages = Math.max(1, Math.ceil(pool.length / WINDOW))
+  page = ((page % pages) + pages) % pages
+  const all = seededShuffle(pool, page * 7 + 11)
   const start = all.length ? (page * WINDOW) % all.length : 0
   const sample = all.slice(start, start + WINDOW)
   if (sample.length < WINDOW) sample.push(...all.slice(0, WINDOW - sample.length))
@@ -136,6 +160,9 @@ async function buildFeatured(
 }
 
 export async function POST(req: NextRequest) {
+  if (isRateLimited(req)) {
+    return NextResponse.json({ products: [], _meta: { error: 'rate-limited' } }, { status: 429 })
+  }
   try {
     const body = await req.json().catch(() => ({}))
     const buyerCurrency: string = typeof body?.buyerCurrency === 'string' ? body.buyerCurrency.toUpperCase() : 'USD'
@@ -158,6 +185,9 @@ export async function POST(req: NextRequest) {
 // Browser diagnostic: open https://discern.enuid.com/api/featured?cc=IN to see the
 // pipeline counts (sampled/fetched/kept/returned) and a sample of brand domains.
 export async function GET(req: NextRequest) {
+  if (isRateLimited(req)) {
+    return NextResponse.json({ error: 'rate-limited' }, { status: 429 })
+  }
   try {
     const cc = (req.nextUrl.searchParams.get('cc') || req.headers.get('x-vercel-ip-country') || 'US').toUpperCase()
     const page = Math.max(0, Math.floor(Number(req.nextUrl.searchParams.get('page') ?? 0)) || 0)

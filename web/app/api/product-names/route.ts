@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createHash } from 'crypto'
 import { infer } from '@/lib/ai/infer'
 import { groqChat, FAST_MODEL } from '@/lib/groq'
 import { BoundedCache } from '@/lib/boundedCache'
 import { makeIpRateLimiter } from '@/lib/rateLimit'
+import { fenceUntrusted } from '@/lib/stylist/promptSafety'
 
 /**
  * Short display names for a set of products.
@@ -41,6 +43,34 @@ Nothing else. No preamble, no blank lines.`
 
 type Item = { title?: string; type?: string }
 
+/** A title is merchant writing that arrives here from a browser, and neither
+ *  of those is ours. It goes into a prompt whose reply is parsed BY LINE —
+ *  `3. Striped shirt` — so a newline inside a title was a way to write another
+ *  item's name: send one containing "\n2. <anything>" and the loop below read
+ *  it back as the name for item 2. Collapsing each field to one inert line is
+ *  what removes that, and it is the function the stylist and the judge already
+ *  use rather than a second sanitiser.
+ *
+ *  200 and 40 are the caps prompts.ts uses for a product title and an option
+ *  name; nothing legible under a photograph needs more. */
+const safeTitle = (t: unknown) => fenceUntrusted(t, 200)
+const safeType = (t: unknown) => fenceUntrusted(t, 40)
+
+/** What the cache is actually about.
+ *
+ *  It was keyed on the raw title — attacker-chosen — so anyone could name any
+ *  title and every later caller asking about that title was served it: a
+ *  cross-user write costing one request. The key is now a digest of the values
+ *  that ACTUALLY reach the model, so two requests share an entry exactly when
+ *  they would produce the same answer, and never otherwise. `type` belongs in
+ *  it because the system prompt uses it — it is what the model names from when
+ *  a title names no garment.
+ *
+ *  JSON.stringify around the pair rather than concatenation, so ["ab",""] and
+ *  ["a","b"] cannot collapse into one key. */
+const keyFor = (title: string, type?: string) =>
+  createHash('sha256').update(JSON.stringify([safeTitle(title), safeType(type)])).digest('hex')
+
 export async function POST(req: NextRequest) {
   if (isRateLimited(req)) return NextResponse.json({ names: {} }, { status: 429 })
   try {
@@ -48,19 +78,26 @@ export async function POST(req: NextRequest) {
     const items: Item[] = Array.isArray(body?.items) ? body.items.slice(0, 40) : []
     if (!items.length) return NextResponse.json({ names: {} })
 
+    // The response stays keyed by the caller's own raw title — that is the
+    // contract the grid reads, and it does not change.
     const names: Record<string, string> = {}
     const need: Item[] = []
     for (const it of items) {
       const raw = (it?.title ?? '').trim()
       if (!raw) continue
-      const hit = cache.get(raw)
+      const hit = cache.get(keyFor(raw, it?.type))
       if (hit !== undefined) names[raw] = hit
       else if (!need.some(n => n.title === raw)) need.push({ title: raw, type: it.type })
     }
     if (!need.length) return NextResponse.json({ names })
 
+    // Every newline in this message is one we wrote. See safeTitle above.
     const userMsg = need
-      .map((it, i) => `${i + 1}. ${it.title}${it.type ? ` [type: ${it.type}]` : ''}`)
+      .map((it, i) => {
+        const t = safeTitle(it.title)
+        const ty = safeType(it.type)
+        return `${i + 1}. ${t}${ty ? ` [type: ${ty}]` : ''}`
+      })
       .join('\n')
 
     // The shared ladder, not the OpenRouter default. A caption arriving from
@@ -73,13 +110,14 @@ export async function POST(req: NextRequest) {
       const m = line.match(/^\s*(\d+)\s*[.)]\s*(.+?)\s*$/)
       if (!m) continue
       const idx = Number(m[1]) - 1
-      const src = need[idx]?.title
+      const item = need[idx]
+      const src = item?.title
       if (!src) continue
       // A model that ignores the word limit must not be allowed to put a
       // paragraph under a photograph.
       const name = m[2].replace(/^["'`]|["'`.]$/g, '').trim()
       if (!name || name.split(/\s+/).length > 7) continue
-      cache.set(src, name)
+      cache.set(keyFor(src, item.type), name)
       names[src] = name
     }
 
