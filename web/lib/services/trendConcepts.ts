@@ -11,6 +11,7 @@
  */
 import { ConvexHttpClient } from 'convex/browser'
 import { anyApi } from 'convex/server'
+import { fenceUntrusted } from '@/lib/stylist/promptSafety'
 
 const REFRESH_MS = 30 * 60 * 1000
 let concepts: string[] = []
@@ -42,6 +43,27 @@ function refresh(): void {
   }
 }
 
+/** A trend concept is not our writing.
+ *
+ *  It is a shopper's search text, summarised by a model, stored, and then
+ *  interpolated into the relevance judge's SYSTEM message — the same privilege
+ *  as Discern's own rubric. Nothing between those two ends checks it: the cron
+ *  puts raw queries in the prompt, and the write only asserts `typeof ===
+ *  'string'`. Measured through the real path, a concept could carry newlines,
+ *  a run of box drawing reading like one of our own headings, the untrusted
+ *  fence markers themselves, [SEARCH:]-style tokens, zero-width and
+ *  direction-override characters, and four hundred characters of it.
+ *
+ *  So each concept is reduced to one inert line by the function the stylist
+ *  prompt and the judge's own product lines already use. The words survive —
+ *  a real trend may be phrased almost any way — and only their ability to be
+ *  STRUCTURE is removed.
+ *
+ *  Forty characters is what the rest of this codebase gives a short vocabulary
+ *  token (a tag, an option name). "quiet luxury", "gorpcore" and "dark
+ *  academia" are the shape of the real thing; anything longer is not a concept. */
+const CONCEPT_CHARS = 40
+
 /**
  * One short context line for the LLM relevance judge, or '' when no trends
  * are known. Context only — phrased so the judge treats it as a tiebreaker
@@ -51,5 +73,9 @@ function refresh(): void {
 export function trendContextLine(): string {
   refresh() // opportunistic, throttled, non-blocking
   if (concepts.length === 0) return ''
-  return `Currently trending with shoppers (context only, never override the query's own intent): ${concepts.slice(0, 8).join(', ')}.`
+  // Fenced at the sink rather than at the load, so no path into this line can
+  // skip it — including a list already in memory from before a deploy.
+  const safe = concepts.slice(0, 8).map(c => fenceUntrusted(c, CONCEPT_CHARS)).filter(Boolean)
+  if (safe.length === 0) return ''
+  return `Currently trending with shoppers (context only, never override the query's own intent): ${safe.join(', ')}.`
 }

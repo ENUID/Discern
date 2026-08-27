@@ -4,6 +4,7 @@ import { BoundedCache } from '@/lib/boundedCache'
 import { safeParseStoreUrl, safeFetch } from '@/lib/ssrfGuard'
 import { UCP_REGISTRY } from '@/lib/stores'
 import { makeIpRateLimiter } from '@/lib/rateLimit'
+import { fenceUntrusted } from '@/lib/stylist/promptSafety'
 
 const cache = new BoundedCache<string, { shipping: string; returns: string } | null>(2000)
 
@@ -48,7 +49,12 @@ function policyUrls(base: string) {
   }
 }
 
-function extractText(html: string, maxChars = 2500): string {
+/** How much of a policy page the model reads. extractText applies it while
+ *  stripping the markup; the boundary below restates it so fencing can never
+ *  hand the model more than the extractor already allowed. */
+const POLICY_CHARS = 2500
+
+function extractText(html: string, maxChars = POLICY_CHARS): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -136,9 +142,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ data: null })
   }
 
+  // extractText above removes the tags. It deliberately keeps the LINE breaks —
+  // <br> and every closing block tag become newlines — and that is the part a
+  // merchant can still write with. The labels below are ours, and the reply is
+  // split back out by matching /SHIPPING\n/ and /RETURNS\n/ on the model's
+  // output, so a policy page that emits those words at the start of a line is
+  // writing in our own hand. Measured against a page that tries: three lines
+  // beginning "SHIPPING" and five beginning "RETURNS" reached the model, where
+  // exactly one of each is ours, alongside a run of box drawing and the
+  // untrusted fence markers themselves.
+  //
+  // So each page is reduced to one inert line by the same function the stylist
+  // prompt and the relevance judge already use. Every newline in the message
+  // below is then one we wrote. The words are untouched — a real policy may
+  // legitimately say almost anything — and 2500 is the cap extractText already
+  // applied, restated here so the boundary cannot silently widen it.
+  const safeShipping = fenceUntrusted(shippingText, POLICY_CHARS)
+  const safeReturns = fenceUntrusted(returnsText, POLICY_CHARS)
+
   const combined = [
-    shippingText && `SHIPPING PAGE:\n${shippingText}`,
-    returnsText && `RETURNS PAGE:\n${returnsText}`,
+    safeShipping && `SHIPPING PAGE:\n${safeShipping}`,
+    safeReturns && `RETURNS PAGE:\n${safeReturns}`,
   ].filter(Boolean).join('\n\n---\n\n')
 
   try {
