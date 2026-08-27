@@ -237,6 +237,254 @@ async function main() {
     check(seen[1] === 'Bearer secret', 'but it survives a redirect within the SAME host')
   }
 
+  // ── every credential, and the origin, not just the host ───────────────────
+  // Authorization was the only header this dropped, and the only thing it
+  // compared was the hostname. A cookie is a credential, an API key is a
+  // credential, and https://x → http://x is the same hostname carrying them
+  // in the clear.
+  const CREDS = {
+    authorization: 'Bearer SECRET-TOKEN',
+    cookie: 'session=SECRET-COOKIE',
+    'proxy-authorization': 'Basic SECRET-PROXY',
+    'x-api-key': 'SECRET-APIKEY',
+  }
+  /** Run one redirect and report the headers each hop was sent. */
+  const hops = async (from, to, init = {}) => {
+    const seen = []
+    global.fetch = async (url, i) => {
+      seen.push(Object.fromEntries([...new Headers(i.headers).entries()]))
+      return seen.length === 1 ? redirectTo(to) : ok()
+    }
+    let threw = null
+    try { await safeFetch(from, init) } catch (e) { threw = e }
+    restore()
+    return { seen, threw }
+  }
+
+  console.log('\n── and neither does any other credential ' + '─'.repeat(34))
+  {
+    const { seen } = await hops('https://taylorstitch.com/a', 'https://example.com/x', { headers: { ...CREDS } })
+    for (const k of Object.keys(CREDS)) {
+      check(seen[0][k] === CREDS[k], `${k} is sent to the host it was meant for`)
+      check(seen[1][k] === undefined, `  and dropped when the origin changes`, seen[1][k] ?? 'absent')
+    }
+  }
+  {
+    // Same origin: every one of them must survive, or this breaks real callers.
+    const { seen } = await hops('https://taylorstitch.com/a', 'https://taylorstitch.com/b', { headers: { ...CREDS } })
+    for (const k of Object.keys(CREDS)) {
+      check(seen[1][k] === CREDS[k], `${k} survives a redirect within the same origin`)
+    }
+  }
+  {
+    // A scheme downgrade keeps the hostname and loses the encryption, which is
+    // exactly when a credential must not travel.
+    const { seen } = await hops('https://taylorstitch.com/a', 'http://taylorstitch.com/b', { headers: { ...CREDS } })
+    check(seen[1].authorization === undefined, 'https → http is an origin change, so the credential is dropped',
+      seen[1].authorization ?? 'absent')
+    check(seen[1].cookie === undefined, '  and so is the cookie')
+  }
+  {
+    const { seen } = await hops('https://taylorstitch.com/a', 'https://taylorstitch.com:8443/b', { headers: { ...CREDS } })
+    check(seen[1].authorization === undefined, 'a port change is an origin change too', seen[1].authorization ?? 'absent')
+  }
+  {
+    // The benign headers real callers depend on must be untouched — sizeguide
+    // and shipping send browser-shaped headers to get past bot rules.
+    const benign = {
+      'user-agent': 'Mozilla/5.0', accept: 'text/html', 'accept-language': 'en-US',
+      'accept-encoding': 'gzip', 'cache-control': 'no-cache', 'sec-fetch-mode': 'navigate',
+    }
+    const { seen } = await hops('https://taylorstitch.com/a', 'https://example.com/x', { headers: benign })
+    for (const k of Object.keys(benign)) check(seen[1][k] === benign[k], `${k} is not a credential and is kept`)
+  }
+
+  // ── what a redirect does to the method and the body ───────────────────────
+  // Before safeFetch took the redirect loop over, these routes used native
+  // fetch, which downgrades POST to GET on 301/302/303 and drops the body.
+  // safeFetch replayed everything on every status, to every host. 307/308 keep
+  // the method by design, so a body-bearing one is refused across an origin
+  // rather than silently sent somewhere the caller never named.
+  console.log('\n── a redirect must not replay a POST it was never given ' + '─'.repeat(19))
+  {
+    const post = () => ({ method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', secret: 'payload' }),
+                          headers: { 'Content-Type': 'application/json' } })
+    const detail = async (to, status) => {
+      const seen = []
+      global.fetch = async (url, i) => {
+        seen.push({ method: i.method || 'GET', body: i.body ?? null,
+                    ct: new Headers(i.headers).get('content-type'),
+                    cl: new Headers(i.headers).get('content-length') })
+        return seen.length === 1 ? redirectTo(to, status) : ok()
+      }
+      let threw = null
+      try { await safeFetch('https://taylorstitch.com/api/mcp', post()) } catch (e) { threw = e }
+      restore()
+      return { seen, threw }
+    }
+
+    for (const status of [301, 302, 303]) {
+      const { seen } = await detail('https://example.com/x', status)
+      check(seen[1] && seen[1].method === 'GET', `${status} turns a POST into a GET`, seen[1] && seen[1].method)
+      check(seen[1] && seen[1].body === null, `  and drops the body`, seen[1] && (seen[1].body ?? 'none'))
+      check(seen[1] && seen[1].ct === null && seen[1].cl === null,
+        `  along with content-type and content-length`, seen[1] && `ct=${seen[1].ct} cl=${seen[1].cl}`)
+    }
+    for (const status of [301, 302, 303]) {
+      const { seen } = await detail('https://taylorstitch.com/b', status)
+      check(seen[1] && seen[1].method === 'GET', `${status} does the same within one origin — it is the method that changes, not the host`)
+    }
+
+    for (const status of [307, 308]) {
+      const { seen, threw } = await detail('https://example.com/x', status)
+      check(threw instanceof BlockedDestinationError, `${status} across an origin is refused`, threw && threw.constructor.name)
+      check(seen.length === 1, `  and the second host is never contacted`, `${seen.length} request(s)`)
+    }
+    for (const status of [307, 308]) {
+      const { seen } = await detail('https://taylorstitch.com/b', status)
+      check(seen[1] && seen[1].method === 'POST' && seen[1].body !== null,
+        `${status} within one origin keeps the method and the body, as the status means`)
+    }
+
+    // A GET is untouched by any of this.
+    for (const status of [301, 302, 303, 307, 308]) {
+      const seen = []
+      global.fetch = async (url, i) => {
+        seen.push(i.method || 'GET')
+        return seen.length === 1 ? redirectTo('https://taylorstitch.com/b', status) : ok()
+      }
+      await safeFetch('https://taylorstitch.com/a')
+      restore()
+      check(seen[1] === 'GET' || seen[1] === undefined, `a plain GET is unchanged by ${status}`)
+    }
+
+    // ── and the refusal is about the BODY, not about 307 ──────────────────
+    // 307 and 308 are refused across an origin because they mean "resend
+    // exactly what you sent", and what was sent had a body. A GET has no body
+    // to resend, and the credential policy above has already taken the
+    // headers off — so refusing one would cost a legitimate store redirect and
+    // buy nothing. It follows, like any other GET.
+    for (const method of ['GET', 'HEAD']) {
+      for (const status of [307, 308]) {
+        const seen = []
+        global.fetch = async (url, i) => {
+          seen.push({ url: String(url), method: i.method || 'GET', body: i.body ?? null })
+          return seen.length === 1 ? redirectTo('https://example.com/x', status) : ok('arrived')
+        }
+        let threw = null
+        try { await safeFetch('https://taylorstitch.com/a', { method }) } catch (e) { threw = e }
+        restore()
+        check(threw === null, `${method} + cross-origin ${status} is followed, not refused`,
+          threw ? threw.constructor.name : 'no throw')
+        check(seen.length === 2 && seen[1].url === 'https://example.com/x',
+          `  it reaches the validated destination`, `${seen.length} request(s)`)
+        check(seen.length === 2 && seen[1].method === method,
+          `  keeping ${method}, as ${status} means`, seen[1] && seen[1].method)
+        check(seen.length === 2 && seen[1].body === null, `  and still carrying no body`)
+      }
+    }
+    {
+      // The destination is still validated: a cross-origin 307 to a blocked
+      // address is refused for being blocked, not for being a 307.
+      const asked = stubFetch((u, i, n) => n === 0
+        ? redirectTo('http://169.254.169.254/latest/meta-data/', 307) : ok('SECRET'))
+      let threw = null
+      try { await safeFetch('https://taylorstitch.com/a', { method: 'GET' }) } catch (e) { threw = e }
+      restore()
+      check(threw instanceof BlockedDestinationError, 'a GET 307 toward the metadata address is still blocked')
+      check(asked.length === 1, '  and that address is never contacted', `${asked.length} request(s)`)
+    }
+    {
+      // Any other body-bearing method is refused exactly like POST.
+      for (const method of ['PUT', 'PATCH', 'DELETE']) {
+        const seen = []
+        global.fetch = async (url, i) => {
+          seen.push(String(url))
+          return seen.length === 1 ? redirectTo('https://example.com/x', 307) : ok()
+        }
+        let threw = null
+        try { await safeFetch('https://taylorstitch.com/a', { method, body: '{"x":1}' }) } catch (e) { threw = e }
+        restore()
+        check(threw instanceof BlockedDestinationError, `${method} + cross-origin 307 is refused too`,
+          threw ? threw.constructor.name : 'NOT REFUSED')
+        check(seen.length === 1, `  and the second host is never contacted`, `${seen.length} request(s)`)
+      }
+    }
+  }
+
+  // ── the hops we do not read ───────────────────────────────────────────────
+  console.log('\n── a redirect body is let go of, not left holding ' + '─'.repeat(25))
+  {
+    let cancelled = 0, pulled = 0
+    const hopBody = () => new ReadableStream({
+      pull(c) { pulled++; c.enqueue(new Uint8Array(1024)); if (pulled > 3) c.close() },
+      cancel() { cancelled++ },
+    })
+    let n = 0
+    global.fetch = async () => (++n <= 2)
+      ? new Response(hopBody(), { status: 302, headers: { location: `https://taylorstitch.com/h${n}` } })
+      : ok('done')
+    const res = await safeFetch('https://taylorstitch.com/a')
+    restore()
+    check((await res.text()) === 'done', 'the chain still resolves')
+    check(cancelled === 2, 'and each redirect body it walked past was cancelled', `${cancelled} of 2`)
+    // A ReadableStream pulls once on construction, before anyone reads it, so
+    // one chunk per hop is the floor rather than evidence of anything. What
+    // this rules out is DRAINING: reading a redirect body to completion would
+    // be four pulls a hop, not one.
+    check(pulled <= 2, '  and none of them was drained', `${pulled} chunk(s) pulled, floor is 2`)
+  }
+
+  // ── what the returned Response says about itself ──────────────────────────
+  console.log('\n── the reconstructed response describes the bytes it carries ' + '─'.repeat(13))
+  {
+    global.fetch = async () => new Response('hello world', { status: 200, headers: {
+      'content-length': '999999', 'content-encoding': 'gzip', 'content-range': 'bytes 0-10/999999',
+      'content-type': 'application/json', 'set-cookie': 'a=b' } })
+    const res = await safeFetch('https://taylorstitch.com/x')
+    restore()
+    const body = await res.text()
+    check(body === 'hello world', 'the body is byte-identical', JSON.stringify(body))
+    check(res.headers.get('content-length') === null, 'content-length is gone — it described the wire, not this')
+    check(res.headers.get('content-encoding') === null, 'content-encoding is gone — these bytes are already decoded')
+    check(res.headers.get('content-range') === null, 'content-range is gone for the same reason')
+    check(res.headers.get('content-type') === 'application/json', 'content-type is kept — it still describes the bytes')
+    check(res.headers.get('set-cookie') === 'a=b', 'and set-cookie is left exactly as it was')
+    check(res.status === 200, 'status is unchanged')
+  }
+
+  // ── the cap cannot be argued away ─────────────────────────────────────────
+  console.log('\n── a caller cannot opt out of the size cap ' + '─'.repeat(32))
+  {
+    const CHUNK = 64 * 1024
+    const flood = () => { let n = 0; return new ReadableStream({ pull(c) { n++; c.enqueue(new Uint8Array(CHUNK)); if (n > 400) c.close() } }) }
+    const attempt = async (opts) => {
+      global.fetch = async () => new Response(flood(), { status: 200 })
+      try { const r = await safeFetch('https://taylorstitch.com/x', {}, opts); const n = (await r.arrayBuffer()).byteLength; restore(); return n }
+      catch (e) { restore(); return e.constructor.name }
+    }
+    const TWO_MB = 2 * 1024 * 1024
+    for (const [label, opts] of [
+      ['omitted', {}], ['Infinity', { maxBytes: Infinity }], ['NaN', { maxBytes: NaN }],
+      ['zero', { maxBytes: 0 }], ['negative', { maxBytes: -1 }],
+    ]) {
+      const r = await attempt(opts)
+      check(r === 'ResponseTooLargeError', `${label} falls back to the 2MB default and refuses the flood`, String(r))
+    }
+    {
+      // A finite value a caller genuinely chose is still honoured — palette
+      // asks for 5MB and must keep getting it.
+      let pulled = 0
+      global.fetch = async () => new Response(new ReadableStream({
+        pull(c) { pulled++; c.enqueue(new Uint8Array(CHUNK)); if (pulled > 400) c.close() } }), { status: 200 })
+      let threw = null
+      try { await safeFetch('https://taylorstitch.com/x', {}, { maxBytes: 5 * 1024 * 1024 }) } catch (e) { threw = e }
+      restore()
+      check(threw instanceof ResponseTooLargeError, 'an explicit 5MB cap is still the cap that applies')
+      check(pulled > TWO_MB / CHUNK, '  and it let more through than the default would have', `${pulled} chunks`)
+    }
+  }
+
   // ── the body is bounded as it arrives ─────────────────────────────────────
   console.log('\n── the reader stops; it does not measure afterwards ' + '─'.repeat(23))
   {

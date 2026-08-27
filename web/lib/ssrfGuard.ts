@@ -223,6 +223,36 @@ export type SafeFetchOptions = {
 const DEFAULT_MAX_REDIRECTS = 3
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 
+/** Headers that authenticate a request rather than describe it.
+ *
+ *  Only `authorization` was dropped before, which named the smallest of the
+ *  four. A cookie is a credential; an API key is a credential; a proxy
+ *  credential is one for a hop the caller never intended to hand to a
+ *  redirect target. Nothing in this app sends any of them through safeFetch
+ *  today — this is the list that keeps that true when something does. */
+const CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization', 'x-api-key']
+
+/** Headers that describe a body, and must go when the body does. */
+const BODY_HEADERS = ['content-type', 'content-length']
+
+/** What the returned Response can no longer honestly claim.
+ *
+ *  `capture` hands back bytes that `fetch` has already decoded, re-framed into
+ *  a new Response. `content-encoding` described a compression that is no longer
+ *  applied, `content-length` a wire length that is no longer the body's, and
+ *  `content-range` a slice of a document this is not. `content-type` still
+ *  describes the bytes, so it stays. */
+const STALE_ON_CAPTURE = ['content-encoding', 'content-length', 'content-range']
+
+/** Same scheme, same host, same effective port — exactly what `URL.origin` is.
+ *
+ *  The old comparison was hostname alone, which called `https://x` → `http://x`
+ *  the same place and let a credential travel there in the clear, and said the
+ *  same of a port change. */
+function sameOrigin(a: URL, b: URL): boolean {
+  return a.origin === b.origin
+}
+
 /** The same check `safeParseStoreUrl` makes, as a reusable step. */
 function assertAllowed(url: string): URL {
   let u: URL
@@ -237,10 +267,32 @@ function assertAllowed(url: string): URL {
 /**
  * Fetch a URL that came from outside this app.
  *
- * Every hop is validated, the body is capped as it arrives, and an
- * `Authorization` header is dropped the moment the host changes. The returned
- * Response carries the already-read body, so a caller's `.text()`/`.json()`
- * works exactly as before and cannot re-read past the cap.
+ * Every hop is validated before it is followed. Beyond that, three things
+ * happen at a redirect, and each exists because the alternative was a way to
+ * make this app do something on somebody else's behalf:
+ *
+ *   CREDENTIALS STOP AT THE ORIGIN   `authorization`, `cookie`,
+ *                                    `proxy-authorization` and `x-api-key` are
+ *                                    dropped the moment scheme, host or port
+ *                                    changes. Same-origin hops keep them.
+ *
+ *   A POST IS NOT REPLAYED           301, 302 and 303 turn a non-GET into a
+ *                                    GET and drop the body, which is what
+ *                                    native `fetch` did before this function
+ *                                    took the redirect loop over. 307 and 308
+ *                                    mean "keep the method", so across an
+ *                                    origin a body-bearing request is refused
+ *                                    outright rather than sent somewhere the
+ *                                    caller never named. A GET or HEAD has no
+ *                                    body to replay and follows normally.
+ *
+ *   THE BODY IS BOUNDED WHILE IT ARRIVES, and `maxBytes` cannot be argued out
+ *                                    of: anything that is not a finite
+ *                                    positive number is the default.
+ *
+ * The returned Response carries the already-read body, so a caller's
+ * `.text()`/`.json()`/`.arrayBuffer()` works exactly as before and cannot
+ * re-read past the cap.
  */
 export async function safeFetch(
   rawUrl: string,
@@ -248,15 +300,21 @@ export async function safeFetch(
   opts: SafeFetchOptions = {},
 ): Promise<Response> {
   const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS
-  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES
+  // Infinity and NaN both used to disable the cap outright — Infinity because
+  // nothing exceeds it, NaN because `total > NaN` is false forever. Neither is
+  // a size, so neither is accepted as one.
+  const maxBytes = Number.isFinite(opts.maxBytes) && (opts.maxBytes as number) > 0
+    ? (opts.maxBytes as number)
+    : DEFAULT_MAX_BYTES
 
   let current = assertAllowed(rawUrl)
-  const originHost = current.hostname
   const seen = new Set<string>([current.toString()])
   let headers = new Headers(init.headers as HeadersInit | undefined)
+  let method = typeof init.method === 'string' ? init.method.toUpperCase() : 'GET'
+  let body = init.body
 
   for (let hop = 0; ; hop++) {
-    const res = await fetch(current.toString(), { ...init, headers, redirect: 'manual' })
+    const res = await fetch(current.toString(), { ...init, method, body, headers, redirect: 'manual' })
 
     const isRedirect = res.status >= 300 && res.status < 400 && res.headers.has('location')
     if (!isRedirect) return capture(res, current.toString(), maxBytes)
@@ -275,11 +333,42 @@ export async function safeFetch(
     }
     seen.add(next.toString())
 
-    // Credentials do not cross a host boundary.
-    if (next.hostname !== originHost && headers.has('authorization')) {
-      headers = new Headers(headers)
-      headers.delete('authorization')
+    const crossOrigin = !sameOrigin(next, current)
+    const bodyBearing = method !== 'GET' && method !== 'HEAD'
+
+    // 307 and 308 exist to say "resend exactly what you sent". Across an
+    // origin that is a request forgery with our body in it, so it is refused
+    // before the second host is contacted rather than quietly stripped — a
+    // bodyless POST arriving at a store is a worse answer than an error.
+    //
+    // Only for a request that HAS something to resend, though. A GET or a HEAD
+    // carries no body, and the credential policy below has already taken the
+    // headers off at the origin boundary, so refusing one would cost a
+    // legitimate store redirect and buy nothing.
+    if ((res.status === 307 || res.status === 308) && crossOrigin && bodyBearing) {
+      res.body?.cancel().catch(() => { /* nothing left to do about it */ })
+      throw new BlockedDestinationError(next.toString(), `cross-origin ${res.status} would replay the request`)
     }
+
+    // Credentials stop at the origin, not merely at the hostname.
+    if (crossOrigin && CREDENTIAL_HEADERS.some(h => headers.has(h))) {
+      headers = new Headers(headers)
+      for (const h of CREDENTIAL_HEADERS) headers.delete(h)
+    }
+
+    // 301/302/303: a non-GET becomes a GET and loses its body, along with the
+    // two headers that only described that body.
+    if (res.status !== 307 && res.status !== 308 && bodyBearing) {
+      method = 'GET'
+      body = undefined
+      headers = new Headers(headers)
+      for (const h of BODY_HEADERS) headers.delete(h)
+    }
+
+    // Nothing here reads the redirect's body, so let go of it explicitly
+    // rather than leaving it to the garbage collector to dump.
+    res.body?.cancel().catch(() => { /* nothing left to do about it */ })
+
     current = next
   }
 }
@@ -317,9 +406,15 @@ async function capture(res: Response, url: string, maxBytes: number): Promise<Re
   let at = 0
   for (const c of chunks) { body.set(c, at); at += c.byteLength }
 
+  // The bytes below are decoded and re-framed, so three of the headers that
+  // came off the wire no longer describe them. Everything else — content-type,
+  // set-cookie, whatever else the store sent — is passed through untouched.
+  const headers = new Headers(res.headers)
+  for (const h of STALE_ON_CAPTURE) headers.delete(h)
+
   return new Response(body, {
     status: res.status,
     statusText: res.statusText,
-    headers: res.headers,
+    headers,
   })
 }
