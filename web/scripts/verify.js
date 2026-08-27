@@ -52,6 +52,9 @@ const UNIT = [
   'judge-scope.js',
   'catalog-filters.js',
   'catalog-concepts.js',
+  // Who owns a product, and who may write on it — the pooled catalogue objects
+  // are shared between shoppers, so a request's own values must not land there.
+  'canonical-product.js',
   'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',

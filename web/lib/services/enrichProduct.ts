@@ -63,7 +63,13 @@ async function readOne(p: Readable): Promise<GarmentProfile | null> {
     const msg = await groqVisionChat([{ role: 'user', content }], PROFILE_SYSTEM,
       { max_tokens: 400, temperature: 0 })
     const profile = parseProfile(String((msg as { content?: string })?.content ?? ''))
-    if (profile) { profile.readAt = Date.now() }
+    // Which model read it, and when. `readBy` has been declared on
+    // GarmentProfile since the type was written — "a profile is only as good as
+    // the pass that produced it, and a bad batch has to be findable and
+    // re-runnable" — and nothing had ever written it, so a bad batch was
+    // findable only by its timestamp. The model name is already part of the
+    // cache key; this is the same fact, stored where it can be read.
+    if (profile) { profile.readAt = Date.now(); profile.readBy = GROQ_DIRECT_VISION_MODEL }
     return profile
   } catch {
     return null

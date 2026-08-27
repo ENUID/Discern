@@ -1,4 +1,5 @@
 import type { UcpProduct } from './GlobalCatalogService'
+import type { RankingSignals, RankingState } from '../catalog/product'
 import { matchStyles, vocabPromptBlock } from '../styleVocabulary'
 import { judgeKnowledge } from '../knowledgeModules'
 import { decomposeQuery } from '../queryParser'
@@ -477,7 +478,27 @@ export async function rerankByRelevance(
    *  a value that belonged to somebody else's search made it worse.
    *  See `scripts/judge-scope.js`. */
   onOutcome?: (o: JudgeOutcome, detail: string) => void,
+  /** Where this request's opinions go, if the caller wants them.
+   *
+   *  They used to go onto the products: `(p as any).relevance_score` and
+   *  `.relevance_reason`, written on every judged search. Those products are
+   *  the pooled objects the catalogue's LRU shares between everyone asking the
+   *  same question, so one shopper's ranking was being recorded on the garment
+   *  itself — and read back by nobody, on any path, ever. A repository-wide
+   *  search for either name finds the two writes and no readers at all.
+   *
+   *  A score is what THIS request thought of a piece for THIS query and this
+   *  taste profile. It is not a property of the shirt. So it is handed to
+   *  whoever asked for the ranking, keyed by the product's stable key, and
+   *  goes out of scope with the request that produced it. Optional, because
+   *  the only caller today does not need it — but the value is no longer
+   *  thrown away, it is simply addressed to somebody. */
+  ranking?: RankingState,
 ): Promise<UcpProduct[]> {
+  const record = (key: string, patch: RankingSignals) => {
+    if (!ranking) return
+    ranking.set(key, { ...(ranking.get(key) ?? {}), ...patch })
+  }
   /** This call's account, written by the judge below and read by `say`. */
   const detail = { value: '' }
   const say = (o: JudgeOutcome) => { try { onOutcome?.(o, detail.value) } catch { /* never break a search over telemetry */ } }
@@ -508,7 +529,7 @@ export async function rerankByRelevance(
       .filter(Boolean) as UcpProduct[]
     for (const p of reordered) {
       const s = scores.get(p.id)
-      if (s !== undefined) (p as any).relevance_score = Math.round(s * 100)
+      if (s !== undefined) record(p.key, { judgeScore: Math.round(s * 100) })
     }
     const seenIds = new Set(ids)
     const remaining = products.filter(p => !seenIds.has(p.id))
@@ -613,10 +634,14 @@ export async function rerankByRelevance(
 
   blended.sort((a, b) => b.final - a.final)
 
-  // Attach scores for debug/UI
+  // Hand the scores to the caller. The blend, the demotion offset and the
+  // ordering below are untouched — only the address changed.
   for (const { p, final, reason } of blended) {
-    ;(p as any).relevance_score  = Math.round(final * 100)
-    ;(p as any).relevance_reason = reason
+    record(p.key, {
+      bm25: bm25.get(p.id) ?? 0,
+      judgeScore: Math.round(final * 100),
+      judgeReason: reason,
+    })
   }
 
   const reranked = blended.map(x => x.p)

@@ -79,34 +79,27 @@ import { recordBrandOutcome, deprioritizeDead } from './brandHealth'
 import { safeFetch, BlockedDestinationError, ResponseTooLargeError } from '../ssrfGuard'
 import { readPersistentCache, writePersistentCache } from './persistentSearchCache'
 import { retrievalQueries } from '../fashion/outfitKnowledge'
+import {
+  CANONICAL_SCHEMA_VERSION, merchantKey, productKey,
+  type CanonicalProduct, type ProductProvenance,
+} from '../catalog/product'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-export type UcpProduct = {
-  id: string
-  title: string
-  vendor: string
-  price: number
-  currency: string
-  store_url: string
-  image_url: string
-  in_stock: boolean
-  tags: string[]
-  description?: string
-  description_html?: string
-  options?: { name: string; values: string[] }[]
-  media?: Array<{ type: string; url: string; alt?: string }>
-  variants?: Array<{
-    id: string
-    title: string
-    price: number
-    availability: boolean
-    options: Array<{ name: string; label: string }>
-    media?: Array<{ url: string; alt?: string }>
-  }>
-  trust_score?: number
-  relevance_score?: number
-  relevance_reason?: string
+/** What a search hands back: the merchant's garment, plus the two values this
+ *  particular shopper's request decided about it.
+ *
+ *  The garment half is CanonicalProduct and is readonly — see lib/catalog/
+ *  product.ts. It is the object the LRU pool below holds and every shopper on
+ *  this query shares, so nothing about one request may be written into it.
+ *
+ *  The display half is the request's own. Three fields used to sit here that
+ *  do not belong to either: `trust_score`, which nothing has ever written or
+ *  read; and `relevance_score` / `relevance_reason`, which the LLM judge wrote
+ *  onto the pooled object on every search and which nothing anywhere read.
+ *  The judge's verdict is now handed to whoever asked for the ranking, as
+ *  RankingState — one request's opinion, keyed and scoped to that request. */
+export type UcpProduct = CanonicalProduct & {
   /** The same price, in the currency the SHOPPER is using.
    *
    *  Every product keeps the currency its own brand quoted, and the interface
@@ -115,12 +108,13 @@ export type UcpProduct = {
    *  price list, it is a puzzle, and no one can tell whether the shoes cost
    *  four times the shirt or forty. Converted once, here, where the rates
    *  already are; `price` and `currency` stay untouched because checkout hands
-   *  off to the brand and the brand quotes its own. */
+   *  off to the brand and the brand quotes its own.
+   *
+   *  WRITTEN ON A COPY THIS REQUEST OWNS, never on the pooled product — see
+   *  the end of applyFiltersAndSort. It is a fact about the shopper, and the
+   *  pool is shared by all of them. */
   display_price?: number
   display_currency?: string
-  product_type?: string
-  /** Shopify standard taxonomy ids, e.g. 'gid://shopify/TaxonomyCategory/aa-8-8'. */
-  categories?: string[]
 }
 
 export type CatalogSearchDebug = {
@@ -612,6 +606,11 @@ async function fetchStore(
       if (!res.ok) return { products: [] as any[], errored: true }
       const data = await res.json()
       const products = extractProducts(data)
+      // Written onto the store's RAW payload, before parseProduct turns any of
+      // it into a product — so this is not a request writing on a canonical
+      // object, it is the fan-out remembering which store answered so the
+      // parser can attribute what it builds. The raw objects are discarded the
+      // moment parseProduct has read them.
       for (const p of products) p._sourceDomain = domain
       return { products, errored: false }
     } catch (e) {
@@ -779,7 +778,23 @@ function parseProduct(raw: any, sourceDomain?: string): UcpProduct | null {
     // Strip the internal-only _rawAvailability before it leaves this module.
     const publicVariants = variants.map(({ _rawAvailability, ...v }: any) => v)
 
+    /** This function is the ONLY boundary between what a store sent and what
+     *  the rest of the app treats as a product, which makes it the only honest
+     *  place to record where the thing came from. Everything below this line
+     *  is the merchant speaking, or one of the named normalisations above
+     *  speaking on their behalf — nothing a model concluded, and nothing one
+     *  request decided. */
+    const source: ProductProvenance = {
+      merchant: merchantKey(store_url) || merchantKey(domain),
+      sourceId: String(raw.id),
+      via: 'ucp-mcp',
+      fetchedAt: Date.now(),
+      schema: CANONICAL_SCHEMA_VERSION,
+    }
+
     return {
+      key: productKey({ source }),
+      source,
       id: raw.id,
       title: raw.title ?? 'Untitled',
       vendor,
@@ -942,7 +957,24 @@ function applyFiltersAndSort(
 
   // One currency for the eye. Done last so it costs nothing on the pieces that
   // were filtered out along the way.
-  const shown = out.slice(0, params.limit)
+  //
+  // ON A COPY, AND THIS IS THE WHOLE POINT. `products` here is the pooled
+  // array owned by the module LRU above, whose key is query + country + brands
+  // and NOT currency — so every shopper asking the same question in a different
+  // currency reaches the same objects. Writing the display fields onto them
+  // meant a request handed its page to the shopper and then, while it waited
+  // on the judge and the palette read, had that page's currency rewritten
+  // underneath it by the next person to ask the same question. Measured, not
+  // theorised: two overlapping searches, one in dollars and one in rupees, and
+  // the dollar shopper is handed ₹394,250. See scripts/canonical-product.js.
+  //
+  // A shallow copy is the right depth. It severs exactly what one request
+  // writes — the two display fields — and shares the nested arrays, which
+  // nothing downstream mutates; the same harness freezes `variants`, `media`
+  // and `options` on a pooled product and runs the full ranking path over it
+  // to keep that true. Deep-cloning fifty-two products per page to defend
+  // against a write nobody makes would be paying for the wrong thing.
+  const shown: UcpProduct[] = out.slice(0, params.limit).map(p => ({ ...p }))
   const target = normalizeCurrency(params.budgetCurrency)
   for (const p of shown) {
     p.display_currency = target
