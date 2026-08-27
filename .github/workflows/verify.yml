@@ -1,0 +1,69 @@
+# The verification suite, on somebody else's machine.
+#
+# web/scripts/verify.js is what every security claim on this repository rests
+# on — the SSRF boundary, the prompt fencing, the provider ladders, the prompt
+# checksums, the characterisation of the stylist route. Until now it only ran
+# where a person remembered to run it, and until the portability commit it
+# could only run in one directory on one container. Neither is a guarantee.
+#
+# So this runs it from a clean checkout, which is the only version of "it
+# passes" that means anything. It deliberately does nothing else: no linting
+# nobody asked for, no second test system, no deployment. The suite already
+# knows what to check.
+#
+# WHAT IT NEEDS: nothing. No secrets, no environment variables, no .env.local,
+# no pre-built .next and no .vt — the harnesses build the bundles they need.
+# Proven by cloning this branch to an empty directory and running exactly the
+# two commands below: 24/24, including the production build.
+name: Verify
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches:
+      # main, and the branch the work is actually on. claude/file-analysis-KjCN6
+      # is deliberately absent: its last commit is from June and it has diverged
+      # 734 commits from main, so running the suite there would only produce
+      # noise about a branch nobody is developing.
+      - main
+      - claude/p4b1-palette-ssrf
+
+# Read-only. This job builds and tests; it has no reason to be able to write to
+# the repository, and saying so is cheaper than trusting that it never tries.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # The suite is about two minutes end to end. Fifteen is generous enough to
+    # absorb a slow runner and short enough that a harness which somehow reaches
+    # the real network cannot sit there burning minutes until GitHub's six-hour
+    # default gives up.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # The version this repository already deploys on — see
+          # convex-deploy.yml. There is no .nvmrc and no engines field, so that
+          # workflow is the only statement the repository makes about Node.
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      # Plain `npm ci`, and specifically NOT --omit=optional. sharp reaches this
+      # project only as an optional dependency of next, and lib/fashion/palette.ts
+      # imports it directly — omitting optionals installs a tree where the palette
+      # harnesses cannot load at all. That is a real dependency defect and it has
+      # its own phase; until then, this is the install that produces a working
+      # tree.
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Run verification suite
+        run: npm run verify
+        working-directory: web
