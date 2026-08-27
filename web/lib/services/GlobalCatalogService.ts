@@ -76,6 +76,7 @@ export function sameGarmentVerdictFor(image: string | null | undefined) {
 }
 import { matchStyles, styleRecallSignals } from '../styleVocabulary'
 import { recordBrandOutcome, deprioritizeDead } from './brandHealth'
+import { safeFetch, BlockedDestinationError, ResponseTooLargeError } from '../ssrfGuard'
 import { readPersistentCache, writePersistentCache } from './persistentSearchCache'
 import { retrievalQueries } from '../fashion/outfitKnowledge'
 
@@ -506,6 +507,23 @@ function extractProducts(data: any): any[] {
 const STORE_PAGE_LIMIT = 40
 const STORE_BROWSE_LIMIT = 60
 
+/** How much of a store's answer this process will read.
+ *
+ *  Derived from the measurement in the comment above rather than guessed: a
+ *  250-product reply is 1.5-2.5MB, so a product costs 6-10KB. The largest
+ *  thing asked for here is STORE_BROWSE_LIMIT, sixty products, which puts the
+ *  expected worst case around 600KB — a realistic 60-product browse fixture
+ *  measures 497KB. 1.5MB is roughly two and a half times that, headroom for a
+ *  store whose products are far heavier than anything measured, while still
+ *  bounding what forty-five concurrent stores can put in this process at once
+ *  to about 67MB rather than nothing at all.
+ *
+ *  Deliberately not safeFetch's 2MB default. That number is a general guess;
+ *  this one is what this endpoint actually returns. And deliberately below the
+ *  1.5-2.5MB a 250-product reply costs, because that is a size this code goes
+ *  out of its way never to request. */
+const STORE_MAX_BYTES = 1.5 * 1024 * 1024
+
 type StoreFetchContext = {
   /** Passed to the store's own relevance engine — UCP documents `intent` as
    *  "background context describing the buyer's intent", and we were sending
@@ -573,18 +591,37 @@ async function fetchStore(
       },
     }
     try {
-      const res = await fetch(`https://${domain}/api/mcp`, {
+      // safeFetch, not fetch. The destination is registry-closed — every
+      // domain reaching here came from UCP_REGISTRY — so this was never a way
+      // to make the server call an address a shopper named. What it was is a
+      // store we already talk to being able to redirect us somewhere else, or
+      // answer with a body res.json() would read in full, forty-five stores at
+      // a time. Now every hop is revalidated and the read stops at the cap.
+      //
+      // Nothing about the request changes: same POST, same JSON-RPC body, same
+      // Content-Type, same store timeout. And nothing about failure changes —
+      // a blocked redirect, an oversized answer and a dead endpoint all throw,
+      // and the catch below turns every one of them into the same
+      // {products: [], errored: true} this function already returned.
+      const res = await safeFetch(`https://${domain}/api/mcp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(STORE_TIMEOUT_MS),
-      })
+      }, { maxBytes: STORE_MAX_BYTES })
       if (!res.ok) return { products: [] as any[], errored: true }
       const data = await res.json()
       const products = extractProducts(data)
       for (const p of products) p._sourceDomain = domain
       return { products, errored: false }
-    } catch {
+    } catch (e) {
+      // Same outcome as before; the difference is that a refusal by our own
+      // boundary no longer looks identical to a store being down in the log.
+      // Named error only — never the URL's query, the body, or a header.
+      const why = e instanceof BlockedDestinationError ? 'blocked-destination'
+        : e instanceof ResponseTooLargeError ? 'response-too-large'
+        : null
+      if (why) console.warn(`[Catalog] ${domain} refused by safeFetch: ${why}`)
       return { products: [] as any[], errored: true }
     }
   }

@@ -901,6 +901,208 @@ async function main() {
     }
   }
 
+  // ── the catalogue fan-out, which is the hot path ──────────────────────────
+  //
+  // fetchStore POSTs a JSON-RPC body to a registry domain's /api/mcp. The
+  // destination is registry-closed, so this was never arbitrary-host SSRF —
+  // what it lacked was any limit on what a REGISTERED store could then do to
+  // us: redirect us somewhere else, or answer with an unbounded body that
+  // res.json() would read in full, forty-five stores at a time.
+  //
+  // Driven through GlobalCatalogService.search() rather than fetchStore
+  // directly, because fetchStore is module-private and the search entry point
+  // is what production actually calls. Each scenario uses its own query so the
+  // catalogue's own LRU never serves a previous one.
+  console.log('\n── the catalogue fan-out, and what a store may do to it ' + '─'.repeat(19))
+  {
+    // One bundle for both modules, so brandHealth's counters are the same
+    // instance the catalogue writes to. .vt is the harness's own scratch dir.
+    const entry = path.join(WEB, '.vt', 'catalog-entry.ts')
+    fs.mkdirSync(path.join(WEB, '.vt'), { recursive: true })
+    fs.writeFileSync(entry,
+      `export { GlobalCatalogService } from ${JSON.stringify(path.join(WEB, 'lib/services/GlobalCatalogService'))}\n` +
+      `export { brandHealthReport } from ${JSON.stringify(path.join(WEB, 'lib/services/brandHealth'))}\n`)
+    const C = build('.vt/catalog-entry.ts', 'catalog-fetchstore')
+
+    const PRODUCT = {
+      id: 'gid://shopify/Product/p1', title: 'Linen Shirt', vendor: 'Kith',
+      url: 'https://kith.com/products/p1',
+      media: [{ url: 'https://cdn.shopify.com/s/files/p1.jpg?width=400' }],
+      description: { plain: 'A considered piece.' }, tags: ['shirt'],
+      options: [{ name: 'Size', values: ['M'] }],
+      variants: [{ id: 'gid://v/p1', title: 'M', availability: true,
+        price: { amount: 4750, currency: 'USD' }, url: 'https://kith.com/products/p1' }],
+    }
+    const ucpBody = (products) => JSON.stringify(
+      { result: { content: [{ type: 'text', text: JSON.stringify({ products }) }] } })
+    const ucpOk = (products = [PRODUCT]) =>
+      new Response(ucpBody(products), { status: 200, headers: { 'content-type': 'application/json' } })
+
+    let q = 0
+    /** Drive one real search over one registry brand, recording every request. */
+    const run = async (handler) => {
+      const seen = []
+      global.fetch = async (u, i) => {
+        const url = String(u)
+        if (/kith\.com|elsewhere\.example|169\.254|hop\d/.test(url)) {
+          seen.push({ url, method: i.method || 'GET', body: i.body ?? null,
+                      ct: new Headers(i.headers).get('content-type'), signal: !!i.signal,
+                      redirect: i.redirect ?? null })
+          return handler(url, seen.length - 1)
+        }
+        return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      const products = await C.GlobalCatalogService.search(
+        `linen shirt ${++q}`, undefined, [], 'US', true, [], 'relevance', 'USD',
+        { fastFirstPage: true }, ['kith.com'])
+      restore()
+      const row = C.brandHealthReport().brands.find(b => b.domain === 'kith.com')
+      return { seen, products, row }
+    }
+    const contacted = (seen, needle) => seen.some(s => s.url.includes(needle))
+
+    // ── the ordinary request, unchanged ──────────────────────────────────
+    {
+      const before = C.brandHealthReport().brands.find(b => b.domain === 'kith.com')
+      const beforeN = before ? before.oks + before.errors : 0
+      const { seen, products, row } = await run(() => ucpOk())
+      const first = seen[0]
+      check(first && first.url === 'https://kith.com/api/mcp', 'PRESERVED: it POSTs to the registry domain, and only there', first && first.url)
+      check(first && first.method === 'POST', 'PRESERVED: the method is still POST', first && first.method)
+      check(first && first.ct === 'application/json', 'PRESERVED: Content-Type is still application/json', first && first.ct)
+      check(first && first.signal === true, 'PRESERVED: the store timeout signal still reaches the fetch')
+      const body = first && JSON.parse(first.body)
+      check(body && body.jsonrpc === '2.0' && body.method === 'tools/call'
+        && body.params.name === 'search_catalog', 'PRESERVED: the JSON-RPC envelope is unchanged')
+      check(body && body.params.arguments.catalog.pagination.limit === 40,
+        'PRESERVED: the page limit is still 40 for a query', body && body.params.arguments.catalog.pagination.limit)
+      check(products.length > 0, 'PRESERVED: products still come back and parse', `${products.length}`)
+      check(products[0] && products[0].title === 'Linen Shirt', '  with their fields intact', products[0] && products[0].title)
+      check(row && (row.oks + row.errors) === beforeN + seen.length,
+        'PRESERVED: one brand-health outcome per fetchStore call', `${seen.length} request(s)`)
+      check(row && row.errors === 0, '  and a healthy store records no error')
+
+      // The one thing here that genuinely tells the two implementations apart
+      // under a stub: safeFetch walks the chain itself and therefore asks for
+      // redirect:'manual' on every hop. Bare fetch passes no redirect option
+      // at all and lets undici follow, which a stub silently bypasses — which
+      // is exactly why the blocked-destination assertions below can only
+      // confirm, not discriminate.
+      check(seen.every(s => s.redirect === 'manual'),
+        'the fan-out goes through safeFetch — every hop asks for manual redirects',
+        JSON.stringify([...new Set(seen.map(s => s.redirect))]))
+
+      const src = fs.readFileSync(path.join(WEB, 'lib/services/GlobalCatalogService.ts'), 'utf8')
+      check(/safeFetch\(`https:\/\/\$\{domain\}\/api\/mcp`/.test(src), '  and the call site is safeFetch, not fetch')
+      check(/maxBytes: STORE_MAX_BYTES/.test(src), '  with an explicit byte cap, not the generic default')
+      check(/const STORE_MAX_BYTES = 1\.5 \* 1024 \* 1024/.test(src), '  of 1.5MB', 'derived from the 6-10KB/product measurement')
+      check(!/maxRedirects/.test(src), '  and the redirect budget left at the primitive default')
+    }
+
+    // ── redirects ────────────────────────────────────────────────────────
+    for (const status of [301, 302, 303]) {
+      const { seen } = await run((url, n) => n === 0
+        ? new Response(null, { status, headers: { location: 'https://kith.com/api/mcp2' } })
+        : ucpOk())
+      const landed = seen.find(s => s.url.endsWith('/api/mcp2'))
+      // safeFetch follows the chain in-process, so under a stub this shows up
+      // where bare fetch showed nothing. The METHOD semantics are the
+      // preservation half: native fetch already downgraded a POST to a GET on
+      // 301/302/303 and dropped the body, measured against a real server, so
+      // production behaviour here is unchanged.
+      check(!!landed, `a ${status} is followed in-process by safeFetch`, landed ? 'followed' : 'not followed')
+      check(landed && landed.method === 'GET', `  and ${status} turns the POST into a GET, as native fetch already did`, landed && landed.method)
+      check(landed && landed.body === null, `  dropping the body, as native fetch already did`)
+    }
+    {
+      const { seen } = await run((url, n) => n === 0
+        ? new Response(null, { status: 307, headers: { location: 'https://kith.com/api/mcp2' } })
+        : ucpOk())
+      const landed = seen.find(s => s.url.endsWith('/api/mcp2'))
+      check(landed && landed.method === 'POST' && landed.body !== null,
+        'a same-origin 307 keeps the POST and its body, as the status means')
+    }
+
+    // The properties below are already proven load-bearing against the
+    // PRE-HARDENING ssrfGuard in the safeFetch sections above. They cannot
+    // discriminate here, and the reason is worth stating rather than dressing
+    // up: with global.fetch stubbed, bare fetch follows nothing at all —
+    // undici's redirect machinery is bypassed, so a 3xx simply returns as a
+    // non-ok response and the second host is never contacted either way. What
+    // these assert is that the property still holds END TO END through the
+    // catalogue, which is the thing this phase actually changes.
+    for (const status of [307, 308]) {
+      const { seen, row } = await run((url, n) => n === 0
+        ? new Response(null, { status, headers: { location: 'https://elsewhere.example/api/mcp' } })
+        : ucpOk())
+      check(!contacted(seen, 'elsewhere.example'),
+        `END-TO-END: a cross-origin ${status} never reaches the other host`, contacted(seen, 'elsewhere.example') ? 'CONTACTED' : 'never contacted')
+      check(row && row.errors > 0, `  and the store is recorded as errored, exactly like any other failure`)
+    }
+    {
+      const { seen, products, row } = await run((url, n) => n === 0
+        ? new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/latest/meta-data/' } })
+        : new Response('SECRET', { status: 200 }))
+      check(!contacted(seen, '169.254'), 'END-TO-END: a registered store cannot redirect the fan-out to the metadata address',
+        contacted(seen, '169.254') ? 'CONTACTED' : 'never contacted')
+      check(products.length === 0, '  and no products come from that search')
+      check(row && row.errors > 0, '  the store is recorded as errored')
+    }
+    {
+      const { seen, row } = await run((url, n) =>
+        new Response(null, { status: 302, headers: { location: `https://kith.com/hop${n + 1}` } }))
+      check(seen.length <= 4 * 4, 'END-TO-END: a redirect chain stops rather than walking on', `${seen.length} request(s) across the whole search`)
+      check(row && row.errors > 0, '  and it surfaces as an ordinary store error')
+    }
+
+    // ── the body a store may return ──────────────────────────────────────
+    {
+      // Well under the cap: the p95 browse payload, which must still work.
+      const many = Array.from({ length: 60 }, (_, i) => ({ ...PRODUCT, id: `gid://shopify/Product/p${i}`, title: `Linen Shirt ${i}`,
+        description: { plain: 'x'.repeat(8000) } }))
+      const big = ucpBody(many)
+      const { products } = await run(() => new Response(big, { status: 200, headers: { 'content-type': 'application/json' } }))
+      check(big.length > 400 * 1024 && big.length < 1.5 * 1024 * 1024,
+        'a realistic 60-product browse payload is under the cap', `${Math.round(big.length / 1024)}KB`)
+      check(products.length > 0, '  and it still parses into products', `${products.length}`)
+    }
+    {
+      // Past the cap, streamed. This one DOES discriminate: res.json() on a
+      // bare fetch reads every chunk before it discovers the bytes are not
+      // JSON; the cap stops at roughly 1.5MB regardless of how much is offered.
+      let pulled = 0
+      const CHUNK = 256 * 1024
+      const OFFERED = 40
+      const { seen, products, row } = await run(() => new Response(new ReadableStream({
+        pull(c) { pulled++; if (pulled > OFFERED) { c.close(); return } c.enqueue(new Uint8Array(CHUNK)) },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      const perRequest = pulled / Math.max(1, seen.length)
+      check(products.length === 0, 'an oversized store response yields no products')
+      check(row && row.errors > 0, '  and is recorded as an ordinary store error')
+      check(perRequest <= 10, '  the reader stopped near the cap rather than draining the stream',
+        `${perRequest.toFixed(1)} of ${OFFERED} chunks per request (~${Math.round(perRequest * 256)}KB of a 1.5MB cap)`)
+    }
+
+    // ── the failures that already behaved this way ───────────────────────
+    {
+      const { products, row } = await run(() => new Response('not json at all', { status: 200, headers: { 'content-type': 'application/json' } }))
+      check(products.length === 0 && row && row.errors > 0, 'PRESERVED: malformed JSON is still an errored store')
+    }
+    {
+      const { products, row } = await run(() => new Response('{"error":"down"}', { status: 500 }))
+      check(products.length === 0 && row && row.errors > 0, 'PRESERVED: a non-2xx is still an errored store')
+    }
+    {
+      // Brand health stays in-memory and transient: nothing here writes a
+      // persisted prune, which only the daily cron does.
+      const src = fs.readFileSync(path.join(WEB, 'lib/services/GlobalCatalogService.ts'), 'utf8')
+      check(/recordBrandOutcome\(domain, \{ productCount: products\.length, errored \}\)/.test(src),
+        'PRESERVED: recordBrandOutcome is called with the same arguments as before')
+      check(!/recordProbe|getPrunedDomains/.test(src),
+        '  and the catalogue still writes no persisted brand-health state')
+    }
+  }
+
   console.log('\n' + (bad === 0
     ? 'every hop is checked before it is followed, and the body stops at the cap'
     : `${bad} FAILED`))
