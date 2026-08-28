@@ -68,7 +68,8 @@ const entryFile = path.join(WEB, '.vt', 'corpus-entry.ts')
 fs.mkdirSync(path.join(WEB, '.vt'), { recursive: true })
 fs.writeFileSync(entryFile,
   `export * from ${JSON.stringify(path.join(WEB, 'lib/services/GlobalCatalogService'))}\n` +
-  `export * as P from ${JSON.stringify(path.join(WEB, 'lib/catalog/product'))}\n`)
+  `export * as P from ${JSON.stringify(path.join(WEB, 'lib/catalog/product'))}\n` +
+  `export { corpusWriteObservation } from ${JSON.stringify(path.join(WEB, 'lib/services/corpusWriter'))}\n`)
 const C = build('.vt/corpus-entry.ts', 'corpus-identity')
 
 const realFetch = global.fetch
@@ -331,6 +332,26 @@ async function observation() {
   const d2 = delta(before2, flat(obs()))
   same(d2.quarantinable, 1, 'a zero-priced record is counted as quarantinable')
   check(page.length === 2, 'and is STILL served — nothing is quarantined', `${page.length}`)
+
+  // ── and a THIRD population, which must not be confused with these two ────
+  // The corpus writer keeps its own counters over its own population: `offered`
+  // is per WRITE, over the snapshot a search handed it, after the pool has
+  // already been deduped. It is not `seen` (raw arrivals, pre-dedupe) and it is
+  // not `pooled` (post-dedupe, re-counted on every serving search). Three
+  // stages, three denominators, and no ratio between them means anything.
+  // Keeping the two counter objects genuinely separate is what makes that
+  // true rather than merely documented.
+  const catalogueKeys = Object.keys(flat(obs()))
+  const writeKeys = typeof C.corpusWriteObservation === 'function'
+    ? Object.keys(C.corpusWriteObservation()) : null
+  check(writeKeys !== null, 'the corpus writer reports its own counters', writeKeys ? '' : 'MISSING')
+  if (writeKeys) {
+    const overlap = catalogueKeys.filter(k => writeKeys.includes(k))
+    check(overlap.length === 0,
+      'and shares not one field name with the catalogue\'s', overlap.join(',') || 'disjoint')
+    check(writeKeys.includes('offered') && catalogueKeys.includes('seen') && catalogueKeys.includes('pooled'),
+      'three populations, three names: seen (raw) · pooled (post-dedupe) · offered (per write)')
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

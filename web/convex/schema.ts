@@ -326,4 +326,86 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_trace", ["traceId"])
     .index("by_created", ["createdAt"]),
+
+  // The owned product corpus — the first record of a garment that is ours.
+  //
+  // Everything this app has ever shown came from somebody else's server and was
+  // discarded within the quarter-hour the LRU holds it. lib/stylist/trace.ts
+  // says of the ids it stores that "the price, the variants and the images are
+  // all recoverable from the id, which is the point of having one", and that
+  // has never been true because nothing kept them. This is the table that makes
+  // it true.
+  //
+  // WRITE-ONLY IN THIS PHASE, and deliberately so. convex/products.ts exports a
+  // mutation and NO QUERY, so "no corpus read can reach retrieval" holds because
+  // there is nothing to call, not because somebody remembered not to call it.
+  // The live catalogue is untouched: it still dedupes on the bare `raw.id`,
+  // still ranks the same way, still returns the same page. This is a shadow
+  // taken on the way past.
+  //
+  // ONE TABLE, and the alternatives were rejected on this repository's own
+  // evidence rather than on database convention. No merchants table:
+  // lib/stores.ts IS the merchant registry (458 entries, versioned in git) and
+  // brand_health already holds the runtime per-domain state. No variants table:
+  // nothing looks a variant up on its own — checkout reads variants[] off the
+  // wire object — and a separate table would mean N writes per product on a
+  // database billed by operation. No history table: nothing in this codebase
+  // reads a past price, and recommendation_traces already records what one
+  // request showed.
+  //
+  // Identity is Phase 0's: `key` is merchant::sourceId, where merchant is the
+  // REGISTRY domain we chose to query rather than a hostname the merchant wrote
+  // into a URL. Two shops answering with the same sourceId are therefore two
+  // rows here — while the live path still returns one product, because its
+  // dedupe is untouched. That divergence is intentional and is what a later
+  // phase will use to decide whether re-keying dedupe is worth its cost.
+  products: defineTable({
+    // ── identity: never changes for the life of a row ──────────────────────
+    key: v.string(),          // `${merchant}::${sourceId}`
+    merchant: v.string(),     // registry domain, lowercased, www-stripped
+    sourceId: v.string(),     // the id the merchant used, verbatim
+
+    // ── current merchant state: patched in place as the merchant moves ─────
+    title: v.string(),
+    vendor: v.string(),
+    price: v.number(),
+    currency: v.string(),
+    storeUrl: v.string(),
+    imageUrl: v.string(),
+    inStock: v.boolean(),
+
+    // The structured remainder — variants, media, options, description,
+    // description_html, tags, categories — as one JSON string. Every other
+    // structured payload in this schema is stored the same way
+    // (search_cache.products, rerank_cache.ids, garment_profiles.profile,
+    // stylist_sessions.messages), and splitting it out would buy a query
+    // nothing in the repository makes.
+    payload: v.string(),
+
+    // ── provenance: how this record came to exist ──────────────────────────
+    via: v.string(),          // 'ucp-mcp' — named so a second ingest path is
+                              // distinguishable rather than silently merged
+    schema: v.number(),       // CANONICAL_SCHEMA_VERSION at write time
+    firstSeenAt: v.number(),  // set once, on insert, and never again
+    lastSeenAt: v.number(),   // every observation — freshness, not change
+    lastChangedAt: v.number(),// only when contentHash actually moved
+
+    // Over stable merchant state only. Two identical observations produce the
+    // same hash; a price, title, stock, image, URL, variant, description or
+    // category change produces a different one. Timestamps, provenance and
+    // anything request-scoped are excluded by construction — see
+    // lib/services/corpusWriter.ts, which defines the serialisation.
+    contentHash: v.string(),
+
+    // 'active'      a garment we hold, whether or not it is in stock
+    // 'quarantined' held for review — no usable price, or an unparseable URL.
+    //               Counted and stored; NOT removed from any live result.
+    // 'unavailable' reserved for absence-based withdrawal. NOTHING WRITES IT
+    //               IN THIS PHASE: absence from one search is a fact about a
+    //               query, not about a garment, and endpoint failure is
+    //               brand_health's business rather than a product's.
+    status: v.union(v.literal("active"), v.literal("quarantined"), v.literal("unavailable")),
+  }).index("by_key", ["key"])          // the identity lookup the upsert uses
+    .index("by_merchant", ["merchant"])// per-merchant sweeps, merchant removal
+    .index("by_last_seen", ["lastSeenAt"]), // staleness, bounded like pruneOldEvents
 });

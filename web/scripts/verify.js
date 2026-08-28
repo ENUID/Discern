@@ -58,6 +58,9 @@ const UNIT = [
   // Whose garment is it — the merchant is the shop we asked, not a hostname
   // the shop wrote into a field — and what the pool actually contained.
   'corpus-identity.js',
+  // The owned corpus: one row per garment, written behind the response, and
+  // incapable of reaching the page it was taken from.
+  'corpus-write.js',
   'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',

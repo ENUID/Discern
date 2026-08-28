@@ -78,6 +78,7 @@ import { matchStyles, styleRecallSignals } from '../styleVocabulary'
 import { recordBrandOutcome, deprioritizeDead } from './brandHealth'
 import { safeFetch, BlockedDestinationError, ResponseTooLargeError } from '../ssrfGuard'
 import { readPersistentCache, writePersistentCache } from './persistentSearchCache'
+import { writeCorpus } from './corpusWriter'
 import { retrievalQueries } from '../fashion/outfitKnowledge'
 import {
   CANONICAL_SCHEMA_VERSION, merchantKey, productKey,
@@ -1420,6 +1421,33 @@ export class GlobalCatalogService {
     // this cache landing.
     if (!isLoadMore && !seededFromPersistent && entry.queried.size > 0 && entry.products.length > 0) {
       void writePersistentCache(cacheKey, entry.products).catch(() => {})
+
+      // And the same pool, kept.
+      //
+      // This is the only new operation a successful search performs, and it is
+      // deliberately behind the response rather than in front of it: nothing a
+      // shopper sees depends on it landing, and every failure inside it is
+      // caught and counted rather than raised. Live retrieval, dedupe, the
+      // filters, the ranking and the wire format are all exactly as they were
+      // — the corpus is a shadow taken on the way past, and convex/products.ts
+      // exports no query, so it cannot become anything else without somebody
+      // adding one on purpose.
+      //
+      // runAfterResponse, NOT `void`. The line above is a floating promise and
+      // lib/afterResponse.ts explains what that costs on serverless: work
+      // nobody declared is frozen the moment the response flushes, so it stops
+      // mid-flight and silently. A cache that misses a write re-fetches; a
+      // corpus that misses a write is a garment nobody kept.
+      //
+      // The same conditions as the cache write above, and one of them matters
+      // for a reason of its own: a pool seeded from search_cache was parsed by
+      // whatever code was deployed when that row was written, so ingesting it
+      // would import that deploy's provenance rather than this one's.
+      //
+      // A snapshot, because late-arriving stores are still pushing into
+      // entry.products behind their own runAfterResponse.
+      const pool = entry.products.slice()
+      runAfterResponse(() => writeCorpus(pool))
     }
 
     // The same pool, counted. See the note on corpusObservation above: this
