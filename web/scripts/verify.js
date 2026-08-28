@@ -61,6 +61,9 @@ const UNIT = [
   // The owned corpus: one row per garment, written behind the response, and
   // incapable of reaching the page it was taken from.
   'corpus-write.js',
+  // And the one read of it: bounded, index-based, operator-guarded, and
+  // reachable from no page.
+  'corpus-inspect.js',
   'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',

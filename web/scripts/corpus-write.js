@@ -762,15 +762,66 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // 9. THE CORPUS IS WRITE-ONLY
+    // 9. THE CORPUS STILL CANNOT REACH A PAGE
     // ══════════════════════════════════════════════════════════════════════
-    console.log('\n── nothing reads it back ' + '─'.repeat(49))
-    same(corpusQueries, 0, 'nothing queried the corpus')
+    // THIS ASSERTION USED TO READ "products.ts exports no query at all", and
+    // that was the right form while it was true: the guarantee held because
+    // there was nothing to call. Corpus Phase 2 added exactly one — a bounded,
+    // operator-gated inspection read — because a write-only store nobody can
+    // observe is indistinguishable from a broken one, and the table had in fact
+    // never been deployed.
+    //
+    // So the guarantee is RESTATED rather than dropped, and it has to be
+    // structural rather than a vague grep. What must remain true is not "no
+    // read exists" but all of: exactly one mutation and exactly one query; the
+    // query is admin-gated and bounded; it never returns payload; and no file
+    // a shopper's request can reach names it.
+    console.log('\n── the corpus still cannot reach a page ' + '─'.repeat(34))
+    same(corpusQueries, 0, 'nothing queried the corpus during a search')
     const convexSrc = fs.readFileSync(path.join(WEB, 'convex/products.ts'), 'utf8')
-    // The EXPORT, not the internal ctx.db.query the upsert needs to read its
-    // own row. What must not exist is a callable read of this table.
-    check(!/export\s+const\s+\w+\s*=\s*query\s*\(/.test(convexSrc),
-      'and convex/products.ts exports no query at all — nothing to call', 'write-only by construction')
+
+    const mutations_ = convexSrc.match(/export\s+const\s+(\w+)\s*=\s*mutation\s*\(/g) || []
+    const queries_ = convexSrc.match(/export\s+const\s+(\w+)\s*=\s*query\s*\(/g) || []
+    const named = (a) => a.map(m => m.replace(/export\s+const\s+/, '').replace(/\s*=.*/, ''))
+    same(mutations_.length, 1, 'products.ts exports exactly ONE mutation', named(mutations_).join(','))
+    same(named(mutations_)[0], 'upsertMany', '  and it is upsertMany')
+    same(queries_.length, 1, 'and exactly ONE query — no more', named(queries_).join(','))
+    same(named(queries_)[0], 'inspect', '  and it is inspect')
+
+    // The query itself: gated, bounded, and not a payload exporter.
+    const inspectSrc = convexSrc.slice(convexSrc.indexOf('export const inspect'))
+    check(/verifyAdminSecret\(args\.adminSecret\)/.test(inspectSrc),
+      '  gated by the repository\'s own verifyAdminSecret convention')
+    check(/\.withIndex\("by_last_seen"\)/.test(inspectSrc), '  reads through the by_last_seen index')
+    check(/\.take\(INSPECT_SCAN_CAP\)/.test(inspectSrc), '  and stops at a finite scan cap')
+    check(!/\.collect\(\)/.test(inspectSrc), '  never collects the table unbounded')
+    check(!/\bpayload:\s*r\.payload\b/.test(inspectSrc), '  and never returns payload')
+    check(!/ctx\.db\.(insert|patch|replace|delete)/.test(inspectSrc), '  read-only: it writes nothing')
+
+    // And nothing a shopper's request can reach may name it. A filesystem walk
+    // rather than a grep of one directory, because "unreachable" is a property
+    // of every production file, not of the ones somebody remembered to check.
+    const walkTs = (dir, out = []) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === 'node_modules' || e.name === '.next' || e.name === '.vt') continue
+        const p = path.join(dir, e.name)
+        if (e.isDirectory()) walkTs(p, out)
+        else if (/\.(ts|tsx)$/.test(e.name)) out.push(p)
+      }
+      return out
+    }
+    const production = ['app', 'lib', 'features', 'components']
+      .filter(d => fs.existsSync(path.join(WEB, d)))
+      .flatMap(d => walkTs(path.join(WEB, d)))
+    const namesIt = production.filter(f => /products\.inspect/.test(fs.readFileSync(f, 'utf8')))
+    same(namesIt.length, 0,
+      'no file under app/, lib/, features/ or components/ names products.inspect',
+      namesIt.map(f => path.relative(WEB, f)).join(', ') || `${production.length} files checked`)
+
+    const writerSrc = fs.readFileSync(path.join(WEB, 'lib/services/corpusWriter.ts'), 'utf8')
+    check(/anyApi\.products\.upsertMany/.test(writerSrc), 'the writer calls upsertMany')
+    check(!/products\.inspect/.test(writerSrc), 'and the writer does NOT call inspect')
+
     same(externalCalls.length, 0, 'and no new network host was contacted', externalCalls.slice(0, 3).join(','))
 
     // ══════════════════════════════════════════════════════════════════════

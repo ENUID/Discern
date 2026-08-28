@@ -1,17 +1,32 @@
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { verifyServerSecret } from "./lib/serverAuth";
+import { verifyAdminSecret } from "./lib/adminAuth";
 
 /**
- * The owned product corpus — writes only.
+ * The owned product corpus — one write, one read, and the read is not for the
+ * shopper.
  *
- * THERE IS NO QUERY IN THIS FILE, and that is the design rather than an
- * omission. This phase's hardest guarantee is that nothing the corpus holds can
- * reach a shopper: no ranking may read it, no filter may consult it, no
- * retrieval path may fall back to it. Exporting no read function makes that
- * true by construction — there is nothing to call — instead of true by
- * everybody remembering. A later phase that genuinely needs to read the corpus
- * adds the query then, deliberately, with its own tests.
+ * THIS FILE USED TO SAY "there is no query here, and that is the design rather
+ * than an omission" — the guarantee being that nothing the corpus holds could
+ * reach a page, made true by there being nothing to call. That sentence also
+ * said a later phase would add a read "deliberately, with its own tests". This
+ * is that phase, so the sentence is being honoured rather than quietly
+ * deleted.
+ *
+ * WHAT CHANGED, AND WHAT DID NOT. `inspect` below is guarded by ADMIN_SECRET,
+ * the same gate analytics.ts and learningInsights.ts already use for reads
+ * about other people's data, and it is not importable from anywhere a shopper's
+ * request can reach: scripts/corpus-inspect.js asserts that no file under
+ * app/, lib/ or features/ mentions it. Retrieval, ranking, filtering and the
+ * writer are all exactly as they were. The corpus still cannot influence a
+ * page; it can now be looked at by whoever holds the operator secret.
+ *
+ * WHY A READ WAS NEEDED AT ALL. The table was committed and CI-green and had
+ * never been deployed — convex-deploy.yml did not list this branch — so the
+ * corpus was provably empty and nothing in the repository could say so. A
+ * write-only store that cannot be observed is indistinguishable from one that
+ * is not working.
  *
  * UPSERT BY read-then-patch-or-insert, because Convex has no unique constraint
  * to lean on. This is the same shape garmentProfiles.setMany and searchCache.set
@@ -144,5 +159,160 @@ export const upsertMany = mutation({
     }
 
     return { ok: true, inserted, updated, unchanged, refreshed };
+  },
+});
+
+// ── Inspection ──────────────────────────────────────────────────────────────
+
+/** Bounded like every other admin read in this schema — analytics.ts uses 3000
+ *  for user_events, saved_products, quality_signals and users alike, and
+ *  reports `capped` when it hits it. A corpus that outgrows this is read in
+ *  windows, never in one unbounded scan. */
+const INSPECT_SCAN_CAP = 3000;
+
+/** The rows handed back for eye-inspection. Deliberately far below the scan
+ *  cap: this is for looking at, not for exporting. */
+const SAMPLE_CAP = 100;
+
+/** Parsing `payload` is the only expensive thing here — a few kilobytes of
+ *  JSON per row — so it happens for the sample alone and the proportions it
+ *  yields are labelled as sample-derived rather than passed off as corpus-wide. */
+const PAYLOAD_SAMPLE = SAMPLE_CAP;
+
+function idShapeOf(id: string): "gid" | "numeric" | "other" {
+  if (id.startsWith("gid://")) return "gid";
+  return /^\d+$/.test(id) ? "numeric" : "other";
+}
+
+const bump = (m: Record<string, number>, k: string) => { m[k] = (m[k] ?? 0) + 1; };
+
+/**
+ * What the corpus currently holds, for an operator.
+ *
+ * READ-ONLY, ADMIN-GUARDED, AND BOUNDED. It walks `by_last_seen` — an index,
+ * newest first, so the ordering is deterministic and the read is a bounded
+ * index range rather than a table scan — and stops at INSPECT_SCAN_CAP.
+ * Everything it reports is therefore "of the most recently seen N rows", and
+ * `capped` says whether N was the limit. It does not return `payload`: the
+ * three proportions that need it are computed here, over the sample, and the
+ * bytes stay on the server.
+ *
+ * NOT A CATALOGUE, and nothing this returns should be described as one. The
+ * corpus is an accumulated, demand-shaped, latency-biased sample of the
+ * post-dedupe pool — stores slower than STORE_SOFT_MS never reach the write
+ * seam, load-more and cache-seeded searches are excluded, and brands no query
+ * selects are never fetched. `total` below is rows observed, not garments that
+ * exist.
+ */
+export const inspect = query({
+  args: { adminSecret: v.string(), sampleSize: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    if (!verifyAdminSecret(args.adminSecret)) return null;
+
+    const rows = await ctx.db
+      .query("products")
+      .withIndex("by_last_seen")
+      .order("desc")
+      .take(INSPECT_SCAN_CAP);
+
+    const byStatus: Record<string, number> = {};
+    const byVia: Record<string, number> = {};
+    const bySchema: Record<string, number> = {};
+    const byIdShape: Record<string, number> = { gid: 0, numeric: 0, other: 0 };
+    const merchants = new Set<string>();
+    const perMerchant: Record<string, number> = {};
+    const sourceIdMerchants: Record<string, string[]> = {};
+    const imageCounts: Record<string, number> = {};
+    const titleCounts: Record<string, number> = {};
+
+    let inStock = 0;
+    let firstSeenMin = Infinity, firstSeenMax = -Infinity;
+    let lastSeenMin = Infinity, lastSeenMax = -Infinity;
+    let lastChangedMin = Infinity, lastChangedMax = -Infinity;
+    let defaultedCurrency = 0, defaultedTitle = 0, defaultedVendor = 0, unpriced = 0;
+
+    for (const r of rows) {
+      bump(byStatus, r.status);
+      bump(byVia, r.via);
+      bump(bySchema, String(r.schema));
+      bump(byIdShape, idShapeOf(r.sourceId));
+      merchants.add(r.merchant);
+      bump(perMerchant, r.merchant);
+
+      const seen = sourceIdMerchants[r.sourceId] ?? [];
+      if (!seen.includes(r.merchant)) seen.push(r.merchant);
+      sourceIdMerchants[r.sourceId] = seen;
+
+      if (r.imageUrl) bump(imageCounts, r.imageUrl);
+      bump(titleCounts, r.title.toLowerCase().replace(/\s+/g, " ").trim());
+
+      if (r.inStock) inStock++;
+      // The defaults parseProduct applies when a merchant said nothing. They
+      // are indistinguishable from real values in the row, so counting the
+      // sentinels is the only visibility there is.
+      if (r.currency === "USD") defaultedCurrency++;
+      if (r.title === "Untitled") defaultedTitle++;
+      if (r.vendor === "Independent") defaultedVendor++;
+      if (!(r.price > 0)) unpriced++;
+
+      if (r.firstSeenAt < firstSeenMin) firstSeenMin = r.firstSeenAt;
+      if (r.firstSeenAt > firstSeenMax) firstSeenMax = r.firstSeenAt;
+      if (r.lastSeenAt < lastSeenMin) lastSeenMin = r.lastSeenAt;
+      if (r.lastSeenAt > lastSeenMax) lastSeenMax = r.lastSeenAt;
+      if (r.lastChangedAt < lastChangedMin) lastChangedMin = r.lastChangedAt;
+      if (r.lastChangedAt > lastChangedMax) lastChangedMax = r.lastChangedAt;
+    }
+
+    const wanted = Math.max(0, Math.min(args.sampleSize ?? SAMPLE_CAP, SAMPLE_CAP));
+    const sampleRows = rows.slice(0, wanted);
+
+    let withVariants = 0, withCategories = 0, withDescription = 0;
+    for (const r of rows.slice(0, PAYLOAD_SAMPLE)) {
+      try {
+        const p = JSON.parse(r.payload) as {
+          variants?: unknown[]; categories?: unknown[] | null; description?: string | null;
+        };
+        if (Array.isArray(p.variants) && p.variants.length > 0) withVariants++;
+        if (Array.isArray(p.categories) && p.categories.length > 0) withCategories++;
+        if (typeof p.description === "string" && p.description.length > 0) withDescription++;
+      } catch { /* an unreadable payload is one row, not a failed inspection */ }
+    }
+    const payloadScanned = Math.min(rows.length, PAYLOAD_SAMPLE);
+
+    return {
+      stats: {
+        // Rows EXAMINED by this bounded scan — "of the most recently seen
+        // INSPECT_SCAN_CAP", never a census. `capped` says whether the cap was
+        // the reason the number stopped where it did.
+        total: rows.length,
+        capped: rows.length >= INSPECT_SCAN_CAP,
+        byStatus, byVia, bySchema, byIdShape,
+        distinctMerchants: merchants.size,
+        perMerchant,
+        inStock,
+        firstSeenAt: rows.length ? { min: firstSeenMin, max: firstSeenMax } : null,
+        lastSeenAt: rows.length ? { min: lastSeenMin, max: lastSeenMax } : null,
+        lastChangedAt: rows.length ? { min: lastChangedMin, max: lastChangedMax } : null,
+        duplicateSourceIdsAcrossMerchants:
+          Object.values(sourceIdMerchants).filter((m) => m.length > 1).length,
+        duplicateImageUrls: Object.values(imageCounts).filter((n) => n > 1).length,
+        duplicateTitles: Object.values(titleCounts).filter((n) => n > 1).length,
+        defaulted: {
+          currencyUSD: defaultedCurrency,
+          titleUntitled: defaultedTitle,
+          vendorIndependent: defaultedVendor,
+          unpriced,
+        },
+        payloadSample: { scanned: payloadScanned, withVariants, withCategories, withDescription },
+      },
+      sample: sampleRows.map((r) => ({
+        key: r.key, merchant: r.merchant, sourceId: r.sourceId,
+        title: r.title, vendor: r.vendor, price: r.price, currency: r.currency,
+        storeUrl: r.storeUrl, imageUrl: r.imageUrl, inStock: r.inStock,
+        via: r.via, schema: r.schema,
+        firstSeenAt: r.firstSeenAt, lastSeenAt: r.lastSeenAt, lastChangedAt: r.lastChangedAt,
+        contentHash: r.contentHash, status: r.status,
+      })),
+    };
   },
 });
