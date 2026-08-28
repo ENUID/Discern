@@ -26,7 +26,16 @@ import {
 
 /** Profiles are small and never change — a garment does not become a different
  *  garment. Ten thousand of them is a few megabytes and covers far more than
- *  any one instance will see. */
+ *  any one instance will see.
+ *
+ *  KEYED BY profileKey, NOT BY PRODUCT ID. The store next door keys on product
+ *  ⊕ image ⊕ schema ⊕ prompt ⊕ model, precisely so that changing any of those
+ *  stops addressing the old answer. This map keyed on the bare product id, so
+ *  it held a second opinion about what identifies a profile — and a warm
+ *  instance went on serving the reading of a photograph the brand had already
+ *  replaced, or a reading taken under a prompt or a model we had since moved
+ *  off. Convex got it right and memory quietly overrode it, because memory is
+ *  consulted first. One identity, decided in one place. */
 const mem = new BoundedCache<string, GarmentProfile>(10_000)
 
 const TIMEOUT_MS = Number(process.env.ENRICH_TIMEOUT_MS ?? 7000)
@@ -82,10 +91,16 @@ export async function profilesFor(products: Readable[]): Promise<Map<string, Gar
   const out = new Map<string, GarmentProfile>()
   if (!enabled() || products.length === 0) return out
 
+  // The identity FIRST, then the lookup. Computing it up front rather than
+  // only for the misses is what lets memory and the store agree on what a
+  // profile is a profile OF. One SHA-1 over a short string per garment.
+  const keyOf = new Map<string, string>()
   const todo: Readable[] = []
   for (const p of products) {
     if (!p?.id) continue
-    const hit = mem.get(p.id)
+    const key = profileKey(p.id, p.image_url || '', GROQ_DIRECT_VISION_MODEL)
+    keyOf.set(p.id, key)
+    const hit = mem.get(key)
     if (hit) out.set(p.id, hit)
     else if (p.image_url) todo.push(p)
   }
@@ -98,13 +113,12 @@ export async function profilesFor(products: Readable[]): Promise<Map<string, Gar
   // re-read garments this app had already looked at hundreds of times. One
   // batched query stands between that and paying for a vision call on a
   // provider whose quota is gone.
-  const keyOf = new Map<string, string>()
-  for (const p of todo) keyOf.set(p.id, profileKey(p.id, p.image_url || '', GROQ_DIRECT_VISION_MODEL))
-  const stored = await readProfiles(Array.from(keyOf.values()))
+  const stored = await readProfiles(todo.map(p => keyOf.get(p.id) || ''))
   const unseen: Readable[] = []
   for (const p of todo) {
-    const found = stored.get(keyOf.get(p.id) || '')
-    if (found) { mem.set(p.id, found); out.set(p.id, found) }
+    const key = keyOf.get(p.id) || ''
+    const found = stored.get(key)
+    if (found) { mem.set(key, found); out.set(p.id, found) }
     else unseen.push(p)
   }
   if (unseen.length === 0) return out
@@ -120,9 +134,10 @@ export async function profilesFor(products: Readable[]): Promise<Map<string, Gar
         if (!next) return
         const profile = await readOne(next)
         if (profile) {
-          mem.set(next.id, profile)
+          const key = keyOf.get(next.id) || ''
+          mem.set(key, profile)
           out.set(next.id, profile)
-          learned.push({ key: keyOf.get(next.id) || '', productId: next.id, profile })
+          learned.push({ key, productId: next.id, profile })
         }
       }
     })
@@ -149,6 +164,11 @@ export async function profilesFor(products: Readable[]): Promise<Map<string, Gar
  *  decide whether a profiled composition is even worth attempting. */
 export function knownCount(products: Readable[]): number {
   let n = 0
-  for (const p of products) if (p?.id && mem.get(p.id)) n++
+  // Same key as profilesFor, or this would answer about a map it is not
+  // reading — always zero, and silently.
+  for (const p of products) {
+    if (!p?.id) continue
+    if (mem.get(profileKey(p.id, p.image_url || '', GROQ_DIRECT_VISION_MODEL))) n++
+  }
   return n
 }

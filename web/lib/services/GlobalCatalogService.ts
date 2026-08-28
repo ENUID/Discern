@@ -117,6 +117,132 @@ export type UcpProduct = CanonicalProduct & {
   display_currency?: string
 }
 
+// ─── Corpus observation ────────────────────────────────────────────────────
+//
+// COUNTERS ONLY. Nothing here writes a product anywhere, there is no products
+// table, no Convex mutation and no outbound request; no code path reads these
+// to make a decision, so a wrong number cannot change what a shopper is shown.
+// They exist because the questions the owned corpus has to answer first —
+// what shape are the ids these 458 independent endpoints send, and does one
+// shop's id ever arrive from another — were being guessed at rather than
+// measured.
+//
+// The one that matters most is crossMerchantDuplicateIds, and it has to be
+// counted where it happens. `ingest()` drops a raw product whose id is already
+// in the pool, across EVERY store in a query, so when two shops answer with
+// the same id the second garment is discarded in silence and nothing anywhere
+// records that a real product went missing. The counter sits at that `continue`.
+//
+// THESE ARE NOT ONE FUNNEL, and reading them as one will give wrong answers.
+// They are taken at three different stages over three different populations,
+// and every field below says which. Two are cumulative for the life of the
+// process, like brandHealth's counters next door:
+//
+//   RAW / PRE-DEDUPE   counted in ingest() as each raw product arrives, before
+//                      any decision. Includes products later deduped, rejected
+//                      or filtered. A recall pass that re-fetches the same
+//                      store counts its products again — these measure
+//                      ARRIVALS, not distinct garments.
+//   DEDUPE-STAGE       counted in ingest() at the duplicate branch.
+//   POST-POOL          counted at the seam by observePool, over the pool that
+//                      survived. The pool is re-observed on EVERY search
+//                      including load-more, so a product that stays cached is
+//                      counted once per search it is served in.
+//
+// So `seen` and `pooled` have different denominators and their ratio is not a
+// survival rate. The one ratio that IS well defined is within a stage: every
+// raw id has a shape, so idShapes.gid + .numeric + .other === seen - noId.
+
+export type CorpusObservation = {
+  /** RAW / PRE-DEDUPE. Every raw product ingest() examined, counted before the
+   *  no-id check and therefore before every other decision. */
+  seen: number
+  rejected: {
+    /** RAW / PRE-DEDUPE. No usable id, so it could not even be compared. */
+    noId: number
+    /** DEDUPE-STAGE. Its id was already in this pool. */
+    duplicateId: number
+    /** POST-DEDUPE. parseProduct returned null — in practice, no photograph. */
+    unparseable: number
+    /** POST-DEDUPE. A candle, a book, a gift card. */
+    nonFashion: number
+    /** POST-DEDUPE. Its store_url points at a domain not in the registry. */
+    offRegistry: number
+  }
+  /** DEDUPE-STAGE. Duplicates whose held product came from a DIFFERENT
+   *  merchant — a real garment discarded because two shops happened to name
+   *  theirs the same. A strict subset of rejected.duplicateId. Only observable
+   *  when both products reach the SAME pool; two shops colliding across two
+   *  separate searches are never compared and never counted. */
+  crossMerchantDuplicateIds: number
+  /** POST-POOL. Pooled records that would fail a future corpus's quality bar —
+   *  no usable price, or a store_url that will not parse.
+   *
+   *  NOTHING IS QUARANTINED BY THIS PHASE. The record stays in the pool and is
+   *  served to the shopper exactly as before; this counts what a corpus WOULD
+   *  hold back, which is why the field is `quarantinable` and not
+   *  `quarantined`. */
+  quarantinable: number
+  /** RAW / PRE-DEDUPE. The shape of every id an endpoint actually sent, taken
+   *  immediately after the no-id check so that products later deduped,
+   *  rejected as non-fashion, rejected as off-registry or rejected as
+   *  unparseable all still contribute theirs. Measured at the pool instead,
+   *  this could not answer the question it exists for: the pool holds only
+   *  survivors, and it is re-observed on every search. */
+  idShapes: { gid: number; numeric: number; other: number }
+  /** POST-POOL. Distinct merchants represented in the pools observed so far. */
+  distinctMerchants: number
+  /** POST-POOL. Products surviving into an observed pool, summed across seams
+   *  — so a cached pool served by three searches contributes three times. */
+  pooled: number
+}
+
+const observed = {
+  seen: 0,
+  rejected: { noId: 0, duplicateId: 0, unparseable: 0, nonFashion: 0, offRegistry: 0 },
+  crossMerchantDuplicateIds: 0,
+  quarantinable: 0,
+  idShapes: { gid: 0, numeric: 0, other: 0 },
+  merchants: new Set<string>(),
+  pooled: 0,
+}
+
+/** What the catalogue has seen since this process started. */
+export function corpusObservation(): CorpusObservation {
+  return {
+    seen: observed.seen,
+    rejected: { ...observed.rejected },
+    crossMerchantDuplicateIds: observed.crossMerchantDuplicateIds,
+    quarantinable: observed.quarantinable,
+    idShapes: { ...observed.idShapes },
+    distinctMerchants: observed.merchants.size,
+    pooled: observed.pooled,
+  }
+}
+
+function idShapeOf(id: unknown): 'gid' | 'numeric' | 'other' {
+  const s = String(id ?? '')
+  if (s.startsWith('gid://')) return 'gid'
+  return /^\d+$/.test(s) ? 'numeric' : 'other'
+}
+
+/** POST-POOL. One look at the pool a search assembled. Integer work over at
+ *  most a few dozen products — measured well under the shallow copy
+ *  applyFiltersAndSort already makes — so it runs inline rather than being
+ *  deferred behind the response for no reason.
+ *
+ *  Id shapes are NOT read here. They are a property of what an endpoint sent,
+ *  and this only ever sees what survived. */
+function observePool(products: UcpProduct[]): void {
+  for (const p of products) {
+    observed.pooled++
+    if (p.source.merchant) observed.merchants.add(p.source.merchant)
+    let unusable = !Number.isFinite(p.price) || p.price <= 0
+    if (!unusable) { try { new URL(p.store_url) } catch { unusable = true } }
+    if (unusable) observed.quarantinable++
+  }
+}
+
 export type CatalogSearchDebug = {
   catalogFetched?: boolean
   loadMorePage?: number
@@ -783,9 +909,24 @@ function parseProduct(raw: any, sourceDomain?: string): UcpProduct | null {
      *  place to record where the thing came from. Everything below this line
      *  is the merchant speaking, or one of the named normalisations above
      *  speaking on their behalf — nothing a model concluded, and nothing one
-     *  request decided. */
+     *  request decided.
+     *
+     *  THE REGISTRY DOMAIN, NOT THE PRODUCT URL. This read `store_url` first,
+     *  and `store_url` is the wrong end of the question twice over. It is
+     *  merchant-controlled product data, so a store answering with URLs on
+     *  another host filed its garments under that host rather than under the
+     *  shop we asked. And it is built three ways a few lines above — the
+     *  merchant's absolute URL, a relative one absolutised onto `domain`, or
+     *  one SYNTHESISED from `domain` when the store sends none — so a single
+     *  fetch could hand two products two different merchants purely from which
+     *  branch each took. `domain` is the destination Discern selected from its
+     *  own registry: versioned in git, one value for the whole fetch, and
+     *  incapable of varying product to product.
+     *
+     *  Provenance only. `store_url` is untouched, so the link the shopper
+     *  follows and the handoff to checkout go exactly where they always did. */
     const source: ProductProvenance = {
-      merchant: merchantKey(store_url) || merchantKey(domain),
+      merchant: merchantKey(domain) || merchantKey(store_url),
       sourceId: String(raw.id),
       via: 'ucp-mcp',
       fetchedAt: Date.now(),
@@ -1127,17 +1268,38 @@ export class GlobalCatalogService {
       }).length >= limit
 
     const ingest = (batchRaw: any[][]) => {
-      const seen = new Set(entry!.products.map(p => p.id))
+      // A Map rather than a Set, holding each pooled id's merchant. The
+      // membership test below is unchanged — `seen.has(raw.id)` decides
+      // exactly what it decided before — but a duplicate can now be asked
+      // WHOSE it was, which is the difference between "a duplicate" and "a
+      // second shop's garment, dropped". Dedupe semantics are untouched.
+      const seen = new Map(entry!.products.map(p => [p.id, p.source.merchant]))
       for (const list of batchRaw) {
         for (const raw of list) {
-          if (!raw?.id || seen.has(raw.id)) continue
+          observed.seen++
+          if (!raw?.id) { observed.rejected.noId++; continue }
+          // The shape of what the endpoint sent, read here and nowhere else —
+          // before the duplicate branch, before parseProduct, before every
+          // filter. A product this pool is about to drop still arrived, and
+          // still says something about what its endpoint emits.
+          observed.idShapes[idShapeOf(raw.id)]++
+          if (seen.has(raw.id)) {
+            observed.rejected.duplicateId++
+            const held = seen.get(raw.id)
+            const arriving = merchantKey(raw._sourceDomain ?? '')
+            if (held && arriving && held !== arriving) observed.crossMerchantDuplicateIds++
+            continue
+          }
           const p = parseProduct(raw, raw._sourceDomain)
-          if (!p) continue
-          if (isNonFashion(p)) continue
+          if (!p) { observed.rejected.unparseable++; continue }
+          if (isNonFashion(p)) { observed.rejected.nonFashion++; continue }
           // Trust the source store, but validate when a URL points elsewhere.
           const dom = getStoreDomain(p.store_url)
-          if (dom && !UCP_REGISTRY.some(s => domainMatches(dom, s.domain))) continue
-          seen.add(raw.id)
+          if (dom && !UCP_REGISTRY.some(s => domainMatches(dom, s.domain))) {
+            observed.rejected.offRegistry++
+            continue
+          }
+          seen.set(raw.id, p.source.merchant)
           entry!.products.push(p)
         }
       }
@@ -1259,6 +1421,10 @@ export class GlobalCatalogService {
     if (!isLoadMore && !seededFromPersistent && entry.queried.size > 0 && entry.products.length > 0) {
       void writePersistentCache(cacheKey, entry.products).catch(() => {})
     }
+
+    // The same pool, counted. See the note on corpusObservation above: this
+    // records what the catalogue saw and writes nothing anywhere.
+    observePool(entry.products)
 
     console.log(
       `[Catalog] "${storeQuery.slice(0, 50)}" ${isBrandSearch ? '(brand)' : '(category)'} → ` +

@@ -50,8 +50,9 @@ export const CANONICAL_SCHEMA_VERSION = 1
 export type ProductProvenance = Readonly<{
   /** The store's own domain, lowercased and www-stripped. */
   merchant: string
-  /** The id the merchant used, verbatim. A Shopify GID is allocated PER SHOP,
-   *  so this is not a global name for a garment — see productKey. */
+  /** The id the merchant used, verbatim, with no validation of any kind — see
+   *  the note above productKey on why that is not a global name for a
+   *  garment. */
   sourceId: string
   /** How it was retrieved. One value today; named so a second ingest path is
    *  distinguishable from this one rather than silently indistinguishable. */
@@ -150,10 +151,37 @@ export type RankingState = Map<string, RankingSignals>
 // A price is not identity either, nor a title — both are merchant state that
 // changes while the garment stays the same piece of clothing.
 //
-// What IS stable is the pair (which shop, what that shop calls it). The shop
-// has to be in there: a Shopify product GID carries a per-shop numeric id, so
-// two stores can and eventually will issue the same one, and today that bare
-// id is used as a global key in five places.
+// What IS stable is the pair (which shop, what that shop calls it), and the
+// shop has to be in there.
+//
+// AN EARLIER VERSION OF THIS COMMENT SAID a Shopify GID carries a per-shop
+// numeric id and that two stores would therefore eventually collide. That was
+// an assumption, it was never verified, and it is wrong — Shopify allocates
+// product ids from a global sequence. The accurate statement is narrower and
+// still sufficient: parseProduct copies `raw.id` VERBATIM, with no validation
+// of shape, length or prefix, from 458 independent UCP endpoints. UCP is a
+// protocol, not Shopify. Nothing obliges an implementation to send a GID, and
+// nothing in this codebase checks that one did.
+//
+// What has actually been measured, and only this: fourteen live /api/mcp
+// requests to the seven brands holding two registry entries each. Five domains
+// answered, nine did not. Of the 180 products that came back, 180 ids were
+// Shopify GIDs, 0 were bare numerics, 0 were anything else, and there were 0
+// cross-merchant duplicates. That is a sample of five stores. It says nothing
+// about the other 453, and it is not a population claim — the collision rate
+// across the registry is unknown, and lib/services/GlobalCatalogService's
+// corpus counters exist to measure it rather than continue guessing.
+//
+// Qualifying by merchant costs one string concatenation and removes the
+// question. That is the whole argument for it.
+//
+// NO ALIAS MAP. Those same seven brands — snitch, okhai, suvasa, newme,
+// tokyotalkies, bummer, kardo — each hold two registry domains, and whether a
+// pair is one shop behind two names or two shops sharing a brand is UNRESOLVED.
+// No pair had both members answer, so the evidence required to merge them was
+// never obtained, and merging them on the strength of a matching brand name
+// would be exactly the kind of inference this file exists to avoid. They stay
+// as seven pairs of distinct merchants until observation settles it.
 
 /** The store, named the one way. Accepts a URL or a bare domain; answers ''
  *  rather than throwing, because a product with an unreadable origin should

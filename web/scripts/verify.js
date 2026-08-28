@@ -55,6 +55,9 @@ const UNIT = [
   // Who owns a product, and who may write on it — the pooled catalogue objects
   // are shared between shoppers, so a request's own values must not land there.
   'canonical-product.js',
+  // Whose garment is it — the merchant is the shop we asked, not a hostname
+  // the shop wrote into a field — and what the pool actually contained.
+  'corpus-identity.js',
   'profile-cache.js',
   'same-garment.js',
   'suggest-query.js',

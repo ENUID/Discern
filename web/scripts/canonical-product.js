@@ -409,8 +409,12 @@ async function provenance() {
   check(!!p.source, 'it carries where it came from', p.source ? 'yes' : 'MISSING')
   if (!p.source) return
 
+  // The REGISTRY domain — the destination this search chose — which for this
+  // fixture is also the host the store put in its own URLs. When the two
+  // disagree the registry wins; scripts/corpus-identity.js is where that is
+  // pinned, because only a constructed fixture can make them disagree.
   const domain = new URL(p.store_url).hostname
-  same(p.source.merchant, domain, 'source.merchant is the store it came from')
+  same(p.source.merchant, domain, 'source.merchant is the store we asked')
   same(p.source.sourceId, p.id, 'source.sourceId is the id the merchant used')
   same(p.source.via, 'ucp-mcp', 'source.via names the retrieval path')
   check(typeof p.source.fetchedAt === 'number' && p.source.fetchedAt >= started && p.source.fetchedAt <= finished,
