@@ -1,6 +1,6 @@
 {
   "framework": "nextjs",
-  "buildCommand": "if [ \"$VERCEL_ENV\" = \"production\" ] && [ -n \"$CONVEX_DEPLOY_KEY\" ]; then npx convex deploy --typecheck disable || true; fi; npm run build",
+  "buildCommand": "npm run build",
   "outputDirectory": ".next",
   "installCommand": "npm install",
   "crons": [
