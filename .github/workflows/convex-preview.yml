@@ -1,0 +1,109 @@
+# This branch's Convex, kept away from production's.
+#
+# convex-deploy.yml deploys main to Discern:production with the production
+# deploy key. This branch was on that trigger until ca5c40b removed it, which
+# closed the hole and left the branch with nowhere to deploy at all. This is
+# the nowhere: an isolated preview deployment that unmerged corpus code can
+# write to without any of it reaching production.
+#
+# THE ONE THING THAT MAKES THIS SAFE IS THE PREFLIGHT, and it is not paranoia.
+# From the vendored CLI (convex@1.41.0, cli/deploy.js): a preview deploy is
+# chosen by the KEY, not by the flag. When the key is not a preview key the
+# else-branch crashes for --preview-create — and for --preview-name it does
+# NOT. It falls straight through to deployToExistingDeployment(), silently
+# ignoring the flag and deploying to whatever that key points at. A production
+# key here, with no guard, would push this branch's unmerged schema to
+# Discern:production and say nothing. So the key is checked before Convex is
+# invoked, against the CLI's own rule (cli/lib/deployment.js isPreviewDeployKey):
+# the part before "|" must be preview:<a>:<b>.
+#
+# --preview-create is deliberately NOT used. It is the guarded flag, but it
+# "deletes and recreates an existing preview deployment with the same name" —
+# it would wipe the corpus on every push, which is the opposite of the point.
+# --preview-name reuses the deployment, and the preflight supplies the guard
+# that flag lacks.
+#
+# No `|| true` anywhere. A failed Convex deploy must fail this job; the whole
+# reason web/vercel.json no longer deploys Convex is that its `|| true` could
+# swallow exactly that.
+name: Convex Preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/p4b1-palette-ssrf
+    paths:
+      - 'web/convex/**'
+
+# Read-only, same as verify.yml. This job checks out and deploys to a preview
+# deployment; it has no reason to be able to write to the repository.
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # BEFORE npm ci, and before Convex is invoked at all. There is no point
+      # installing to discover the key is missing, and no version of "discover
+      # it later" is acceptable for the wrong-key case.
+      #
+      # Nothing here prints a secret. The key is only ever length-tested and
+      # prefix-matched; `tr -cd :` emits colons and nothing else.
+      - name: Preflight — both secrets present, and the key is a PREVIEW key
+        env:
+          KEY: ${{ secrets.CONVEX_PREVIEW_DEPLOY_KEY }}
+          AUTH: ${{ secrets.CONVEX_AUTH_SECRET }}
+        run: |
+          set -eu
+          if [ -z "${KEY:-}" ]; then
+            echo "::error::CONVEX_PREVIEW_DEPLOY_KEY is not set — refusing to invoke Convex"
+            exit 1
+          fi
+          if [ -z "${AUTH:-}" ]; then
+            echo "::error::CONVEX_AUTH_SECRET is not set — refusing to invoke Convex"
+            exit 1
+          fi
+          prefix="${KEY%%|*}"
+          if [ "$prefix" = "$KEY" ]; then
+            echo "::error::deploy key is malformed (no '|' separator) — refusing"
+            exit 1
+          fi
+          case "$prefix" in
+            preview:*:*) ;;
+            *)
+              echo "::error::CONVEX_PREVIEW_DEPLOY_KEY is not a Convex preview deploy key."
+              echo "::error::--preview-name would silently deploy to that key's own target. Refusing."
+              exit 1
+              ;;
+          esac
+          if [ "$(printf %s "$prefix" | tr -cd ':' | wc -c)" -ne 2 ]; then
+            echo "::error::preview key prefix is not preview:<a>:<b> — refusing"
+            exit 1
+          fi
+          echo "preflight ok — a preview deploy key is present"
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      # CONVEX_DEPLOY_KEY is the env var the CLI reads — cli/lib/utils/utils.js
+      # defines CONVEX_DEPLOY_KEY_ENV_VAR_NAME = "CONVEX_DEPLOY_KEY", and it
+      # reads no other name. The VALUE is the preview secret, never
+      # secrets.CONVEX_DEPLOY_KEY, which is the production key this workflow
+      # must never touch.
+      - name: Deploy Convex to the branch preview deployment
+        working-directory: web
+        run: npx convex deploy --typecheck disable --preview-name claude/p4b1-palette-ssrf
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PREVIEW_DEPLOY_KEY }}
+          CONVEX_AUTH_SECRET: ${{ secrets.CONVEX_AUTH_SECRET }}
