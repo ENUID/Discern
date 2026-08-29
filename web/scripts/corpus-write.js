@@ -305,6 +305,14 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
       same(w({ categories: rev(base.categories) }), h0, 'categories REORDERED — same hash')
       same(w({ variants: rev(base.variants) }), h0, 'variants REORDERED — same hash')
       same(w({ options: rev(base.options) }), h0, 'options REORDERED — same hash')
+      // Provenance is about the OBSERVATION, not the garment. A row that gains
+      // it must not read as a change, or every product would rewrite once for
+      // free the day the field shipped.
+      same(w({ source: { ...base.source, stated: { currency: false, availability: false, vendor: 'domain' } } }), h0,
+        'provenance is NOT in the hash — a row that gains it is not a change')
+      same(w({ source: { ...base.source, stated: { currency: true, availability: true, vendor: 'merchant' } } }), h0,
+        '  and neither reading of it moves the hash')
+
       same(H(Object.fromEntries(Object.entries(base).reverse())), h0,
         'and the source object\'s own key order is irrelevant')
 
@@ -572,6 +580,54 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     check(!!zrow, 'the unpriced garment has a row')
     same(zrow && zrow.status, 'quarantined', 'marked quarantined')
     same(zpage.filter(p => p.id === ZERO).length, 1, 'and the live page still shows it — nothing was filtered')
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 6b. WHAT THE MERCHANT ACTUALLY SAID
+    //
+    // parseProduct invents a currency, an availability and a vendor when the
+    // store sends none, and the invented value is a string exactly like a
+    // stated one. These drive the REAL pipeline with stores that omit each
+    // field and assert the row records which branch ran.
+    // ══════════════════════════════════════════════════════════════════════
+    console.log('\n── what the merchant actually said ' + '─'.repeat(39))
+    const STATED = 'gid://shopify/Product/STATED'
+    const SILENT = 'gid://shopify/Product/SILENT'
+    const stated = product({ id: STATED })
+    stated.variants = stated.variants.map(v => ({ ...v, seller: { name: 'Kith Official' } }))
+    const silent = product({ id: SILENT })
+    // No currency anywhere, and no availability key readAvailability knows.
+    silent.variants = silent.variants.map(({ available, ...v }) => ({ ...v, price: { amount: v.price.amount } }))
+    installFetch(d => (d === 'kith.com' ? [stated, silent] : []), convexBase)
+    const ppage = await search(nextQuery(), ['kith.com'])
+    await settle()
+    restore()
+
+    const sRow = store.get(`kith.com::${STATED}`)
+    const nRow = store.get(`kith.com::${SILENT}`)
+    check(!!sRow && !!nRow, 'both garments have rows')
+    same(sRow && sRow.currencyStated, true, 'a stated currency is recorded as stated')
+    same(nRow && nRow.currencyStated, false, '  and a missing one as the USD default')
+    same(nRow && nRow.currency, 'USD', '  which still READS as USD — that is the whole problem')
+    same(sRow && sRow.availabilityStated, true, 'a real availability signal is recorded as stated')
+    same(nRow && nRow.availabilityStated, false, '  and silence as the optimistic default')
+    same(nRow && nRow.inStock, true, '  which still READS in stock — same problem, same fix')
+    same(sRow && sRow.vendorSource, 'merchant', 'a seller-supplied vendor is merchant-sourced')
+    same(nRow && nRow.vendorSource, 'domain', '  and a derived one is a title-cased domain token')
+    same(nRow && nRow.vendor, 'Kith', '  which still READS like a brand name')
+    same(ppage.filter(p => p.id === STATED || p.id === SILENT).length, 2,
+      'and the live page is unaffected — both still shown')
+
+    // ── the status union holds only what the writer can produce ─────────────
+    const srcOf = (p) => require('fs').readFileSync(path.join(WEB, p), 'utf8')
+    const stripComments = (t) => t.split('\n')
+      .filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .join('\n')
+    for (const f of ['lib/services/corpusWriter.ts', 'convex/products.ts', 'convex/schema.ts']) {
+      same(/unavailable/.test(stripComments(srcOf(f))), false,
+        `no executable 'unavailable' remains in ${f.split('/').pop()}`)
+    }
+    same(store.keys().some(k => (store.get(k) || {}).status === 'unavailable'), false,
+      'and no row in the corpus carries it')
 
     // ══════════════════════════════════════════════════════════════════════
     // 7. A BROKEN CORPUS CANNOT REACH THE SHOPPER

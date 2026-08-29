@@ -115,6 +115,12 @@ const row = (o) => ({
   lastChangedAt: o.lastChangedAt ?? T0,
   contentHash: o.contentHash ?? `h-${o.key}`,
   status: o.status ?? 'active',
+  // Deliberately NOT defaulted. Left off, these stay undefined — the shape of
+  // a row written before provenance existed, which the counters must keep
+  // separate from a real answer rather than fold into one.
+  currencyStated: o.currencyStated,
+  availabilityStated: o.availabilityStated,
+  vendorSource: o.vendorSource,
 })
 
 ;(async () => {
@@ -136,11 +142,18 @@ const row = (o) => ({
   // ── A. a seeded corpus, counted ───────────────────────────────────────────
   console.log('\n── A. a seeded corpus, counted ' + '─'.repeat(43))
   const seeded = [
-    row({ key: 'kith.com::1', lastSeenAt: T0 + 5 * DAY, firstSeenAt: T0, lastChangedAt: T0 + DAY }),
-    row({ key: 'kith.com::2', lastSeenAt: T0 + 4 * DAY, inStock: false }),
-    row({ key: 'kith.com::3', lastSeenAt: T0 + 3 * DAY, status: 'quarantined', price: 0 }),
-    row({ key: 'aloyoga.com::4', merchant: 'aloyoga.com', lastSeenAt: T0 + 2 * DAY, schema: 1 }),
-    row({ key: 'aloyoga.com::5', merchant: 'aloyoga.com', lastSeenAt: T0 + DAY, via: 'ucp-mcp' }),
+    // The first five carry provenance; the last two deliberately do not, so
+    // "unrecorded" is exercised alongside every real answer.
+    row({ key: 'kith.com::1', lastSeenAt: T0 + 5 * DAY, firstSeenAt: T0, lastChangedAt: T0 + DAY,
+          currencyStated: true, availabilityStated: true, vendorSource: 'merchant' }),
+    row({ key: 'kith.com::2', lastSeenAt: T0 + 4 * DAY, inStock: false,
+          currencyStated: true, availabilityStated: true, vendorSource: 'merchant' }),
+    row({ key: 'kith.com::3', lastSeenAt: T0 + 3 * DAY, status: 'quarantined', price: 0,
+          currencyStated: false, availabilityStated: false, vendorSource: 'domain' }),
+    row({ key: 'aloyoga.com::4', merchant: 'aloyoga.com', lastSeenAt: T0 + 2 * DAY, schema: 1,
+          currencyStated: false, availabilityStated: true, vendorSource: 'domain' }),
+    row({ key: 'aloyoga.com::5', merchant: 'aloyoga.com', lastSeenAt: T0 + DAY, via: 'ucp-mcp',
+          currencyStated: true, availabilityStated: false, vendorSource: 'none' }),
     row({ key: 'taylorstitch.com::6', merchant: 'taylorstitch.com', lastSeenAt: T0 + 6 * DAY,
           firstSeenAt: T0 - DAY, lastChangedAt: T0 + 6 * DAY, currency: 'GBP',
           title: 'Untitled', vendor: 'Independent', sourceId: '90210' }),
@@ -176,9 +189,41 @@ const row = (o) => ({
   // The defaults parseProduct applies are indistinguishable from real values
   // in a row; counting the sentinels is the only visibility there is.
   same(s.defaulted.titleUntitled, 1, 'one title is the Untitled sentinel')
-  same(s.defaulted.vendorIndependent, 1, 'one vendor is the Independent sentinel')
   same(s.defaulted.unpriced, 1, 'one has no usable price')
   same(s.defaulted.currencyUSD, 6, 'six are USD — real or defaulted, indistinguishable')
+  same(s.defaulted.vendorIndependent, undefined,
+    'and vendorIndependent is GONE — it counted a branch the domain fallback pre-empts')
+
+  // ── what the merchant actually said ───────────────────────────────────────
+  //
+  // The counter above cannot answer this and never could: 'USD' is 'USD'
+  // whether a store sent it or nobody did. These read each row's recorded
+  // provenance instead, and keep pre-provenance rows in their own bucket
+  // rather than guessing on their behalf.
+  same(s.provenance.currency.stated, 3, "three currencies were the merchant's word")
+  same(s.provenance.currency.defaultedUSD, 2, '  two are the USD default wearing a currency')
+  same(s.provenance.currency.unrecorded, 2, '  and two predate provenance entirely')
+  same(s.provenance.currency.stated + s.provenance.currency.defaultedUSD
+     + s.provenance.currency.unrecorded, s.total, '  every row lands in exactly one bucket')
+
+  same(s.provenance.availability.stated, 3, 'three had a real availability signal')
+  same(s.provenance.availability.assumedInStock, 2, '  two are the optimistic default, not an observation')
+  same(s.provenance.availability.unrecorded, 2, '  and two predate provenance')
+  same(s.provenance.availability.stated + s.provenance.availability.assumedInStock
+     + s.provenance.availability.unrecorded, s.total, '  every row lands in exactly one bucket')
+
+  same(s.provenance.vendor.merchant, 2, 'two vendors are the merchant speaking')
+  same(s.provenance.vendor.domain, 2, '  two are a title-cased domain token wearing a brand name')
+  same(s.provenance.vendor.none, 1, '  one is the Independent sentinel')
+  same(s.provenance.vendor.unrecorded, 2, '  and two predate provenance')
+  same(s.provenance.vendor.merchant + s.provenance.vendor.domain
+     + s.provenance.vendor.none + s.provenance.vendor.unrecorded, s.total,
+    '  every row lands in exactly one bucket')
+
+  // The whole point, as an assertion: the old metric and the new one disagree,
+  // and the new one is the true reading of the same seven rows.
+  same(s.defaulted.currencyUSD !== s.provenance.currency.defaultedUSD, true,
+    'the USD count and the DEFAULTED-USD count are different numbers')
 
   same(s.payloadSample.scanned, 7, 'the payload sample covered all seven')
   same(s.payloadSample.withVariants, 7, '  all have variants')

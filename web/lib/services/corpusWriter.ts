@@ -315,7 +315,19 @@ type Row = {
   title: string; vendor: string; price: number; currency: string
   storeUrl: string; imageUrl: string; inStock: boolean
   payload: string; via: string; schema: number
-  contentHash: string; status: 'active' | 'quarantined' | 'unavailable'
+  contentHash: string; status: 'active' | 'quarantined'
+  // Optional on the wire for the same reason it is optional in the schema: a
+  // pool seeded from search_cache was parsed before provenance existed, and
+  // those rows must still be writable rather than refused. Absent means
+  // unrecorded, which the operator read counts as its own answer.
+  //
+  // Named that way deliberately: corpus-write.js walks lib/ for the literal
+  // name of that query and fails if a file here mentions it, so "no production
+  // module can reach the corpus" stays a grep anyone can run. That assertion
+  // caught an earlier draft of this very comment, and the comment moved.
+  currencyStated?: boolean
+  availabilityStated?: boolean
+  vendorSource?: 'merchant' | 'domain' | 'none'
 }
 
 function toRow(p: CanonicalProduct): Row | null {
@@ -350,6 +362,14 @@ function toRow(p: CanonicalProduct): Row | null {
     schema: p.source.schema,
     contentHash: contentHash(p),
     status: statusOf(p),
+    // NOT hashed. contentHash is over stable merchant state; whether the
+    // merchant supplied a currency is a fact about the OBSERVATION, not about
+    // the garment, so a row that gains provenance does not register as a
+    // change and does not cost a write. Read with `?.` because a pool seeded
+    // from search_cache predates the field entirely.
+    currencyStated: p.source.stated?.currency,
+    availabilityStated: p.source.stated?.availability,
+    vendorSource: p.source.stated?.vendor,
   }
 }
 

@@ -87,7 +87,13 @@ export const upsertMany = mutation({
       via: v.string(),
       schema: v.number(),
       contentHash: v.string(),
-      status: v.union(v.literal("active"), v.literal("quarantined"), v.literal("unavailable")),
+      // Which normalisations the merchant actually supplied. Optional so a
+      // writer that has not been redeployed yet is still accepted — a row
+      // arriving without them records "unrecorded" rather than being refused.
+      currencyStated: v.optional(v.boolean()),
+      availabilityStated: v.optional(v.boolean()),
+      vendorSource: v.optional(v.union(v.literal("merchant"), v.literal("domain"), v.literal("none"))),
+      status: v.union(v.literal("active"), v.literal("quarantined")),
     })),
     serverSecret: v.string(),
   },
@@ -151,6 +157,15 @@ export const upsertMany = mutation({
         via: e.via,
         schema: e.schema,
         contentHash: e.contentHash,
+        // Provenance travels with the state it describes. A merchant that
+        // starts sending a currency it previously omitted has changed what we
+        // know, and the row should stop claiming otherwise — though this is
+        // not in the hash and never on its own causes a write. When the writer
+        // sends nothing, patching undefined clears the field, which is the
+        // honest reading: unrecorded, not false.
+        currencyStated: e.currencyStated,
+        availabilityStated: e.availabilityStated,
+        vendorSource: e.vendorSource,
         status: e.status,
         lastSeenAt: now,
         lastChangedAt: now,
@@ -230,6 +245,15 @@ export const inspect = query({
     let lastSeenMin = Infinity, lastSeenMax = -Infinity;
     let lastChangedMin = Infinity, lastChangedMax = -Infinity;
     let defaultedCurrency = 0, defaultedTitle = 0, defaultedVendor = 0, unpriced = 0;
+    // What the merchant actually supplied, from each row's own provenance
+    // rather than by re-reading the value. `currencyUSD` below cannot answer
+    // this — 'USD' is 'USD' either way — and vendorIndependent measured a
+    // sentinel the domain fallback almost never lets happen. `unrecorded` is
+    // rows written before provenance existed; folding them into either answer
+    // would be inventing a fact about them.
+    const currencySource = { stated: 0, defaultedUSD: 0, unrecorded: 0 };
+    const availabilitySource = { stated: 0, assumedInStock: 0, unrecorded: 0 };
+    const vendorSourceCounts = { merchant: 0, domain: 0, none: 0, unrecorded: 0 };
 
     for (const r of rows) {
       bump(byStatus, r.status);
@@ -254,6 +278,17 @@ export const inspect = query({
       if (r.title === "Untitled") defaultedTitle++;
       if (r.vendor === "Independent") defaultedVendor++;
       if (!(r.price > 0)) unpriced++;
+
+      if (r.currencyStated === undefined) currencySource.unrecorded++;
+      else if (r.currencyStated) currencySource.stated++;
+      else currencySource.defaultedUSD++;
+
+      if (r.availabilityStated === undefined) availabilitySource.unrecorded++;
+      else if (r.availabilityStated) availabilitySource.stated++;
+      else availabilitySource.assumedInStock++;
+
+      if (r.vendorSource === undefined) vendorSourceCounts.unrecorded++;
+      else bump(vendorSourceCounts as Record<string, number>, r.vendorSource);
 
       if (r.firstSeenAt < firstSeenMin) firstSeenMin = r.firstSeenAt;
       if (r.firstSeenAt > firstSeenMax) firstSeenMax = r.firstSeenAt;
@@ -298,10 +333,24 @@ export const inspect = query({
         duplicateImageUrls: Object.values(imageCounts).filter((n) => n > 1).length,
         duplicateTitles: Object.values(titleCounts).filter((n) => n > 1).length,
         defaulted: {
+          // Rows whose stored value EQUALS the sentinel. `currencyUSD` counts
+          // stated dollars and defaulted ones alike, which is exactly why
+          // `provenance` below exists. vendorIndependent is GONE: it counted a
+          // branch the domain fallback pre-empts, so it read 0 while the
+          // fallback ran on every row.
           currencyUSD: defaultedCurrency,
           titleUntitled: defaultedTitle,
-          vendorIndependent: defaultedVendor,
           unpriced,
+        },
+        // WHAT THE MERCHANT ACTUALLY SAID, read from each row's recorded
+        // provenance rather than re-derived from the value. This is the
+        // counter that can tell a garment priced in dollars from one whose
+        // price carries no currency at all, and a brand name from a
+        // title-cased domain token wearing one.
+        provenance: {
+          currency: currencySource,
+          availability: availabilitySource,
+          vendor: vendorSourceCounts,
         },
         payloadSample: { scanned: payloadScanned, withVariants, withCategories, withDescription },
       },

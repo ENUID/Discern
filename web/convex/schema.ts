@@ -397,14 +397,35 @@ export default defineSchema({
     // lib/services/corpusWriter.ts, which defines the serialisation.
     contentHash: v.string(),
 
+    // WHICH OF THE NORMALISATIONS WERE THE MERCHANT'S WORD, not a second copy
+    // of the values. parseProduct invents a currency, an availability and a
+    // vendor when the store sends none, and once written each is
+    // indistinguishable from a stated one — 'USD' reads the same whether the
+    // merchant said it or nobody did. See ProductProvenance.stated in
+    // lib/catalog/product.ts.
+    //
+    // OPTIONAL, and not from laziness: rows written before this existed carry
+    // none of it, and a required column would fail schema validation against
+    // them. Absent means "written before the corpus recorded this", which the
+    // operator read counts separately rather than folding into either answer.
+    // Excluded from contentHash — provenance is not content.
+    currencyStated: v.optional(v.boolean()),
+    availabilityStated: v.optional(v.boolean()),
+    vendorSource: v.optional(v.union(v.literal("merchant"), v.literal("domain"), v.literal("none"))),
+
     // 'active'      a garment we hold, whether or not it is in stock
     // 'quarantined' held for review — no usable price, or an unparseable URL.
     //               Counted and stored; NOT removed from any live result.
-    // 'unavailable' reserved for absence-based withdrawal. NOTHING WRITES IT
-    //               IN THIS PHASE: absence from one search is a fact about a
-    //               query, not about a garment, and endpoint failure is
-    //               brand_health's business rather than a product's.
-    status: v.union(v.literal("active"), v.literal("quarantined"), v.literal("unavailable")),
+    //
+    // 'unavailable' WAS HERE AND IS GONE. It was reserved for absence-based
+    // withdrawal and nothing ever wrote it — not an oversight but a structural
+    // impossibility: the writer only ever sees products a store returned in
+    // this request, so a garment it cannot observe is one it cannot write.
+    // Stock already has its own column, and a status of 'unavailable' would
+    // have conflated "sold out today" with "no longer a garment we hold".
+    // A third of the union was dead. Removing it validates against the live
+    // rows because every one of them is 'active'.
+    status: v.union(v.literal("active"), v.literal("quarantined")),
   }).index("by_key", ["key"])          // the identity lookup the upsert uses
     .index("by_merchant", ["merchant"])// per-merchant sweeps, merchant removal
     .index("by_last_seen", ["lastSeenAt"]), // staleness, bounded like pruneOldEvents

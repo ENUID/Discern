@@ -778,16 +778,27 @@ function readAvailability(v: any): boolean | null {
 function parseProduct(raw: any, sourceDomain?: string): UcpProduct | null {
   try {
     const variant = raw.variants?.[0] ?? {}
-    const currency = normalizeCurrency(variant.price?.currency ?? raw.price_range?.min?.currency)
+    // Split in two so the corpus can tell a stated currency from the USD
+    // default. normalizeCurrency collapses both to the same string; this is
+    // the only place the difference still exists. `currency` is unchanged.
+    const sentCurrency = variant.price?.currency ?? raw.price_range?.min?.currency
+    const currencyStated = String(sentCurrency ?? '').trim() !== ''
+    const currency = normalizeCurrency(sentCurrency)
     const isZero = ZERO_DECIMAL_CURRENCIES.has(currency)
     const rawAmount = variant.price?.amount ?? raw.price_range?.min?.amount ?? 0
     const price = isZero ? rawAmount : rawAmount / 100
 
     const domain = sourceDomain ?? raw._sourceDomain
     let vendor = variant.seller?.name ?? variant.seller?.domain
+    // Which of the three branches produced it. 'Independent' was the only one
+    // the corpus could see, and it is the one that almost never runs — the
+    // domain fallback below fires first whenever a domain exists, which for
+    // UCP is always. Recorded, not changed: `vendor` is byte-identical.
+    let vendorSource: 'merchant' | 'domain' | 'none' = vendor ? 'merchant' : 'none'
     if (!vendor && domain) {
       const token = cleanDomainToken(domain)
       vendor = token ? token.charAt(0).toUpperCase() + token.slice(1) : domain
+      if (vendor) vendorSource = 'domain'
     }
     vendor = vendor || 'Independent'
 
@@ -898,9 +909,15 @@ function parseProduct(raw: any, sourceDomain?: string): UcpProduct | null {
     //     own available:true filter on the request (best info we have)
     const anyExplicitlyAvailable = variants.some((v: { _rawAvailability: boolean | null }) => v._rawAvailability === true)
     const anyKnownSignal = variants.some((v: { _rawAvailability: boolean | null }) => v._rawAvailability !== null)
+    // Lifted out of the ternary so the "no signal anywhere" case is nameable
+    // without evaluating it twice. The value fed to in_stock is identical.
+    const bareAvailability = variants.length > 0 ? null : (readAvailability(raw) ?? readAvailability(variant))
     const inStock = variants.length > 0
       ? (anyExplicitlyAvailable || !anyKnownSignal)
-      : (readAvailability(raw) ?? readAvailability(variant) ?? true)
+      : (bareAvailability ?? true)
+    // The third state in_stock cannot hold: nothing reported at all, so `true`
+    // above is an optimistic default rather than an observation.
+    const availabilityStated = variants.length > 0 ? anyKnownSignal : bareAvailability !== null
 
     // Strip the internal-only _rawAvailability before it leaves this module.
     const publicVariants = variants.map(({ _rawAvailability, ...v }: any) => v)
@@ -932,6 +949,7 @@ function parseProduct(raw: any, sourceDomain?: string): UcpProduct | null {
       via: 'ucp-mcp',
       fetchedAt: Date.now(),
       schema: CANONICAL_SCHEMA_VERSION,
+      stated: { currency: currencyStated, availability: availabilityStated, vendor: vendorSource },
     }
 
     return {

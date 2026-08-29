@@ -61,6 +61,38 @@ export type ProductProvenance = Readonly<{
   fetchedAt: number
   /** Which shape it was written in. */
   schema: typeof CANONICAL_SCHEMA_VERSION
+  /**
+   * WHICH OF THE NORMALISATIONS WERE THE MERCHANT'S WORD.
+   *
+   * The note above says a per-field tag is bookkeeping nobody reads, and for
+   * merchant-vs-model-vs-request that is still true: the container answers it.
+   * It does not answer a fourth question the design did not anticipate — did
+   * the merchant say this, or did parseProduct supply it? Three of the named
+   * normalisations INVENT a value rather than normalise one, and each is
+   * indistinguishable from a stated value once it is a string in a row:
+   *
+   *   currency      absent -> 'USD'                 (normalizeCurrency)
+   *   availability  absent -> in_stock true         (no variant reports)
+   *   vendor        absent -> title-cased domain token, then 'Independent'
+   *
+   * A corpus that stores the result and not this cannot tell a garment priced
+   * in dollars from one whose price has no currency at all. So this records
+   * only which BRANCH ran — never a second copy of the value, which would be
+   * the duplicate-knowledge problem the note above guards against.
+   *
+   * Read by the corpus and by nothing else. No filter, ranking, judge or wire
+   * field consults it.
+   */
+  stated: Readonly<{
+    /** The source sent a currency. False means `currency` is the USD default. */
+    currency: boolean
+    /** Some variant (or the product) reported a real availability signal.
+     *  False means `in_stock` is the optimistic default, not an observation. */
+    availability: boolean
+    /** Which vendor branch ran. 'domain' is the title-cased domain token;
+     *  'none' is the 'Independent' sentinel. */
+    vendor: 'merchant' | 'domain' | 'none'
+  }>
 }>
 
 /**
