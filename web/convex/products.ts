@@ -93,6 +93,7 @@ export const upsertMany = mutation({
       currencyStated: v.optional(v.boolean()),
       availabilityStated: v.optional(v.boolean()),
       vendorSource: v.optional(v.union(v.literal("merchant"), v.literal("domain"), v.literal("none"))),
+      country: v.optional(v.string()),
       status: v.union(v.literal("active"), v.literal("quarantined")),
     })),
     serverSecret: v.string(),
@@ -166,6 +167,9 @@ export const upsertMany = mutation({
         currencyStated: e.currencyStated,
         availabilityStated: e.availabilityStated,
         vendorSource: e.vendorSource,
+        // Re-sent identical by the writer — the country is part of the key, so
+        // a row can never change country without becoming a different row.
+        country: e.country,
         status: e.status,
         lastSeenAt: now,
         lastChangedAt: now,
@@ -254,6 +258,10 @@ export const inspect = query({
     const currencySource = { stated: 0, defaultedUSD: 0, unrecorded: 0 };
     const availabilitySource = { stated: 0, assumedInStock: 0, unrecorded: 0 };
     const vendorSourceCounts = { merchant: 0, domain: 0, none: 0, unrecorded: 0 };
+    // Rows per observation country. `unscoped` is the legacy shape: written
+    // before country scoping, two-segment key, no country ever recorded.
+    // Counted separately rather than guessed at.
+    const byCountry: Record<string, number> = {};
 
     for (const r of rows) {
       bump(byStatus, r.status);
@@ -290,6 +298,8 @@ export const inspect = query({
       if (r.vendorSource === undefined) vendorSourceCounts.unrecorded++;
       else bump(vendorSourceCounts as Record<string, number>, r.vendorSource);
 
+      bump(byCountry, r.country === undefined ? "unscoped" : r.country);
+
       if (r.firstSeenAt < firstSeenMin) firstSeenMin = r.firstSeenAt;
       if (r.firstSeenAt > firstSeenMax) firstSeenMax = r.firstSeenAt;
       if (r.lastSeenAt < lastSeenMin) lastSeenMin = r.lastSeenAt;
@@ -321,7 +331,7 @@ export const inspect = query({
         // the reason the number stopped where it did.
         total: rows.length,
         capped: rows.length >= INSPECT_SCAN_CAP,
-        byStatus, byVia, bySchema, byIdShape,
+        byStatus, byVia, bySchema, byIdShape, byCountry,
         distinctMerchants: merchants.size,
         perMerchant,
         inStock,

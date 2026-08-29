@@ -121,6 +121,9 @@ const row = (o) => ({
   currencyStated: o.currencyStated,
   availabilityStated: o.availabilityStated,
   vendorSource: o.vendorSource,
+  // Left off, this stays undefined — a legacy row, written before country
+  // scoping, whose country was never recorded and must not be invented.
+  country: o.country,
 })
 
 ;(async () => {
@@ -144,12 +147,12 @@ const row = (o) => ({
   const seeded = [
     // The first five carry provenance; the last two deliberately do not, so
     // "unrecorded" is exercised alongside every real answer.
-    row({ key: 'kith.com::1', lastSeenAt: T0 + 5 * DAY, firstSeenAt: T0, lastChangedAt: T0 + DAY,
-          currencyStated: true, availabilityStated: true, vendorSource: 'merchant' }),
-    row({ key: 'kith.com::2', lastSeenAt: T0 + 4 * DAY, inStock: false,
-          currencyStated: true, availabilityStated: true, vendorSource: 'merchant' }),
-    row({ key: 'kith.com::3', lastSeenAt: T0 + 3 * DAY, status: 'quarantined', price: 0,
-          currencyStated: false, availabilityStated: false, vendorSource: 'domain' }),
+    row({ key: 'kith.com::1::US', lastSeenAt: T0 + 5 * DAY, firstSeenAt: T0, lastChangedAt: T0 + DAY,
+          currencyStated: true, availabilityStated: true, vendorSource: 'merchant', country: 'US' }),
+    row({ key: 'kith.com::2::IN', lastSeenAt: T0 + 4 * DAY, inStock: false,
+          currencyStated: true, availabilityStated: true, vendorSource: 'merchant', country: 'IN' }),
+    row({ key: 'kith.com::3::--', lastSeenAt: T0 + 3 * DAY, status: 'quarantined', price: 0,
+          currencyStated: false, availabilityStated: false, vendorSource: 'domain', country: '--' }),
     row({ key: 'aloyoga.com::4', merchant: 'aloyoga.com', lastSeenAt: T0 + 2 * DAY, schema: 1,
           currencyStated: false, availabilityStated: true, vendorSource: 'domain' }),
     row({ key: 'aloyoga.com::5', merchant: 'aloyoga.com', lastSeenAt: T0 + DAY, via: 'ucp-mcp',
@@ -224,6 +227,22 @@ const row = (o) => ({
   // and the new one is the true reading of the same seven rows.
   same(s.defaulted.currencyUSD !== s.provenance.currency.defaultedUSD, true,
     'the USD count and the DEFAULTED-USD count are different numbers')
+
+  // ── which country each observation was made under ─────────────────────────
+  //
+  // The corpus files merchant::sourceId::COUNTRY, because cc reaches the store
+  // as address_country and the store localises price, currency and
+  // availability from it. Rows written before that carry a two-segment key and
+  // no country, which is counted as its own bucket rather than guessed at.
+  same(s.byCountry.US, 1, 'one observation was made from US')
+  same(s.byCountry.IN, 1, '  one from IN')
+  same(s.byCountry['--'], 1, '  one from a request that carried no country')
+  same(s.byCountry.unscoped, 4, '  and four are legacy rows with no country recorded')
+  same(Object.values(s.byCountry).reduce((a, b) => a + b, 0), s.total,
+    '  every row lands in exactly one country bucket')
+  same(Object.prototype.hasOwnProperty.call(s.byCountry, '--')
+    && Object.prototype.hasOwnProperty.call(s.byCountry, 'unscoped'), true,
+    'unknown-country and never-recorded are separate buckets, not one answer')
 
   same(s.payloadSample.scanned, 7, 'the payload sample covered all seven')
   same(s.payloadSample.withVariants, 7, '  all have variants')

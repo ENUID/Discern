@@ -311,6 +311,8 @@ function statusOf(p: CanonicalProduct): 'active' | 'quarantined' {
 }
 
 type Row = {
+  // merchant::sourceId::COUNTRY — see corpusRowKey. NOT CanonicalProduct.key,
+  // which stays merchant::sourceId and stays on the wire product untouched.
   key: string; merchant: string; sourceId: string
   title: string; vendor: string; price: number; currency: string
   storeUrl: string; imageUrl: string; inStock: boolean
@@ -328,6 +330,39 @@ type Row = {
   currencyStated?: boolean
   availabilityStated?: boolean
   vendorSource?: 'merchant' | 'domain' | 'none'
+  // The country segment of the key, stored as its own column so a reader does
+  // not have to parse the key to group by it. Optional for the same reason as
+  // the fields above: the rows written before this existed carry none, and
+  // their country was never recorded and is not recoverable.
+  country?: string
+}
+
+/** No country was recorded. Two characters, and deliberately not a country:
+ *  ISO-3166-1 alpha-2 is [A-Z]{2}, so this can never collide with a real one.
+ *  Distinct from a row that predates country scoping entirely, which has no
+ *  third segment at all. */
+export const UNKNOWN_COUNTRY = '--'
+
+/**
+ * WHAT THE CORPUS FILES A GARMENT UNDER: merchant::sourceId::COUNTRY.
+ *
+ * CanonicalProduct.key is merchant::sourceId and is NOT touched — it is
+ * stamped onto the wire product, and nothing about retrieval changes. This is
+ * the corpus's own key, and the extra segment is the difference between a
+ * garment and an observation of a garment.
+ *
+ * WHY COUNTRY AND NOT CURRENCY. Country is what we send; currency is what
+ * comes back. Merchants disagree about the second under an identical request —
+ * cdlp.com answered USD in the same burst that judithandcharles.com and
+ * nanushka.com answered INR — so keying on the answer would let one store's
+ * localisation policy fragment identity while another's did not. Country also
+ * governs availability, which currency cannot express at all.
+ *
+ * Appended, never restructured: segment 0 is still the merchant, so anything
+ * reading the first segment still reads the merchant.
+ */
+export function corpusRowKey(p: CanonicalProduct): string {
+  return `${p.key}::${p.source.country ?? UNKNOWN_COUNTRY}`
 }
 
 function toRow(p: CanonicalProduct): Row | null {
@@ -339,7 +374,7 @@ function toRow(p: CanonicalProduct): Row | null {
   if (!p?.key || !p.source?.merchant || !p.source?.sourceId) return null
 
   return {
-    key: p.key,
+    key: corpusRowKey(p),
     merchant: p.source.merchant,
     sourceId: p.source.sourceId,
     title: p.title,
@@ -370,6 +405,11 @@ function toRow(p: CanonicalProduct): Row | null {
     currencyStated: p.source.stated?.currency,
     availabilityStated: p.source.stated?.availability,
     vendorSource: p.source.stated?.vendor,
+    // The same token the key carries, so grouping by country needs no parsing.
+    // NOT in contentHash: the key already separates countries, so two of them
+    // are two rows whose hashes are never compared. Putting it in the hash
+    // would rewrite every row and buy nothing.
+    country: p.source.country ?? UNKNOWN_COUNTRY,
   }
 }
 

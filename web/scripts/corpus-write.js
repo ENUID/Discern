@@ -259,6 +259,13 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     'the REAL convex upsertMany handler is what these tests run', handler ? '' : 'not reachable')
   REAL_UPSERT = (db, args) => handler({ db }, args)
 
+  // The corpus files a garment under merchant::sourceId::COUNTRY. The searches
+  // below all run with cc='US', so this is how the harness names a row. It is
+  // deliberately NOT derived from the writer's own helper — a test that builds
+  // its expectation from the implementation cannot catch the implementation
+  // changing shape.
+  const K = (merchant, id, cc = 'US') => `${merchant}::${id}::${cc}`
+
   const search = (q, domains, currency = 'USD') => C.GlobalCatalogService.search(
     q, undefined, [], 'US', true, [], 'relevance', currency, {}, domains, undefined, q, null, null)
 
@@ -312,6 +319,13 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
         'provenance is NOT in the hash — a row that gains it is not a change')
       same(w({ source: { ...base.source, stated: { currency: true, availability: true, vendor: 'merchant' } } }), h0,
         '  and neither reading of it moves the hash')
+      // Country is the observation context and lives in the KEY, so two
+      // countries are two rows whose hashes are never compared. Putting it in
+      // the hash would rewrite every row and buy nothing.
+      same(w({ source: { ...base.source, country: 'IN' } }), h0,
+        'the observation country is NOT in the hash')
+      same(w({ source: { ...base.source, country: null } }), h0,
+        '  and neither is its absence')
 
       same(H(Object.fromEntries(Object.entries(base).reverse())), h0,
         'and the source object\'s own key order is irrelevant')
@@ -404,7 +418,7 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     await settle()
     restore()
 
-    const key1 = `kith.com::${P1}`
+    const key1 = K('kith.com', P1)
     const first = store.get(key1)
     check(!!first, 'the garment has a row', first ? first.key : 'MISSING')
     if (!first) throw new Error('no row to continue from')
@@ -519,8 +533,8 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     await settle()
     restore()
 
-    const kithRow = store.get(`kith.com::${DUP}`)
-    const aloRow = store.get(`aloyoga.com::${DUP}`)
+    const kithRow = store.get(K('kith.com', DUP))
+    const aloRow = store.get(K('aloyoga.com', DUP))
     check(!!kithRow && !!aloRow, 'the corpus holds BOTH shops\' garments',
       `${kithRow ? 'kith' : '-'} / ${aloRow ? 'alo' : '-'}`)
     check(!!kithRow && !!aloRow && kithRow.key !== aloRow.key, 'under two different keys',
@@ -576,7 +590,7 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     const zpage = await search(nextQuery(), ['kith.com'])
     await settle()
     restore()
-    const zrow = store.get(`kith.com::${ZERO}`)
+    const zrow = store.get(K('kith.com', ZERO))
     check(!!zrow, 'the unpriced garment has a row')
     same(zrow && zrow.status, 'quarantined', 'marked quarantined')
     same(zpage.filter(p => p.id === ZERO).length, 1, 'and the live page still shows it — nothing was filtered')
@@ -602,8 +616,8 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     await settle()
     restore()
 
-    const sRow = store.get(`kith.com::${STATED}`)
-    const nRow = store.get(`kith.com::${SILENT}`)
+    const sRow = store.get(K('kith.com', STATED))
+    const nRow = store.get(K('kith.com', SILENT))
     check(!!sRow && !!nRow, 'both garments have rows')
     same(sRow && sRow.currencyStated, true, 'a stated currency is recorded as stated')
     same(nRow && nRow.currencyStated, false, '  and a missing one as the USD default')
@@ -628,6 +642,94 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     }
     same(store.keys().some(k => (store.get(k) || {}).status === 'unavailable'), false,
       'and no row in the corpus carries it')
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 6c. ONE GARMENT, TWO COUNTRIES, TWO ROWS
+    //
+    // cc reaches the store as address_country and the store localises price,
+    // currency and availability from it. All three are in contentHash and none
+    // of them was in the key, so the same garment seen from two countries
+    // overwrote itself and every overwrite read as a genuine price change.
+    // The corpus now files an OBSERVATION, not just a garment.
+    // ══════════════════════════════════════════════════════════════════════
+    console.log('\n── one garment, two countries ' + '─'.repeat(44))
+    const searchCC = (q, domains, cc) => C.GlobalCatalogService.search(
+      q, undefined, [], cc, true, [], 'relevance', 'USD', {}, domains, undefined, q, null, null)
+
+    const XC = 'gid://shopify/Product/XCOUNTRY'
+    installFetch(d => (d === 'kith.com' ? [product({ id: XC })] : []), convexBase)
+    const usPage = await searchCC(nextQuery(), ['kith.com'], 'US'); await settle()
+    const usRow = { ...store.get(K('kith.com', XC, 'US')) }
+    const inPage = await searchCC(nextQuery(), ['kith.com'], 'IN'); await settle()
+    const nullPage = await searchCC(nextQuery(), ['kith.com'], null); await settle()
+    restore()
+
+    const inRow = store.get(K('kith.com', XC, 'IN'))
+    const nullRow = store.get(K('kith.com', XC, '--'))
+    const usAfter = store.get(K('kith.com', XC, 'US'))
+
+    check(!!usRow.key && !!inRow && !!nullRow, 'US, IN and unknown-country each produced a row')
+    same(usRow.key !== inRow.key, true, '  and their keys differ')
+    same(inRow.country, 'IN', '  the IN row records its country')
+    same(usAfter.country, 'US', '  the US row records its own')
+    same(nullRow.country, '--', 'a request with no country records the -- sentinel')
+    same(nullRow.key.endsWith('::--'), true, '  and its key ends ::--')
+    same(/::[A-Z]{2}$/.test(nullRow.key), false,
+      '  which cannot collide with a country — ISO-3166-1 alpha-2 is [A-Z]{2}')
+
+    // The whole point of the phase, asserted directly.
+    same(usAfter.lastChangedAt, usRow.lastChangedAt,
+      'writing IN did NOT change the US row — no false price change')
+    same(usAfter.contentHash, usRow.contentHash, '  and its hash is untouched')
+    same(usAfter.firstSeenAt, usRow.firstSeenAt, '  and it kept its birthday')
+
+    // Phase-3 provenance rides along on every scoped row.
+    same(typeof inRow.currencyStated, 'boolean', 'provenance survives on a scoped row')
+    same(typeof inRow.availabilityStated, 'boolean', '  availability provenance too')
+    same(inRow.vendorSource, 'domain', '  and the vendor branch')
+
+    // CanonicalProduct.key is NOT scoped — it is on the wire product, and this
+    // phase deliberately did not touch it.
+    const wireP = inPage.find(x => x.id === XC) || usPage.find(x => x.id === XC)
+    check(!!wireP, 'the garment is on the page')
+    same(wireP && wireP.key, `kith.com::${XC}`,
+      'CanonicalProduct.key is STILL merchant::sourceId — retrieval is untouched')
+    same(wireP && wireP.key.split('::').length, 2, '  two segments, not three')
+    same(nullPage.filter(x => x.id === XC).length, 1, 'and the page is unaffected by scoping')
+
+    // ── a legacy two-segment row is never matched by a scoped write ─────────
+    //
+    // The 1,082 rows written before this phase carry merchant::sourceId and no
+    // country, which was never recorded and is not recoverable. A scoped write
+    // must not adopt, update or delete them.
+    {
+      const rows = new Map(); let n = 0
+      const db = {
+        query: () => ({ withIndex: (_x, f) => { let want; f({ eq: (_k, v) => { want = v; return {} } })
+          return { first: async () => Array.from(rows.values()).find(r => r.key === want) ?? null } } }),
+        insert: async (_t, d) => { const _id = `L${++n}`; rows.set(_id, { _id, ...d }); return _id },
+        patch: async (_id, patchDoc) => Object.assign(rows.get(_id), patchDoc),
+      }
+      const base = {
+        merchant: 'kith.com', sourceId: 'legacy-1', title: 'Legacy Shirt', vendor: 'Kith',
+        price: 10, currency: 'USD', storeUrl: 'https://kith.com/p', imageUrl: 'https://cdn/i.jpg',
+        inStock: true, payload: '{}', via: 'ucp-mcp', schema: 1, status: 'active',
+      }
+      // A legacy row: two segments, no country column at all.
+      await REAL_UPSERT(db, { entries: [{ ...base, key: 'kith.com::legacy-1', contentHash: 'legacy-hash' }],
+        serverSecret: 'stub-secret' })
+      const legacyBefore = { ...Array.from(rows.values())[0] }
+      same(legacyBefore.country, undefined, 'a legacy row has no country column')
+      same(legacyBefore.key.split('::').length, 2, '  and a two-segment key')
+
+      // Now the same garment, scoped.
+      await REAL_UPSERT(db, { entries: [{ ...base, key: 'kith.com::legacy-1::US', country: 'US',
+        contentHash: 'scoped-hash' }], serverSecret: 'stub-secret' })
+      same(rows.size, 2, 'a scoped write of the same garment ADDS a row rather than adopting one')
+      const legacyAfter = Array.from(rows.values()).find(r => r.key === 'kith.com::legacy-1')
+      same(legacyAfter.contentHash, 'legacy-hash', '  the legacy row is untouched')
+      same(legacyAfter.country, undefined, '  and no country was invented for it')
+    }
 
     // ══════════════════════════════════════════════════════════════════════
     // 7. A BROKEN CORPUS CANNOT REACH THE SHOPPER
@@ -740,7 +842,7 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
       check(mutations.length - m2 === 1, 'a garment that CHANGED is sent again inside the bucket')
       same(rowsOffered - o1 - 0 > 0, true, '  and it is on the wire')
       same(dbWrites - w2, 1, '  exactly the one that changed is written')
-      same(store.get('kith.com::gid://shopify/Product/M1').title, 'Memo Shirt One, Repriced',
+      same(store.get(K('kith.com', 'gid://shopify/Product/M1')).title, 'Memo Shirt One, Repriced',
         '  with its new title')
     }
 
@@ -895,7 +997,7 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     await Promise.all([search(nextQuery(), ['kith.com']), search(nextQuery(), ['kith.com'])])
     await settle()
     restore()
-    const crow = store.get(`kith.com::${conc}`)
+    const crow = store.get(K('kith.com', conc))
     check(!!crow, 'the contended garment has a row')
     same(store.size, beforeConc + 1, 'exactly one row was added, not two')
     check(crow && crow.firstSeenAt <= crow.lastSeenAt, 'and its timestamps are coherent')

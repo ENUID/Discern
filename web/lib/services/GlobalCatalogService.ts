@@ -775,7 +775,7 @@ function readAvailability(v: any): boolean | null {
   return null
 }
 
-function parseProduct(raw: any, sourceDomain?: string): UcpProduct | null {
+function parseProduct(raw: any, sourceDomain?: string, countryCode?: string | null): UcpProduct | null {
   try {
     const variant = raw.variants?.[0] ?? {}
     // Split in two so the corpus can tell a stated currency from the USD
@@ -950,6 +950,10 @@ function parseProduct(raw: any, sourceDomain?: string): UcpProduct | null {
       fetchedAt: Date.now(),
       schema: CANONICAL_SCHEMA_VERSION,
       stated: { currency: currencyStated, availability: availabilityStated, vendor: vendorSource },
+      // Already normalised upstream — uppercase ISO-3166-1 alpha-2, or null.
+      // Recorded, never guessed: a fetch with no country stores null rather
+      // than a plausible default.
+      country: countryCode ?? null,
     }
 
     return {
@@ -1309,7 +1313,7 @@ export class GlobalCatalogService {
             if (held && arriving && held !== arriving) observed.crossMerchantDuplicateIds++
             continue
           }
-          const p = parseProduct(raw, raw._sourceDomain)
+          const p = parseProduct(raw, raw._sourceDomain, cc)
           if (!p) { observed.rejected.unparseable++; continue }
           if (isNonFashion(p)) { observed.rejected.nonFashion++; continue }
           // Trust the source store, but validate when a URL points elsewhere.

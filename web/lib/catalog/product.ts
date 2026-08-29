@@ -93,6 +93,24 @@ export type ProductProvenance = Readonly<{
      *  'none' is the 'Independent' sentinel. */
     vendor: 'merchant' | 'domain' | 'none'
   }>
+  /**
+   * THE BUYER COUNTRY THIS OBSERVATION WAS MADE UNDER, or null when the
+   * request carried none.
+   *
+   * GlobalCatalogService sends `address_country` (and `currency`) to the store
+   * as buyer signals, and the comment there says what that buys: "The store
+   * localises its own prices and availability from these." So price, currency
+   * and in_stock are answers to a question that included a country, and a
+   * corpus row holding them without it is holding a number nobody can
+   * interpret. Two countries genuinely disagreed in one burst — cdlp.com
+   * answered USD while judithandcharles.com and nanushka.com answered INR.
+   *
+   * NOT part of `key`. productKey stays merchant::sourceId and stays on the
+   * wire product unchanged; the corpus scopes its OWN row key by this, which
+   * is the difference between a garment and an observation of a garment. See
+   * corpusWriter.toRow.
+   */
+  country: string | null
 }>
 
 /**

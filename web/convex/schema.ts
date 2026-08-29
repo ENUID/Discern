@@ -413,6 +413,17 @@ export default defineSchema({
     availabilityStated: v.optional(v.boolean()),
     vendorSource: v.optional(v.union(v.literal("merchant"), v.literal("domain"), v.literal("none"))),
 
+    // THE OBSERVATION CONTEXT. `key` is merchant::sourceId::COUNTRY, and this
+    // is that third segment stored as its own column so grouping by it needs
+    // no key parsing. '--' means a request that carried no country.
+    //
+    // OPTIONAL, and this is the load-bearing part: rows written before country
+    // scoping have a TWO-segment key and no country at all. Their country was
+    // never recorded and is not recoverable, so it is not invented — they stay
+    // as they are, are never matched by a three-segment write, and inspect
+    // counts them as `unscoped` rather than folding them into a country.
+    country: v.optional(v.string()),
+
     // 'active'      a garment we hold, whether or not it is in stock
     // 'quarantined' held for review — no usable price, or an unparseable URL.
     //               Counted and stored; NOT removed from any live result.
