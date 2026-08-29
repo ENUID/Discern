@@ -285,6 +285,10 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     // SEQUENCE-LIKE, order is content:  options[].values · media
     //   media because media[0] decides image_url; option values because
     //   XS,S,M,L is a size run and not a bag of labels.
+    // REDUNDANT, hashed only when the canonical array is absent:  price ·
+    //   imageUrl — and storeUrl, which is never hashed. See the block at the
+    //   end of this section: these are read off variants[0]/media[0]
+    //   POSITIONALLY, so hashing them let a reordering defeat the sorting.
     console.log('── what counts as a change ' + '─'.repeat(47))
     {
       const H = W.contentHash
@@ -337,11 +341,64 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
 
       // PRESERVATION — real merchant changes still register.
       for (const [label, o] of [
-        ['price', { price: 99 }], ['title', { title: 'Other' }], ['stock', { in_stock: false }],
+        ['title', { title: 'Other' }], ['stock', { in_stock: false }],
+        ['currency', { currency: 'INR' }],
         ['a tag added', { tags: [...base.tags, 'ss26'] }],
+        ['a variant repriced', { variants: [{ ...base.variants[0], price: 99 }, base.variants[1]] }],
         ['a variant sold out', { variants: [{ ...base.variants[0], availability: false }, base.variants[1]] }],
         ['a variant added', { variants: [...base.variants, { id: 'v3', title: 'L', price: 47.5, availability: true, options: [], media: [] }] }],
+        ['a photograph replaced', { media: [{ type: 'image', url: 'https://cdn/9.jpg', alt: 'a' }, base.media[1]] }],
       ]) check(w(o) !== h0, `a real change still moves it: ${label}`)
+
+      // ── THE SCALARS THE SORT COULD NOT REACH ────────────────────────────
+      //
+      // The `variants REORDERED` assertion above was true of the ARRAY and
+      // false of the product. (The tags, categories and options ones were
+      // always sound — nothing is read off those positionally.) parseProduct
+      // reads `price`, `currency` and `store_url` off `raw.variants[0]` and
+      // `image_url` off `raw.media[0]`, BEFORE anything here sorts anything. So
+      // a store sending the same unchanged garment with its variants the other
+      // way round arrived as a different price and a different URL, and the
+      // sorted `variants[]` proving nothing had changed could not stop the
+      // hash moving. Driving the real fan-out twice over one garment with only
+      // the variant order changed reproduced it: 4750 -> 6200.
+      //
+      // Hence: when the canonical array is present the scalar is already in
+      // the hash, so hashing it again adds only the instability. store_url is
+      // dropped outright — CanonicalProduct.variants carries no per-variant
+      // URL to fall back to, and identity has always said a URL is not one.
+      {
+        // The whole shape of the defect, in one assertion: the store reordered
+        // its variants, so parseProduct handed us the OTHER variant's price
+        // and URL. Same garment. Must be the same hash.
+        same(w({
+          variants: rev(base.variants),
+          price: 62,
+          store_url: 'https://k.com/p/1?variant=v2',
+        }), h0, 'variants reordered AND the positional scalars moved with them — same hash')
+
+        same(w({ price: 62 }), h0, '  the scalar price is not hashed while variants carry prices')
+        same(w({ store_url: 'https://k.com/elsewhere' }), h0, '  store_url is not hashed at all')
+        same(w({ image_url: 'https://cdn/2.jpg' }), h0, '  imageUrl is not hashed while media carries images')
+
+        // THE COST OF DROPPING store_url, asserted so it cannot be forgotten:
+        // a merchant that moves a product's URL and changes nothing else no
+        // longer registers. That is the trade this phase accepted.
+        same(w({ store_url: 'https://k.com/p/renamed' }), h0,
+          '  and a URL-only move is therefore NOT a change — the accepted cost')
+
+        // THE FALLBACKS. With no array to be redundant with, the scalar is the
+        // only thing there is and is hashed exactly as before.
+        const bare = { ...base, variants: [], media: [] }
+        const hb = H(bare)
+        check(H({ ...bare, price: 99 }) !== hb, 'with NO variants, the scalar price IS hashed')
+        check(H({ ...bare, image_url: 'https://cdn/9.jpg' }) !== hb, 'with NO media, imageUrl IS hashed')
+        same(H({ ...bare, store_url: 'https://k.com/elsewhere' }), hb, '  store_url stays out even then')
+
+        // And the redundancy is one-directional: emptying the array is itself a
+        // change, so a product cannot lose its variants unnoticed.
+        check(hb !== h0, 'losing every variant and photograph IS a change')
+      }
     }
 
     // ══════════════════════════════════════════════════════════════════════

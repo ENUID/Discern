@@ -193,7 +193,9 @@ export function corpusWriteObservation(): CorpusWriteObservation {
  * INCLUDED — every value a merchant states or that parseProduct derives from
  * one, in a fixed order:
  *
- *   title · vendor · price · currency · storeUrl · imageUrl · inStock
+ *   title · vendor · currency · inStock
+ *   price      ONLY when there are no variants — see REDUNDANT SCALARS
+ *   imageUrl   ONLY when there is no media    — see REDUNDANT SCALARS
  *   description · descriptionHtml · tags · categories
  *   options[]  { name, values[] }
  *   media[]    { type, url, alt }
@@ -211,6 +213,50 @@ export function corpusWriteObservation(): CorpusWriteObservation {
  *   relevance/judge/bm25      facts about one REQUEST.
  *   status                    derived from price and URL, which are already in
  *                             the hash; hashing it too would double-count.
+ *   storeUrl                  see REDUNDANT SCALARS.
+ *
+ * REDUNDANT SCALARS, and why hashing them made the hash wrong.
+ *
+ * The sorting below is defeated if a value was read off an array POSITIONALLY
+ * before the sort ran, and three were. parseProduct opens with
+ * `const variant = raw.variants?.[0] ?? {}` and reads `price`, `currency` and
+ * `store_url` off that one positional pick; `image_url` is `raw.media[0].url`.
+ * So a store returning the same unchanged garment with its variants the other
+ * way round produced a different `price`, a different `store_url`, a different
+ * hash, a spurious lastChangedAt and a full row rewrite — while `variants[]`,
+ * sorted by id, was byte-identical. Measured, not theorised: driving the real
+ * fan-out twice over one garment with only the variant order changed moved the
+ * hash, `price` 4750 -> 6200 and `store_url` from one variant's URL to
+ * another's. Sorting an array whose scalars have already been extracted from
+ * it buys nothing.
+ *
+ * The fix is not to canonicalise those scalars — that would mean changing
+ * which price a shopper is shown, which is a retrieval change and not this
+ * one's business. It is that WHEN THE ARRAY IS PRESENT THE SCALAR IS ALREADY
+ * IN THE HASH, twice over:
+ *
+ *   price      every variant's price is in the sorted variants[]. The scalar
+ *              is one of them, chosen by position. Hashed only when `variants`
+ *              is empty, where the scalar is the only price there is.
+ *   imageUrl   it IS media[0].url. Hashed only when `media` is empty.
+ *   storeUrl   dropped unconditionally, because there is no canonical
+ *              counterpart to fall back to: CanonicalProduct.variants does not
+ *              carry the per-variant URL. Identity already argues for this —
+ *              catalog/product.ts opens its identity note with "A URL is not
+ *              identity: parseProduct builds store_url three different ways
+ *              and one of them invents it from the domain and the id." THE
+ *              COST, stated rather than hidden: a merchant that changes ONLY a
+ *              product's URL, moving no price, title, image or stock, no
+ *              longer registers as a change.
+ *
+ * `currency` STAYS, positional though it is. A store quoting two currencies
+ * across one product's variants is pathological, and currency is the change
+ * most worth catching — it is how a localisation shift shows up at all.
+ *
+ * WHAT THIS DOES NOT FIX, and must not: reordering `media` still moves the
+ * hash. That is not a false positive. media[0] decides the photograph the
+ * shopper sees, so a store reordering it HAS changed the record. Dropping the
+ * redundant `imageUrl` removes the double-count, not the signal.
  *
  * DETERMINISM, in two halves.
  *
@@ -254,13 +300,31 @@ export function contentHash(p: CanonicalProduct): string {
   // that other requests are reading; hashing must never reorder them in place.
   const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
+  // Hoisted out of the literal below only so the two redundancy tests can ask
+  // whether the canonical array is there. Both are built exactly as they were.
+  const media = (p.media ?? []).map(m => ({ type: m.type, url: m.url, alt: m.alt ?? null }))
+  const variants = [...(p.variants ?? [])]
+    .map(v => ({
+      id: v.id,
+      title: v.title,
+      price: v.price,
+      availability: v.availability,
+      options: [...(v.options ?? [])]
+        .map(o => ({ name: o.name, label: o.label }))
+        .sort((a, b) => byText(a.name, b.name)),
+      media: (v.media ?? []).map(m => ({ url: m.url, alt: m.alt ?? null })),
+    }))
+    .sort((a, b) => byText(a.id, b.id))
+
   const content = {
     title: p.title,
     vendor: p.vendor,
-    price: p.price,
+    // null rather than an absent key, so the hashed shape is one fixed set of
+    // keys whatever a merchant sent. See REDUNDANT SCALARS above for why these
+    // two are conditional and why storeUrl is gone altogether.
+    price: variants.length > 0 ? null : p.price,
     currency: p.currency,
-    storeUrl: p.store_url,
-    imageUrl: p.image_url,
+    imageUrl: media.length > 0 ? null : p.image_url,
     inStock: p.in_stock,
     description: p.description ?? null,
     descriptionHtml: p.description_html ?? null,
@@ -269,19 +333,8 @@ export function contentHash(p: CanonicalProduct): string {
     options: [...(p.options ?? [])]
       .map(o => ({ name: o.name, values: o.values }))     // values NOT sorted
       .sort((a, b) => byText(a.name, b.name)),
-    media: (p.media ?? []).map(m => ({ type: m.type, url: m.url, alt: m.alt ?? null })),
-    variants: [...(p.variants ?? [])]
-      .map(v => ({
-        id: v.id,
-        title: v.title,
-        price: v.price,
-        availability: v.availability,
-        options: [...(v.options ?? [])]
-          .map(o => ({ name: o.name, label: o.label }))
-          .sort((a, b) => byText(a.name, b.name)),
-        media: (v.media ?? []).map(m => ({ url: m.url, alt: m.alt ?? null })),
-      }))
-      .sort((a, b) => byText(a.id, b.id)),
+    media,
+    variants,
   }
   return createHash('sha256').update(JSON.stringify(content)).digest('hex')
 }
