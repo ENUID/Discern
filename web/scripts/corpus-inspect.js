@@ -62,10 +62,16 @@ const C = build('.vt/corpus-inspect-entry.ts', 'corpus-inspect')
 // ── a database, just enough of one ──────────────────────────────────────────
 /** Records how the query actually read, so "bounded and index-based" is an
  *  observation rather than a claim about the source. */
-const reads = { withIndex: [], order: [], take: [], paginate: [], fullScans: 0 }
+const reads = { withIndex: [], order: [], take: [], paginate: [], deletes: 0, fullScans: 0 }
 
 function makeDb(rows) {
   return {
+    // Mutates the caller's array, so a prune actually removes rows and a second
+    // pass over the same fixture sees the result of the first.
+    delete: async (id) => {
+      const i = rows.findIndex(r => r._id === id)
+      if (i >= 0) { rows.splice(i, 1); reads.deletes++ }
+    },
     query: (table) => {
       const chain = {
         withIndex: (name) => { reads.withIndex.push(`${table}:${name}`); return chain },
@@ -83,10 +89,24 @@ function makeDb(rows) {
         paginate: async ({ numItems, cursor }) => {
           reads.paginate.push(numItems)
           const ordered = [...rows].sort((x, y) => (x._creationTime ?? 0) - (y._creationTime ?? 0))
-          const start = cursor === null || cursor === undefined ? 0 : Number(cursor)
-          const slice = ordered.slice(start, start + numItems)
-          const next = start + slice.length
-          return { page: slice, isDone: next >= ordered.length, continueCursor: String(next) }
+          // A KEY-BASED CURSOR, because that is what Convex actually hands out:
+          // it encodes the index key of the last row returned, and the next page
+          // is everything strictly after it. An OFFSET cursor would be a
+          // different system — under one, deleting rows inside a page shifts
+          // everything left and the next page skips exactly as many rows as were
+          // removed. This mock modelled an offset first and the prune tests
+          // caught it: six candidates counted, five deleted, one silently
+          // stepped over. The bug was in the model, not the mutation, but the
+          // failure is the real one a positional cursor would produce.
+          const after = cursor === null || cursor === undefined ? -Infinity : Number(cursor)
+          const remaining = ordered.filter(r => (r._creationTime ?? 0) > after)
+          const slice = remaining.slice(0, numItems)
+          const last = slice.length ? slice[slice.length - 1]._creationTime : after
+          return {
+            page: slice,
+            isDone: remaining.length <= numItems,
+            continueCursor: String(last),
+          }
         },
         // Anything that collects without a bound is a full scan, and the query
         // must never reach for one.
@@ -537,6 +557,158 @@ const row = (o) => ({
     same(clean.isDone, true, '  and still completes')
   }
 
+
+  // ── H. the cleanup: what it takes, and everything it refuses ─────────────
+  // The destructive counterpart to the dry run above, and it shares the
+  // predicate rather than restating it — the same keyShape the census counts
+  // with and upsertMany guards with. The assertions below are mostly about
+  // what it must NOT do.
+  console.log('\n── a deletion with five safeguards ' + '─'.repeat(39))
+  {
+    const prune = C.PRODUCTS && C.PRODUCTS.pruneLegacyRows && C.PRODUCTS.pruneLegacyRows._handler
+    check(typeof prune === 'function', 'the REAL products.pruneLegacyRows handler is what these tests run')
+
+    const CONFIRM = 'delete-legacy-rows'
+    /** A corpus that would trip a rule using EITHER predicate alone. */
+    const fixture = () => [
+      // 6 genuine candidates: legacy key AND no country.
+      ...Array.from({ length: 6 }, (_, i) => row({ key: `kith.com::L${i}`, sourceId: `L${i}` })),
+      // Legacy-SHAPED key but country-scoped. A key-only rule would take these.
+      row({ key: 'kith.com::T1', sourceId: 'T1', country: 'US' }),
+      row({ key: 'kith.com::T2', sourceId: 'T2', country: '--' }),
+      // Country undefined but a SCOPED key. A column-only rule would take these.
+      row({ key: 'kith.com::T3::US', sourceId: 'T3' }),
+      row({ key: 'kith.com::T4::US::EUR', sourceId: 'T4' }),
+      // Live rows, exactly as the writer produces them.
+      row({ key: 'kith.com::U1::US', sourceId: 'U1', country: 'US', requestedCurrency: 'USD' }),
+      row({ key: 'kith.com::E1::US::EUR', sourceId: 'E1', country: 'US', requestedCurrency: 'EUR' }),
+    ]
+    const run = (rows, args) => prune({ db: makeDb(rows) }, { adminSecret: ADMIN, ...args })
+    const walkPrune = async (rows, args = {}) => {
+      let cursor = null, deleted = 0, scanned = 0, calls = 0, done = false
+      for (let g = 0; g < 100; g++) {
+        const r = await run(rows, { confirm: CONFIRM, cursor, limit: 5, ...args })
+        calls++; deleted += r.deleted; scanned += r.scanned
+        if (r.isDone) { done = true; break }
+        cursor = r.cursor
+      }
+      return { deleted, scanned, calls, done }
+    }
+
+    // ── the gate ────────────────────────────────────────────────────────
+    const rows0 = fixture()
+    same(await prune({ db: makeDb(rows0) }, { adminSecret: 'wrong', confirm: CONFIRM, dryRun: false }),
+      null, 'a wrong operator secret gets null, and deletes nothing')
+    same(rows0.length, 12, '  the table is untouched')
+
+    // ── confirm ─────────────────────────────────────────────────────────
+    for (const [label, confirm] of [['missing', ''], ['wrong', 'yes'], ['near-miss', 'delete-legacy-row']]) {
+      const rows = fixture()
+      const r = await run(rows, { confirm, dryRun: false })
+      same(r.ok, false, `a ${label} confirm phrase refuses`)
+      same(r.deleted, 0, '  and deletes nothing')
+      same(rows.length, 12, '  the table is untouched')
+    }
+
+    // ── dryRun DEFAULTS TO TRUE ─────────────────────────────────────────
+    // The destructive call is the one you have to ask for.
+    {
+      const rows = fixture()
+      const r = await run(rows, { confirm: CONFIRM })     // no dryRun given
+      same(r.dryRun, true, 'dryRun DEFAULTS to true when it is not passed')
+      same(rows.length, 12, '  so a confirmed call still deletes nothing')
+      check(r.deleted > 0, '  while still counting what it would take', String(r.deleted))
+      const explicit = await run(fixture(), { confirm: CONFIRM, dryRun: undefined })
+      same(explicit.dryRun, true, '  and an explicit undefined is still a dry run')
+    }
+
+    // ── the dry run and the real run agree, because it is one loop ───────
+    {
+      const dry = await walkPrune(fixture(), { dryRun: true })
+      const rows = fixture()
+      const real = await walkPrune(rows, { dryRun: false })
+      same(dry.deleted, 6, 'the dry run counts exactly the six candidates')
+      same(real.deleted, 6, '  and the real run deletes exactly the same six')
+      same(dry.deleted, real.deleted, '  the two cannot disagree — same loop, same predicate')
+      same(rows.length, 6, '  six of twelve rows survive')
+
+      // And it agrees with the census, which is the number an operator reads
+      // BEFORE deciding. Three counts, one predicate.
+      const c = await walkCensus(fixture(), 5)
+      same(c.wouldDelete, dry.deleted, 'the census wouldDelete equals the prune dry run')
+    }
+
+    // ── what it must never take ─────────────────────────────────────────
+    {
+      const rows = fixture()
+      await walkPrune(rows, { dryRun: false })
+      const left = rows.map(r => r.key).sort()
+      same(left.length, 6, 'six survivors')
+      check(!left.some(k => /::L\d/.test(k)), '  no candidate survived')
+      check(left.includes('kith.com::T1') && left.includes('kith.com::T2'),
+        'a legacy-SHAPED key with a country is NOT deleted — a key-only rule would have taken it')
+      check(left.includes('kith.com::T3::US') && left.includes('kith.com::T4::US::EUR'),
+        'a scoped key with no country is NOT deleted — a column-only rule would have taken it')
+      check(left.includes('kith.com::U1::US') && left.includes('kith.com::E1::US::EUR'),
+        'no row carrying a requestedCurrency is deleted')
+    }
+
+    // WHY a requestedCurrency row can never be a candidate, from the writer
+    // rather than from this fixture: corpusWriter.toRow sets
+    // `country: p.source.country ?? UNKNOWN_COUNTRY`, unconditionally and for
+    // every row it emits. So requestedCurrency defined implies country defined,
+    // which the second condition excludes. The census counts the violation
+    // anyway — candidatesCarryingRequestedCurrency — because a structural
+    // argument is worth having a live counter behind it.
+    {
+      const writer = fs.readFileSync(path.join(WEB, 'lib/services/corpusWriter.ts'), 'utf8')
+      check(/country: p\.source\.country \?\? UNKNOWN_COUNTRY/.test(writer),
+        'the writer always records a country, so a requestedCurrency row always has one')
+    }
+
+    // ── survivors are not edited ────────────────────────────────────────
+    // A cleanup that patched a surviving row would move lastChangedAt, which is
+    // the signal three phases went into making trustworthy.
+    {
+      const rows = fixture()
+      const before = JSON.stringify(rows.filter(r => !/::L\d$/.test(r.key)))
+      await walkPrune(rows, { dryRun: false })
+      same(JSON.stringify(rows), before, 'every surviving row is byte-identical afterwards')
+    }
+
+    // ── bounded, resumable, idempotent ──────────────────────────────────
+    {
+      const huge = await run(fixture(), { confirm: CONFIRM, limit: 1e9 })
+      check(huge.scanned <= 500, 'a caller cannot ask for an unbounded batch', String(huge.scanned))
+
+      const rows = fixture()
+      const first = await walkPrune(rows, { dryRun: false })
+      same(first.done, true, 'the traversal reports done')
+      check(first.calls > 1, '  across more than one bounded call', String(first.calls))
+      same(first.scanned, 12, '  having scanned every row exactly once')
+      const second = await walkPrune(rows, { dryRun: false })
+      same(second.deleted, 0, 'running it again deletes nothing — it is idempotent')
+      same(rows.length, 6, '  and the survivors are still there')
+
+      const emptyRun = await walkPrune([], { dryRun: false })
+      same(emptyRun.deleted, 0, 'an empty corpus deletes nothing and still completes')
+      same(emptyRun.done, true, '  and reports done')
+    }
+
+    // ── it only ever deletes ────────────────────────────────────────────
+    {
+      const src = fs.readFileSync(path.join(WEB, 'convex/products.ts'), 'utf8')
+      const body = src.slice(src.indexOf('export const pruneLegacyRows = mutation('))
+      check(!/ctx\.db\.(insert|patch|replace)/.test(body),
+        'pruneLegacyRows never inserts, patches or replaces — it only deletes')
+      check(/keyShape\(r\.key, r\.merchant, r\.sourceId\) !== "legacy"/.test(body),
+        '  and it reuses the census predicate rather than restating it')
+      check(/r\.country !== undefined/.test(body), '  with the country condition beside it')
+      check(/\.paginate\(\{ numItems, cursor/.test(body), '  paginating by the immutable order')
+      check(!/withIndex\("by_last_seen"\)/.test(body), '  never by a mutable index')
+    }
+  }
+
   const convexSrc = fs.readFileSync(path.join(WEB, 'convex/products.ts'), 'utf8')
   const exported = (convexSrc.match(/export\s+const\s+(\w+)\s*=\s*(query|mutation)\(/g) || [])
     .map(m => m.replace(/export\s+const\s+/, '').replace(/\s*=\s*/, ' = '))
@@ -545,8 +717,8 @@ const row = (o) => ({
   // could reach. Naming them means a new export has to be added here on
   // purpose, and the two reads are separately proven admin-gated below.
   same(exported.join(' · '),
-    'upsertMany = mutation( · inspect = query( · census = query(',
-    'products.ts exports exactly these three functions')
+    'upsertMany = mutation( · inspect = query( · census = query( · pruneLegacyRows = mutation(',
+    'products.ts exports exactly these four functions')
 
   // Every query is behind the admin gate. `upsertMany` has its own server
   // secret; what must never happen is a READ that has neither.

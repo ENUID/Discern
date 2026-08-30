@@ -261,6 +261,14 @@ const CENSUS_PAGE = 1000;
  *  to be a data export. */
 const CENSUS_SAMPLE_KEYS = 5;
 
+/** One prune batch. Bounded like pruneOldEvents in retention.ts, which is the
+ *  repository's existing answer to "a destructive sweep must not be one call". */
+const PRUNE_BATCH = 500;
+/** Said out loud, or nothing happens. A stray or replayed invocation that omits
+ *  it deletes nothing, and the phrase names what it does rather than being a
+ *  boolean somebody could pass by accident. */
+const PRUNE_CONFIRM = "delete-legacy-rows";
+
 function idShapeOf(id: string): "gid" | "numeric" | "other" {
   if (id.startsWith("gid://")) return "gid";
   return /^\d+$/.test(id) ? "numeric" : "other";
@@ -556,6 +564,93 @@ export const census = query({
         ? { firstSeen: { min: firstSeenMin, max: firstSeenMax },
             lastSeen: { min: lastSeenMin, max: lastSeenMax } }
         : null,
+    };
+  },
+});
+
+// ── The cleanup ─────────────────────────────────────────────────────────────
+/**
+ * DELETE THE PRE-SCOPING ROWS, AND NOTHING ELSE.
+ *
+ * 1,082 rows were written before country scoping existed. They carry
+ * merchant::sourceId and no country; that country was never recorded and is
+ * not recoverable, so they can never be compared to anything, never matched by
+ * a write, and never read by a shopper. They are inert, permanent, and they
+ * occupy the inspection window that would otherwise show the live corpus.
+ *
+ * FIVE SAFEGUARDS, each doing a different job:
+ *
+ *   dryRun DEFAULTS TO TRUE     the destructive call is the one you have to
+ *                               ask for. Counting and deleting run through the
+ *                               SAME loop, so what a dry run promises is
+ *                               arithmetically what a real run does — not a
+ *                               second implementation that could disagree.
+ *   confirm                     an explicit phrase; see PRUNE_CONFIRM.
+ *   BOTH PREDICATES             legacy-shaped key AND no country column.
+ *                               Either alone would be sufficient — the live
+ *                               census proved the two select the same 1,082
+ *                               rows — so requiring both means one wrong
+ *                               predicate cannot reach a live row.
+ *   THE SAME keyShape           the helper the census counts with and
+ *                               upsertMany guards with. One definition, three
+ *                               call sites: the predicate that counted cannot
+ *                               drift from the predicate that deletes.
+ *   BOUNDED AND RESUMABLE       PRUNE_BATCH per call, cursor in, cursor out.
+ *
+ * PAGINATED BY _creationTime, for the reason census gives: lastSeenAt mutates
+ * under an active writer and a row that moves mid-traversal can be skipped.
+ * (`paginate` warns that a REACTIVE query may return more than numItems. A
+ * mutation is not reactive, so the bound here is exact.)
+ *
+ * IT ONLY EVER DELETES. There is no patch, insert or replace in this function
+ * and there must never be one: a cleanup that edits a surviving row would move
+ * lastChangedAt, which is the signal three phases of work went into making
+ * trustworthy. The post-deletion check is that lastChangedAt.max is unmoved.
+ */
+export const pruneLegacyRows = mutation({
+  args: {
+    adminSecret: v.string(),
+    confirm: v.string(),
+    dryRun: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    if (!verifyAdminSecret(args.adminSecret)) return null;
+
+    // Not "allowed but wrong" folded into "not allowed": null above means the
+    // caller may not invoke this at all, and this means they may, but did not
+    // say so. An operator reading a result can tell the two apart.
+    if (args.confirm !== PRUNE_CONFIRM) {
+      return { ok: false, reason: "confirm-required", dryRun: true,
+               deleted: 0, scanned: 0, isDone: false, cursor: null };
+    }
+
+    // ?? not ||, so `dryRun: false` is the only way to reach a delete.
+    const dryRun = args.dryRun ?? true;
+    const numItems = Math.max(1, Math.min(args.limit ?? PRUNE_BATCH, PRUNE_BATCH));
+
+    const { page, isDone, continueCursor } = await ctx.db
+      .query("products")
+      .paginate({ numItems, cursor: args.cursor ?? null });
+
+    let deleted = 0;
+    for (const r of page) {
+      if (keyShape(r.key, r.merchant, r.sourceId) !== "legacy") continue;
+      if (r.country !== undefined) continue;
+      if (!dryRun) await ctx.db.delete(r._id);
+      deleted++;
+    }
+
+    return {
+      ok: true,
+      dryRun,
+      // On a dry run this is what WOULD go; on a real run it is what did. Same
+      // loop, same predicate, so the two runs cannot disagree.
+      deleted,
+      scanned: page.length,
+      isDone,
+      cursor: isDone ? null : continueCursor,
     };
   },
 });

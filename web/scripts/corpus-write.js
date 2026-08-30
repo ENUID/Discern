@@ -1309,8 +1309,15 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     const mutations_ = convexSrc.match(/export\s+const\s+(\w+)\s*=\s*mutation\s*\(/g) || []
     const queries_ = convexSrc.match(/export\s+const\s+(\w+)\s*=\s*query\s*\(/g) || []
     const named = (a) => a.map(m => m.replace(/export\s+const\s+/, '').replace(/\s*=.*/, ''))
-    same(mutations_.length, 1, 'products.ts exports exactly ONE mutation', named(mutations_).join(','))
-    same(named(mutations_)[0], 'upsertMany', '  and it is upsertMany')
+    // Two mutations now, and the second one deletes — so it is named here for
+    // the same reason the reads are: a write that reaches the corpus has to be
+    // added to this list deliberately. pruneLegacyRows is held to its own
+    // properties in corpus-inspect.js section H.
+    same(named(mutations_).join(','), 'upsertMany,pruneLegacyRows',
+      'products.ts exports exactly TWO mutations, both named', named(mutations_).join(','))
+    check(/verifyAdminSecret\(args\.adminSecret\)/.test(
+      convexSrc.slice(convexSrc.indexOf('export const pruneLegacyRows = mutation('))),
+      '  and the destructive one is behind the ADMIN secret, not the server one')
     // THE SET, NOT THE COUNT. This pinned `length === 1`, which is the weaker
     // claim: it passes for any single query, including one a shopper could
     // reach. Naming them means a new read has to be added here deliberately,
