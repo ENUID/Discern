@@ -21,7 +21,52 @@ const FALLBACK_RATES: ExchangeRates = {
   PKR: 278, BDT: 110, NGN: 1580, KES: 130, GHS: 15.0,
 }
 
-// ── Source 1: open.er-api.com (free, 1500 req/month) ─────────────────────────
+/**
+ * THE CURRENCIES THIS APPLICATION CLAIMS TO SUPPORT.
+ *
+ * Derived from FALLBACK_RATES rather than written out again, so there is one
+ * list and it cannot drift: a currency the app cannot price in is a currency
+ * the app does not support.
+ *
+ * WHY A CLOSED SET EXISTS AT ALL. The requested currency is caller-supplied —
+ * four routes read it straight off a request body, and `parseBudget` lifts one
+ * out of a shopper's typed sentence ("under €200"). It is then sent to every
+ * merchant as `context.currency`, and the corpus files an observation under it.
+ * Both of those need a bounded vocabulary: an unbounded one would let a caller
+ * mint unlimited corpus rows and hand arbitrary strings to 458 third-party
+ * stores. This set is versioned in git and no request can extend it.
+ */
+export const SUPPORTED_CURRENCIES: ReadonlySet<string> = new Set(Object.keys(FALLBACK_RATES))
+
+/** The currency assumed when a caller names none. Matches normalizeCurrency's
+ *  own default and every route's default, so "absent" and "USD" stay the same
+ *  observation rather than becoming two. */
+export const DEFAULT_REQUESTED_CURRENCY = 'USD'
+
+/**
+ * WHAT WE ASKED THE MERCHANT TO QUOTE IN — or nothing, if we cannot name it.
+ *
+ * Three outcomes, and the third is the point:
+ *
+ *   absent / empty   -> 'USD'   the app's default; unchanged from before
+ *   supported        -> itself  upper-cased and trimmed
+ *   anything else    -> null    UNNAMEABLE
+ *
+ * `null` is not "USD". It means this observation was made under a context the
+ * app cannot name, so `context.currency` is omitted from the store call (the
+ * merchant quotes its own default) and the corpus declines to file the
+ * observation at all. Filing it would mean labelling a row with a context we
+ * could not describe, which is the failure this whole phase exists to remove.
+ *
+ * NOT used for the currency a merchant ANSWERS with. That value is the
+ * merchant speaking and is recorded verbatim by normalizeCurrency; allow-
+ * listing it would silently rewrite what a store told us.
+ */
+export function resolveRequestedCurrency(raw?: string | null): string | null {
+  const s = String(raw ?? '').trim().toUpperCase()
+  if (!s) return DEFAULT_REQUESTED_CURRENCY
+  return SUPPORTED_CURRENCIES.has(s) ? s : null
+}
 async function fetchOpenErApi(): Promise<ExchangeRates> {
   const res = await fetch('https://open.er-api.com/v6/latest/USD', {
     next: { revalidate: 3600 },

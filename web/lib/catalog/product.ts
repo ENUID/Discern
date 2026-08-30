@@ -111,6 +111,28 @@ export type ProductProvenance = Readonly<{
    * corpusWriter.toRow.
    */
   country: string | null
+  /**
+   * THE CURRENCY WE ASKED THE MERCHANT TO QUOTE IN, or null when the request
+   * named one this app does not support.
+   *
+   * The sibling of `country`, and for the same reason. GlobalCatalogService
+   * sends `currency` alongside `address_country` as a buyer signal, and the
+   * comment there covers both: "The store localises its own prices and
+   * availability from these." So `price` and `currency` are answers to a
+   * question that included a currency, and two observations of one garment
+   * under two requested currencies are two different observations.
+   *
+   * WHAT WE SENT, NOT WHAT CAME BACK. `currency` on the product is the
+   * merchant's answer and merchants disagree about it under identical
+   * requests — which is exactly why identity must not key on it. This is our
+   * own question: one value per request, identical across every merchant in a
+   * fan-out, and drawn from a closed set.
+   *
+   * NOT part of `key`. productKey stays merchant::sourceId; the corpus scopes
+   * its OWN row key by this, and only when it is not the default. See
+   * corpusWriter.corpusRowKey.
+   */
+  requestedCurrency: string | null
 }>
 
 /**

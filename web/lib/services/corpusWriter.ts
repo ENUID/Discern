@@ -23,6 +23,7 @@ import { ConvexHttpClient } from 'convex/browser'
 import { anyApi } from 'convex/server'
 import { createHash } from 'crypto'
 import { BoundedCache } from '../boundedCache'
+import { DEFAULT_REQUESTED_CURRENCY } from '../exchangeRates'
 import type { CanonicalProduct } from '../catalog/product'
 
 /** On by default: an empty corpus is the thing this exists to fix. Set
@@ -388,6 +389,11 @@ type Row = {
   // the fields above: the rows written before this existed carry none, and
   // their country was never recorded and is not recoverable.
   country?: string
+  // The currency we ASKED the merchant to quote in. Stored on every row, not
+  // only on the ones whose key carries it, so a reader can tell a USD
+  // observation from a row written before the field existed without inferring
+  // it from the key's shape. Optional for the same reason as the fields above.
+  requestedCurrency?: string
 }
 
 /** No country was recorded. Two characters, and deliberately not a country:
@@ -404,18 +410,44 @@ export const UNKNOWN_COUNTRY = '--'
  * the corpus's own key, and the extra segment is the difference between a
  * garment and an observation of a garment.
  *
- * WHY COUNTRY AND NOT CURRENCY. Country is what we send; currency is what
- * comes back. Merchants disagree about the second under an identical request —
- * cdlp.com answered USD in the same burst that judithandcharles.com and
- * nanushka.com answered INR — so keying on the answer would let one store's
- * localisation policy fragment identity while another's did not. Country also
- * governs availability, which currency cannot express at all.
+ * WHY THE COUNTRY WE SENT AND NOT THE CURRENCY THAT CAME BACK. Merchants
+ * disagree about the answer under an identical request — cdlp.com answered USD
+ * in the same burst that judithandcharles.com and nanushka.com answered INR —
+ * so keying on the answer would let one store's localisation policy fragment
+ * identity while another's did not. Country also governs availability, which
+ * currency cannot express at all.
+ *
+ * AND A FOURTH SEGMENT, FOR THE CURRENCY WE ASKED IN:
+ *
+ *   merchant::sourceId::COUNTRY                 requested USD, or unrecorded
+ *   merchant::sourceId::COUNTRY::CURRENCY       any other requested currency
+ *
+ * The objection above does not apply to it, because this is our own question
+ * rather than the shop's answer: one value per request, identical across every
+ * merchant in a fan-out, and drawn from SUPPORTED_CURRENCIES — a closed set
+ * versioned in git that no caller can extend. `currency` sent alongside
+ * `address_country` is a buyer signal the store localises from, so two
+ * observations under two requested currencies are two observations, and
+ * collapsing them let a shopper who typed "under €200" rewrite the price
+ * everyone else had observed in dollars.
+ *
+ * THE DEFAULT IS ABSENT, NOT SPELLED OUT, and that is the whole reason this
+ * shape was chosen over a plain four-segment key. Every row the corpus already
+ * holds was written under a requested USD — the browse path has no way to send
+ * anything else — so omitting the segment for USD keeps every one of those
+ * rows addressable by the path that wrote them. A four-segment key would have
+ * orphaned all of them and started a third dead generation, which is a cost
+ * this phase declined to pay. A product parsed before the field existed has
+ * `undefined` here and lands on the same three-segment key, which is the same
+ * decision read from the other direction.
  *
  * Appended, never restructured: segment 0 is still the merchant, so anything
  * reading the first segment still reads the merchant.
  */
 export function corpusRowKey(p: CanonicalProduct): string {
-  return `${p.key}::${p.source.country ?? UNKNOWN_COUNTRY}`
+  const base = `${p.key}::${p.source.country ?? UNKNOWN_COUNTRY}`
+  const cur = p.source.requestedCurrency
+  return !cur || cur === DEFAULT_REQUESTED_CURRENCY ? base : `${base}::${cur}`
 }
 
 function toRow(p: CanonicalProduct): Row | null {
@@ -425,6 +457,17 @@ function toRow(p: CanonicalProduct): Row | null {
   // search_cache, whose rows were parsed by whatever code was deployed when
   // they were written and predate provenance entirely.
   if (!p?.key || !p.source?.merchant || !p.source?.sourceId) return null
+
+  // A CONTEXT THIS CORPUS CAN NAME, or nothing. `null` here is not "USD" — it
+  // is a request that named a currency the app does not support, so the store
+  // was told none and there is no honest label for the observation. The write
+  // seam already declines to offer these; this is the same refusal stated
+  // where the row is built, so the rule holds for any future caller too.
+  //
+  // `undefined` is a DIFFERENT answer and passes: it means the product was
+  // parsed before this field existed, and those rows keep their existing
+  // three-segment key rather than being re-filed.
+  if (p.source.requestedCurrency === null) return null
 
   return {
     key: corpusRowKey(p),
@@ -463,6 +506,11 @@ function toRow(p: CanonicalProduct): Row | null {
     // are two rows whose hashes are never compared. Putting it in the hash
     // would rewrite every row and buy nothing.
     country: p.source.country ?? UNKNOWN_COUNTRY,
+    // NOT in contentHash, for the same reason country is not: the key already
+    // separates requested currencies, so two of them are two rows whose hashes
+    // are never compared. Hashing it would rewrite every row and buy nothing.
+    // Sent for every row including the USD ones, whose key omits it.
+    requestedCurrency: p.source.requestedCurrency ?? undefined,
   }
 }
 

@@ -180,7 +180,7 @@ const product = (o) => ({
   variants: (o.variants ?? [{ id: `v-${o.id}`, price: o.price ?? 475000, available: o.available !== false }])
     .map(v => ({
       id: v.id, title: v.title ?? 'M', available: v.available !== false,
-      price: { amount: v.price ?? 475000, currency: 'USD' },
+      price: { amount: v.price ?? 475000, currency: o.currency ?? 'USD' },
       url: o.url ?? `https://${o.host ?? 'kith.com'}/products/${String(o.id).replace(/[^a-z0-9]/gi, '')}`,
     })),
 })
@@ -201,7 +201,12 @@ function installFetch(perDomain, convexBase) {
     }
     if (/\/api\/mcp$/.test(url)) {
       const domain = new URL(url).hostname
-      return new Response(ucpBody(perDomain(domain) || []), {
+      // The buyer context this very request put on the wire, handed to the
+      // fixture so it can localise its answer the way a real store does.
+      // Existing fixtures take one argument and ignore it.
+      let ctx = {}
+      try { ctx = JSON.parse(init.body)?.params?.arguments?.catalog?.context ?? {} } catch {}
+      return new Response(ucpBody(perDomain(domain, ctx) || []), {
         status: 200, headers: { 'content-type': 'application/json' } })
     }
     if (url.includes('cdn.shopify.com')) return new Response('no', { status: 404 })
@@ -266,8 +271,14 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
   // changing shape.
   const K = (merchant, id, cc = 'US') => `${merchant}::${id}::${cc}`
 
+  // THE SHAPE THAT ACTUALLY WRITES. `rerankQuery` is deliberately undefined:
+  // it becomes storeCtx.intent, and an observation carrying free-form intent is
+  // no longer filed at all (see the write seam in GlobalCatalogService). The
+  // browse/featured path passes none, and it is the path that produced every
+  // scoped row the corpus holds — so this is what the corpus tests must drive.
+  // The refusal itself is asserted in section 0c.
   const search = (q, domains, currency = 'USD') => C.GlobalCatalogService.search(
-    q, undefined, [], 'US', true, [], 'relevance', currency, {}, domains, undefined, q, null, null)
+    q, undefined, [], 'US', true, [], 'relevance', currency, {}, domains, undefined, undefined, null, null)
 
   const obs = () => (typeof W.corpusWriteObservation === 'function' ? W.corpusWriteObservation() : null)
   const flat = (o) => o && JSON.parse(JSON.stringify(o))
@@ -710,8 +721,8 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     // The corpus now files an OBSERVATION, not just a garment.
     // ══════════════════════════════════════════════════════════════════════
     console.log('\n── one garment, two countries ' + '─'.repeat(44))
-    const searchCC = (q, domains, cc) => C.GlobalCatalogService.search(
-      q, undefined, [], cc, true, [], 'relevance', 'USD', {}, domains, undefined, q, null, null)
+    const searchCC = (q, domains, cc, currency = 'USD') => C.GlobalCatalogService.search(
+      q, undefined, [], cc, true, [], 'relevance', currency, {}, domains, undefined, undefined, null, null)
 
     const XC = 'gid://shopify/Product/XCOUNTRY'
     installFetch(d => (d === 'kith.com' ? [product({ id: XC })] : []), convexBase)
@@ -786,6 +797,195 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
       const legacyAfter = Array.from(rows.values()).find(r => r.key === 'kith.com::legacy-1')
       same(legacyAfter.contentHash, 'legacy-hash', '  the legacy row is untouched')
       same(legacyAfter.country, undefined, '  and no country was invented for it')
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 6d. ONE GARMENT, ONE COUNTRY, TWO REQUESTED CURRENCIES
+    // ══════════════════════════════════════════════════════════════════════
+    // Country was only half the observation context. `currency` goes to the
+    // store in the same `context` block as `address_country`, and the comment
+    // there covers both: "The store localises its own prices and availability
+    // from these." So a shopper who typed "under EUR 200" asked a DIFFERENT
+    // question about the same garment, and before this section the answer
+    // overwrote the dollar one and read as a price cut.
+    //
+    // WHAT WE ASKED, NOT WHAT CAME BACK. The fixture below localises exactly
+    // as a real store does, and the identity assertions are written against
+    // the request rather than the response — a merchant that changes its mind
+    // about the currency it quotes must not move a garment to a new row.
+    console.log('\n── one garment, two requested currencies ' + '─'.repeat(34))
+    {
+      const XCUR = 'gid://shopify/Product/XCURRENCY'
+      const searchCur = (q, domains, currency) => C.GlobalCatalogService.search(
+        q, undefined, [], 'US', true, [], 'relevance', currency, {}, domains,
+        undefined, undefined, null, null)
+
+      const PRICES = { USD: 475000, EUR: 427500, GBP: 380000 }
+      installFetch((d, ctx) => {
+        if (d !== 'kith.com') return []
+        const cur = (ctx && ctx.currency) || 'USD'
+        return [product({ id: XCUR, currency: cur, price: PRICES[cur] ?? PRICES.USD })]
+      }, convexBase)
+
+      const kUS = `kith.com::${XCUR}::US`
+      const kEUR = `${kUS}::EUR`
+      const kGBP = `${kUS}::GBP`
+
+      // ── requested USD keeps the EXISTING three-segment key ──────────────
+      // The load-bearing property of this design. Every row the corpus already
+      // holds was written under a requested USD, so the default must not grow a
+      // segment or all of them are orphaned.
+      const before = store.size
+      await searchCur(nextQuery(), ['kith.com'], 'USD'); await settle()
+      const usd1 = { ...store.get(kUS) }
+      check(!!usd1.key, 'requested USD keeps the three-segment key', kUS)
+      same(usd1.key.split('::').length, 3, '  three segments, not four')
+      same(usd1.requestedCurrency, 'USD', '  and the requested currency is still recorded as a column')
+      same(store.size, before + 1, '  one row')
+
+      // A second identical observation reuses it and changes nothing.
+      await searchCur(nextQuery(), ['kith.com'], 'USD'); await settle()
+      same(store.size, before + 1, 'a second USD observation adds no row')
+      same(store.get(kUS).contentHash, usd1.contentHash, '  the hash is unchanged')
+      same(store.get(kUS).lastChangedAt, usd1.lastChangedAt, '  and lastChangedAt does not move')
+
+      // ── a different requested currency is a different observation ───────
+      await searchCur(nextQuery(), ['kith.com'], 'EUR'); await settle()
+      const eur = { ...store.get(kEUR) }
+      check(!!eur.key, 'requested EUR mints a FOURTH segment', kEUR)
+      same(eur.key.split('::').length, 4, '  four segments')
+      same(eur.requestedCurrency, 'EUR', '  recording what we asked')
+      same(eur.country, 'US', '  under the same country')
+      same(store.size, before + 2, '  and it is a NEW row')
+
+      // The defect this phase exists to remove, asserted directly.
+      const usdAfterEur = store.get(kUS)
+      same(usdAfterEur.contentHash, usd1.contentHash, 'the USD row is NOT rewritten by the EUR observation')
+      same(usdAfterEur.lastChangedAt, usd1.lastChangedAt, '  its lastChangedAt is untouched')
+      same(usdAfterEur.price, usd1.price, '  and it still holds the dollar price')
+      check(eur.price !== usd1.price, '  while the EUR row holds its own', `${usd1.price} vs ${eur.price}`)
+
+      // ── a third currency is independent of both ─────────────────────────
+      await searchCur(nextQuery(), ['kith.com'], 'GBP'); await settle()
+      const gbp = { ...store.get(kGBP) }
+      check(!!gbp.key, 'requested GBP mints its own row', kGBP)
+      same(store.size, before + 3, '  three rows for one garment in one country')
+      same(store.get(kUS).lastChangedAt, usd1.lastChangedAt, '  the USD row is still untouched')
+      same(store.get(kEUR).lastChangedAt, eur.lastChangedAt, '  and so is the EUR row')
+
+      // ── repeating a context reuses only its own row ─────────────────────
+      await searchCur(nextQuery(), ['kith.com'], 'EUR'); await settle()
+      same(store.size, before + 3, 'repeating EUR adds no row')
+      same(store.get(kEUR).contentHash, eur.contentHash, '  and reuses only the EUR row')
+      same(store.get(kUS).lastChangedAt, usd1.lastChangedAt, '  the other two stay untouched')
+      same(store.get(kGBP).lastChangedAt, gbp.lastChangedAt, '  both of them')
+
+      // ── identity keys on the QUESTION, not the ANSWER ───────────────────
+      // A store that starts quoting a different currency under an unchanged
+      // request has changed its answer, which is content — a real change on the
+      // SAME row, never a move to a new one. This is the distinction Phase 4
+      // named when it refused to key on the response.
+      installFetch((d) => (d === 'kith.com'
+        ? [product({ id: XCUR, currency: 'INR', price: 39425000 })] : []), convexBase)
+      await searchCur(nextQuery(), ['kith.com'], 'USD'); await settle()
+      same(store.size, before + 3, 'a merchant answering in another currency mints NO row')
+      const flipped = store.get(kUS)
+      same(flipped.requestedCurrency, 'USD', '  the row is still filed under what we asked')
+      same(flipped.currency, 'INR', '  while recording what the shop answered')
+      check(flipped.contentHash !== usd1.contentHash, '  and the answer changing IS a content change')
+      check(flipped.lastChangedAt > usd1.lastChangedAt, '  so lastChangedAt moves, correctly')
+
+      // ── a real change inside one context still behaves normally ─────────
+      installFetch((d, ctx) => {
+        if (d !== 'kith.com') return []
+        const cur = (ctx && ctx.currency) || 'USD'
+        return [product({ id: XCUR, currency: cur, price: cur === 'EUR' ? 999900 : PRICES[cur], available: cur !== 'EUR' })]
+      }, convexBase)
+      await searchCur(nextQuery(), ['kith.com'], 'EUR'); await settle()
+      const eurMoved = store.get(kEUR)
+      check(eurMoved.contentHash !== eur.contentHash, 'a price and stock change inside ONE context still moves the hash')
+      check(eurMoved.lastChangedAt > eur.lastChangedAt, '  and lastChangedAt with it')
+      same(eurMoved.inStock, false, '  the new availability is stored')
+      same(store.get(kGBP).lastChangedAt, gbp.lastChangedAt, '  and no other context is disturbed')
+
+      // ── country and currency are independent dimensions ─────────────────
+      installFetch((d, ctx) => {
+        if (d !== 'kith.com') return []
+        const cur = (ctx && ctx.currency) || 'USD'
+        return [product({ id: XCUR, currency: cur, price: PRICES[cur] ?? PRICES.USD })]
+      }, convexBase)
+      const beforeGB = store.size
+      await C.GlobalCatalogService.search(nextQuery(), undefined, [], 'GB', true, [], 'relevance',
+        'EUR', {}, ['kith.com'], undefined, undefined, null, null)
+      await settle()
+      const gbEur = store.get(`kith.com::${XCUR}::GB::EUR`)
+      check(!!gbEur, 'GB + EUR is its own row', `kith.com::${XCUR}::GB::EUR`)
+      same(store.size, beforeGB + 1, '  one more row, not a rewrite of US::EUR')
+      same(store.get(kEUR).lastChangedAt, eurMoved.lastChangedAt, '  US::EUR is untouched by it')
+
+      // ── the key cannot become a caller-controlled string ────────────────
+      // `buyerCurrency` is read straight off four request bodies and lifted out
+      // of a shopper's sentence by parseBudget, so an unbounded key segment
+      // would be an unbounded row-minting primitive. It is resolved against
+      // SUPPORTED_CURRENCIES first: anything else is UNNAMEABLE, the store is
+      // told no currency at all, and the observation is not filed.
+      const beforeJunk = store.size
+      let junkPages = 0
+      for (const junk of ['ZZZ', 'NOTACURRENCY', 'US D', '../../etc', '']) {
+        const page = await searchCur(nextQuery(), ['kith.com'], junk); await settle()
+        if (page.length > 0) junkPages++
+      }
+      // LOAD-BEARING: "no row was written" is also what a thrown exception
+      // looks like. The shopper's page must still be served — refusing to FILE
+      // an observation is not refusing to answer.
+      same(junkPages, 5, 'an unsupported currency still returns a page to the shopper')
+      same(store.size, beforeJunk, '  but writes NO row at all')
+      check(!store.keys().some(k => k.split('::').length > 4),
+        '  and no key anywhere grew a fifth segment')
+      check(!store.keys().some(k => /ZZZ|NOTACURRENCY|etc/.test(k)),
+        '  no caller string ever reached a key')
+      // The empty string is the app's own default, so it is nameable and DOES
+      // write — to the existing USD row, which is the point of the default.
+      same(store.get(kUS).requestedCurrency, 'USD', '  an absent currency is USD, not unnameable')
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 6e. AN OBSERVATION THE CORPUS CANNOT NAME IS NOT FILED
+    // ══════════════════════════════════════════════════════════════════════
+    // Five buyer signals reach the merchant and the store localises from them.
+    // Two are now in the key. The other two cannot be, because neither is drawn
+    // from a closed set: `intent` is the shopper's own sentence and
+    // `filters.price.max` is an arbitrary number. A pool fetched under either
+    // answers a NARROWER question than "what does this shop sell", and filing
+    // it under the unqualified key would let one shopper's budget rewrite the
+    // catalogue everyone else observed. They are dropped, not collapsed.
+    console.log('\n── an observation we cannot name is not filed ' + '─'.repeat(29))
+    {
+      const XN = 'gid://shopify/Product/XNAMEABLE'
+      installFetch(d => (d === 'kith.com' ? [product({ id: XN })] : []), convexBase)
+      const kN = `kith.com::${XN}::US`
+
+      // Free-form intent — the 12th argument, which becomes storeCtx.intent.
+      const beforeIntent = store.size
+      await C.GlobalCatalogService.search(nextQuery(), undefined, [], 'US', true, [], 'relevance',
+        'USD', {}, ['kith.com'], undefined, 'something for a wedding', null, null)
+      await settle()
+      same(store.size, beforeIntent, 'a request carrying free-form intent writes NO row')
+      check(!store.get(kN), '  the garment it saw is not in the corpus')
+
+      // A budget — which reaches the store as filters.price.max.
+      await C.GlobalCatalogService.search(nextQuery(), 9999, [], 'US', true, [], 'relevance',
+        'USD', {}, ['kith.com'], undefined, undefined, null, null)
+      await settle()
+      same(store.size, beforeIntent, 'a request carrying a price filter writes NO row')
+
+      // And the same garment, asked cleanly, DOES land — so the refusals above
+      // are about the context and not about the fixture.
+      await C.GlobalCatalogService.search(nextQuery(), undefined, [], 'US', true, [], 'relevance',
+        'USD', {}, ['kith.com'], undefined, undefined, null, null)
+      await settle()
+      same(store.size, beforeIntent + 1, 'the same garment asked cleanly IS filed')
+      check(!!store.get(kN), '  under the unqualified key', kN)
     }
 
     // ══════════════════════════════════════════════════════════════════════

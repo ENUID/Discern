@@ -124,6 +124,7 @@ const row = (o) => ({
   // Left off, this stays undefined — a legacy row, written before country
   // scoping, whose country was never recorded and must not be invented.
   country: o.country,
+  requestedCurrency: o.requestedCurrency,
 })
 
 ;(async () => {
@@ -148,11 +149,16 @@ const row = (o) => ({
     // The first five carry provenance; the last two deliberately do not, so
     // "unrecorded" is exercised alongside every real answer.
     row({ key: 'kith.com::1::US', lastSeenAt: T0 + 5 * DAY, firstSeenAt: T0, lastChangedAt: T0 + DAY,
-          currencyStated: true, availabilityStated: true, vendorSource: 'merchant', country: 'US' }),
+          currencyStated: true, availabilityStated: true, vendorSource: 'merchant', country: 'US',
+          requestedCurrency: 'USD' }),
     row({ key: 'kith.com::2::IN', lastSeenAt: T0 + 4 * DAY, inStock: false,
-          currencyStated: true, availabilityStated: true, vendorSource: 'merchant', country: 'IN' }),
-    row({ key: 'kith.com::3::--', lastSeenAt: T0 + 3 * DAY, status: 'quarantined', price: 0,
-          currencyStated: false, availabilityStated: false, vendorSource: 'domain', country: '--' }),
+          currencyStated: true, availabilityStated: true, vendorSource: 'merchant', country: 'IN',
+          requestedCurrency: 'USD' }),
+    // A four-segment key: no country was sent AND the request asked in EUR.
+    row({ key: 'kith.com::3::--::EUR', lastSeenAt: T0 + 3 * DAY, status: 'quarantined', price: 0,
+          currency: 'EUR',
+          currencyStated: false, availabilityStated: false, vendorSource: 'domain', country: '--',
+          requestedCurrency: 'EUR' }),
     row({ key: 'aloyoga.com::4', merchant: 'aloyoga.com', lastSeenAt: T0 + 2 * DAY, schema: 1,
           currencyStated: false, availabilityStated: true, vendorSource: 'domain' }),
     row({ key: 'aloyoga.com::5', merchant: 'aloyoga.com', lastSeenAt: T0 + DAY, via: 'ucp-mcp',
@@ -193,7 +199,11 @@ const row = (o) => ({
   // in a row; counting the sentinels is the only visibility there is.
   same(s.defaulted.titleUntitled, 1, 'one title is the Untitled sentinel')
   same(s.defaulted.unpriced, 1, 'one has no usable price')
-  same(s.defaulted.currencyUSD, 6, 'six are USD — real or defaulted, indistinguishable')
+  // Five, not six: the EUR row above answers in EUR because it was ASKED in
+  // EUR. That is the whole point of the fourth key segment — this count is
+  // about the merchant's answer, byRequestedCurrency is about our question,
+  // and they are now separately visible.
+  same(s.defaulted.currencyUSD, 5, 'five are USD — real or defaulted, indistinguishable')
   same(s.defaulted.vendorIndependent, undefined,
     'and vendorIndependent is GONE — it counted a branch the domain fallback pre-empts')
 
@@ -243,6 +253,24 @@ const row = (o) => ({
   same(Object.prototype.hasOwnProperty.call(s.byCountry, '--')
     && Object.prototype.hasOwnProperty.call(s.byCountry, 'unscoped'), true,
     'unknown-country and never-recorded are separate buckets, not one answer')
+
+  // ── the other half of the observation context ────────────────────────────
+  // The currency we ASKED in, never the one a merchant answered with. The USD
+  // rows carry no fourth key segment, so this column is the ONLY place a
+  // requested-USD row can be told apart from one written before the field
+  // existed — which is the cost of the backward-compatible key and the reason
+  // the column is stored for every row rather than only the scoped ones.
+  same(s.byRequestedCurrency.USD, 2, 'two observations were requested in USD')
+  same(s.byRequestedCurrency.EUR, 1, '  one in EUR')
+  same(s.byRequestedCurrency.unrecorded, 4, '  and four predate the field')
+  same(Object.values(s.byRequestedCurrency).reduce((a, b) => a + b, 0), s.total,
+    '  every row lands in exactly one requested-currency bucket')
+  same(Object.prototype.hasOwnProperty.call(s.byRequestedCurrency, 'unrecorded'), true,
+    'never-recorded is its own answer, not folded into USD')
+  // The two dimensions are independent: the EUR observation is also the one
+  // that carried no country, and each is counted in its own bucket.
+  same(s.byCountry['--'] === 1 && s.byRequestedCurrency.EUR === 1, true,
+    'country and requested currency are independent dimensions')
 
   same(s.payloadSample.scanned, 7, 'the payload sample covered all seven')
   same(s.payloadSample.withVariants, 7, '  all have variants')

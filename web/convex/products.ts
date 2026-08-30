@@ -94,6 +94,7 @@ export const upsertMany = mutation({
       availabilityStated: v.optional(v.boolean()),
       vendorSource: v.optional(v.union(v.literal("merchant"), v.literal("domain"), v.literal("none"))),
       country: v.optional(v.string()),
+      requestedCurrency: v.optional(v.string()),
       status: v.union(v.literal("active"), v.literal("quarantined")),
     })),
     serverSecret: v.string(),
@@ -168,8 +169,12 @@ export const upsertMany = mutation({
         availabilityStated: e.availabilityStated,
         vendorSource: e.vendorSource,
         // Re-sent identical by the writer — the country is part of the key, so
-        // a row can never change country without becoming a different row.
+        // a row can never change country without becoming a different row. The
+        // requested currency is the same kind of fact: it is either the fourth
+        // key segment or the default that omits it, so a row cannot change it
+        // without becoming a different row either.
         country: e.country,
+        requestedCurrency: e.requestedCurrency,
         status: e.status,
         lastSeenAt: now,
         lastChangedAt: now,
@@ -262,6 +267,7 @@ export const inspect = query({
     // before country scoping, two-segment key, no country ever recorded.
     // Counted separately rather than guessed at.
     const byCountry: Record<string, number> = {};
+    const byRequestedCurrency: Record<string, number> = {};
 
     for (const r of rows) {
       bump(byStatus, r.status);
@@ -299,6 +305,11 @@ export const inspect = query({
       else bump(vendorSourceCounts as Record<string, number>, r.vendorSource);
 
       bump(byCountry, r.country === undefined ? "unscoped" : r.country);
+      // The currency we ASKED in, never the one the merchant answered with.
+      // `unrecorded` is a row written before the field existed and is NOT the
+      // same answer as "USD" — the key omits the segment for both, so this
+      // column is the only place the two can be told apart.
+      bump(byRequestedCurrency, r.requestedCurrency === undefined ? "unrecorded" : r.requestedCurrency);
 
       if (r.firstSeenAt < firstSeenMin) firstSeenMin = r.firstSeenAt;
       if (r.firstSeenAt > firstSeenMax) firstSeenMax = r.firstSeenAt;
@@ -331,7 +342,7 @@ export const inspect = query({
         // the reason the number stopped where it did.
         total: rows.length,
         capped: rows.length >= INSPECT_SCAN_CAP,
-        byStatus, byVia, bySchema, byIdShape, byCountry,
+        byStatus, byVia, bySchema, byIdShape, byCountry, byRequestedCurrency,
         distinctMerchants: merchants.size,
         perMerchant,
         inStock,

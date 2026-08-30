@@ -16,7 +16,7 @@
 
 import { UCP_REGISTRY, detectBrandsInQuery, BRAND_NAMES, getStoreCountry, GEO_REGIONS, brandQualityScore } from '../stores'
 import { GARMENT_PRODUCT_TERMS, matchesGarmentExclusion, COLOR_VOCAB } from '../queryParser'
-import { getExchangeRates } from '../exchangeRates'
+import { getExchangeRates, resolveRequestedCurrency } from '../exchangeRates'
 import {
   isNonFashion,
   productGenderSignal,
@@ -775,7 +775,10 @@ function readAvailability(v: any): boolean | null {
   return null
 }
 
-function parseProduct(raw: any, sourceDomain?: string, countryCode?: string | null): UcpProduct | null {
+function parseProduct(
+  raw: any, sourceDomain?: string, countryCode?: string | null,
+  requestedCurrency?: string | null,
+): UcpProduct | null {
   try {
     const variant = raw.variants?.[0] ?? {}
     // Split in two so the corpus can tell a stated currency from the USD
@@ -954,6 +957,11 @@ function parseProduct(raw: any, sourceDomain?: string, countryCode?: string | nu
       // Recorded, never guessed: a fetch with no country stores null rather
       // than a plausible default.
       country: countryCode ?? null,
+      // Already resolved upstream against the supported set. Null means the
+      // request named a currency this app does not support — the store was
+      // told none, and the corpus will decline to file the observation rather
+      // than label it with a context it cannot name.
+      requestedCurrency: requestedCurrency ?? null,
     }
 
     return {
@@ -1214,13 +1222,28 @@ export class GlobalCatalogService {
     const limit = isLoadMore ? LOAD_MORE_LIMIT : INITIAL_LIMIT
     const cc = countryCode?.trim().toUpperCase() || null
     const bcur = normalizeCurrency(budgetCurrency)
+    /**
+     * THE SAME VALUE, ASKED A DIFFERENT QUESTION — and the two must not be
+     * merged. `bcur` is what the PAGE displays in and is deliberately
+     * untouched: it converts prices for the shopper and accepts whatever it
+     * was given, exactly as before. `requested` is what we are willing to SAY
+     * to a merchant and to file an observation under, and it is drawn from a
+     * closed set. For every currency the app can actually price in, the two
+     * are the same string; they diverge only for input the app cannot support,
+     * where `requested` is null and `bcur` still carries it to the display
+     * layer unchanged.
+     */
+    const requested = resolveRequestedCurrency(budgetCurrency)
     /** What every store call tells the shop about the buyer. `rerankQuery` is
      *  the shopper's own sentence — the fetch query is a stripped keyword
      *  string, and intent is the field that wants the sentence. The budget is
      *  in minor units because that is what UCP asks for. */
     const storeCtx: StoreFetchContext = {
       intent: (rerankQuery || '').trim() || null,
-      currency: bcur || null,
+      // `requested`, not `bcur`: an unsupported currency is omitted rather than
+      // forwarded, so the store quotes its own default instead of being handed
+      // a string nothing validated. fetchStore already skips a falsy currency.
+      currency: requested,
       language: 'en',
       priceMaxMinor: typeof budgetMax === 'number' && budgetMax > 0
         ? Math.round(budgetMax * 100) : null,
@@ -1313,7 +1336,7 @@ export class GlobalCatalogService {
             if (held && arriving && held !== arriving) observed.crossMerchantDuplicateIds++
             continue
           }
-          const p = parseProduct(raw, raw._sourceDomain, cc)
+          const p = parseProduct(raw, raw._sourceDomain, cc, requested)
           if (!p) { observed.rejected.unparseable++; continue }
           if (isNonFashion(p)) { observed.rejected.nonFashion++; continue }
           // Trust the source store, but validate when a URL points elsewhere.
@@ -1468,8 +1491,39 @@ export class GlobalCatalogService {
       //
       // A snapshot, because late-arriving stores are still pushing into
       // entry.products behind their own runAfterResponse.
-      const pool = entry.products.slice()
-      runAfterResponse(() => writeCorpus(pool))
+      //
+      // ONLY FROM A CONTEXT THE CORPUS CAN NAME, and this gate is narrower
+      // than the one above on purpose — `writePersistentCache` is retrieval
+      // infrastructure and stays exactly as it was, because a pool worth
+      // serving again is not the same question as an observation worth
+      // keeping.
+      //
+      // Three signals reach the merchant besides the country, and the store
+      // localises its answer from them. Country is in the row key and the
+      // requested currency is about to join it; the other two CANNOT be,
+      // because neither is drawn from a closed set:
+      //
+      //   intent            the shopper's own sentence, free text
+      //   priceMaxMinor     an arbitrary number, sent as filters.price.max
+      //
+      // A pool fetched under either is an answer to a narrower question than
+      // "what does this shop sell", and filing it under the same key as a
+      // clean browse would let one shopper's budget quietly rewrite the
+      // catalogue everyone else observed. Until there is an identity model
+      // that can express them, those observations are not written at all —
+      // dropped deliberately and countably, never collapsed into the
+      // unqualified row.
+      //
+      // In practice this leaves the browse/featured path as the writer, which
+      // is the path that produced every scoped row the corpus already holds:
+      // it passes no rerankQuery and no budgetMax.
+      const nameableContext = requested !== null
+        && !storeCtx.intent
+        && storeCtx.priceMaxMinor === null
+      if (nameableContext) {
+        const pool = entry.products.slice()
+        runAfterResponse(() => writeCorpus(pool))
+      }
     }
 
     // The same pool, counted. See the note on corpusObservation above: this

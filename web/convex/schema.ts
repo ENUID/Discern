@@ -424,6 +424,23 @@ export default defineSchema({
     // counts them as `unscoped` rather than folding them into a country.
     country: v.optional(v.string()),
 
+    // THE CURRENCY WE ASKED THE MERCHANT TO QUOTE IN — the second half of the
+    // observation context, and the fourth key segment when it is not the
+    // default. WHAT WE SENT, never what the shop answered: `currency` above is
+    // the merchant speaking and merchants disagree about it under identical
+    // requests, so identity keys on the question instead. Drawn from
+    // SUPPORTED_CURRENCIES in lib/exchangeRates.ts, a closed set versioned in
+    // git, so this column and the key segment have bounded cardinality no
+    // caller can widen.
+    //
+    // OPTIONAL for the usual reason and one more: a requested USD is stored
+    // here but deliberately ABSENT from the key, so that every row written
+    // before this field existed stays addressable by the browse path that
+    // wrote it. Absent means "written before the corpus recorded this".
+    // Excluded from contentHash — the key already separates these rows, so
+    // their hashes are never compared.
+    requestedCurrency: v.optional(v.string()),
+
     // 'active'      a garment we hold, whether or not it is in stock
     // 'quarantined' held for review — no usable price, or an unparseable URL.
     //               Counted and stored; NOT removed from any live result.
