@@ -429,7 +429,9 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
         patch: async (_id, p) => Object.assign(rows.get(_id), p),
       }
       const row = (hash) => ({
-        key: 'k::bucket', merchant: 'k', sourceId: 'bucket', title: 'T', vendor: 'V',
+        // Country-scoped, because the mutation now refuses any key that does
+        // not extend merchant::sourceId. This fixture was never about the key.
+        key: 'k::bucket::US', merchant: 'k', sourceId: 'bucket', country: 'US', title: 'T', vendor: 'V',
         price: 10, currency: 'USD', storeUrl: 'https://k.com/p', imageUrl: 'https://cdn/i.jpg',
         inStock: true, payload: '{}', via: 'ucp-mcp', schema: 1, contentHash: hash, status: 'active',
       })
@@ -784,8 +786,20 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
         inStock: true, payload: '{}', via: 'ucp-mcp', schema: 1, status: 'active',
       }
       // A legacy row: two segments, no country column at all.
-      await REAL_UPSERT(db, { entries: [{ ...base, key: 'kith.com::legacy-1', contentHash: 'legacy-hash' }],
+      //
+      // SEEDED DIRECTLY, because the mutation will no longer make one. That is
+      // the point of the guard added in this phase and it is asserted below —
+      // the 1,082 rows in the live corpus exist, but nothing can produce a
+      // 1,083rd. Reaching past upsertMany here is the honest way to model a
+      // database that already contains rows the current writer cannot emit.
+      await db.insert('products', { ...base, key: 'kith.com::legacy-1', contentHash: 'legacy-hash',
+        firstSeenAt: 1, lastSeenAt: 1, lastChangedAt: 1 })
+      const refused = await REAL_UPSERT(db, {
+        entries: [{ ...base, key: 'kith.com::legacy-2', contentHash: 'h' }],
         serverSecret: 'stub-secret' })
+      same(refused.rejected, 1, 'the mutation REFUSES to create a new legacy row')
+      same(refused.inserted, 0, '  and inserts nothing')
+      same(rows.size, 1, '  the table still holds only the seeded one')
       const legacyBefore = { ...Array.from(rows.values())[0] }
       same(legacyBefore.country, undefined, 'a legacy row has no country column')
       same(legacyBefore.key.split('::').length, 2, '  and a two-segment key')
@@ -986,6 +1000,103 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
       await settle()
       same(store.size, beforeIntent + 1, 'the same garment asked cleanly IS filed')
       check(!!store.get(kN), '  under the unqualified key', kN)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 6f. THE DATABASE REFUSES A LEGACY KEY
+    // ══════════════════════════════════════════════════════════════════════
+    // corpusRowKey cannot emit a two-segment key — it always appends at least a
+    // country — so "no new legacy rows" was already true. It was true because
+    // one module stayed correct, which is a weaker guarantee than the database
+    // refusing the shape. 1,082 legacy rows exist and cannot be written again;
+    // this is what makes a 1,083rd impossible rather than merely unlikely.
+    //
+    // ANCHORED ON merchant AND sourceId, NOT ON COUNTING '::'. parseProduct
+    // copies raw.id verbatim from 458 endpoints with no validation, so a
+    // sourceId containing '::' is not forbidden by anything — and under naive
+    // segment counting its three-segment key reads as four while a legacy key
+    // reads as three. Both cases are asserted below.
+    console.log('\n── the database refuses a legacy key ' + '─'.repeat(37))
+    {
+      const rows = new Map(); let n = 0
+      const db = {
+        query: () => ({ withIndex: (_x, f) => { let want; f({ eq: (_k, v) => { want = v; return {} } })
+          return { first: async () => Array.from(rows.values()).find(r => r.key === want) ?? null } } }),
+        insert: async (_t, d) => { const _id = `S${++n}`; rows.set(_id, { _id, ...d }); return _id },
+        patch: async (_id, patchDoc) => Object.assign(rows.get(_id), patchDoc),
+      }
+      const entry = (o) => ({
+        merchant: 'kith.com', sourceId: 's1', title: 'T', vendor: 'V', price: 10,
+        currency: 'USD', storeUrl: 'https://kith.com/p', imageUrl: 'https://cdn/i.jpg',
+        inStock: true, payload: '{}', via: 'ucp-mcp', schema: 1, contentHash: 'h',
+        status: 'active', ...o,
+      })
+      const send = (o) => REAL_UPSERT(db, { entries: [entry(o)], serverSecret: 'stub-secret' })
+
+      // ── accepted ────────────────────────────────────────────────────────
+      const three = await send({ key: 'kith.com::s1::US', country: 'US', requestedCurrency: 'USD' })
+      same(three.inserted, 1, 'a three-segment country key is accepted')
+      same(three.rejected, 0, '  and nothing is rejected')
+
+      const four = await send({ key: 'kith.com::s1::US::EUR', country: 'US', requestedCurrency: 'EUR' })
+      same(four.inserted, 1, 'a four-segment country+currency key is accepted')
+
+      const unknown = await send({ key: 'kith.com::s1::--', country: '--' })
+      same(unknown.inserted, 1, 'the unknown-country sentinel :: -- is accepted')
+
+      // A sourceId that itself contains '::'. Three segments semantically,
+      // four by naive counting — accepted, because the check is anchored.
+      const odd = await REAL_UPSERT(db, {
+        entries: [entry({ sourceId: 'a::b', key: 'kith.com::a::b::US', country: 'US' })],
+        serverSecret: 'stub-secret' })
+      same(odd.inserted, 1, "a sourceId containing '::' is still accepted when scoped")
+
+      const accepted = rows.size
+      same(accepted, 4, 'four valid shapes landed')
+
+      // ── refused ─────────────────────────────────────────────────────────
+      for (const [label, o] of [
+        ['a two-segment legacy key', { key: 'kith.com::s1' }],
+        ['an empty country segment', { key: 'kith.com::s1::' }],
+        ['a trailing empty segment', { key: 'kith.com::s1::US::' }],
+        ['a fifth segment', { key: 'kith.com::s1::US::EUR::X' }],
+        ['a key naming another merchant', { key: 'other.com::s1::US' }],
+        ['a key naming another sourceId', { key: 'kith.com::s2::US' }],
+        ['a bare key', { key: 'kith.com' }],
+        ['an empty key', { key: '' }],
+      ]) {
+        const res = await send(o)
+        same(res.rejected, 1, `refused: ${label}`)
+        same(res.inserted, 0, `  and nothing was written`)
+      }
+      // The legacy shape of the odd sourceId is refused too — it is legacy
+      // BECAUSE it stops at merchant::sourceId, whatever that sourceId holds.
+      const oddLegacy = await REAL_UPSERT(db, {
+        entries: [entry({ sourceId: 'a::b', key: 'kith.com::a::b' })],
+        serverSecret: 'stub-secret' })
+      same(oddLegacy.rejected, 1, "refused: the legacy form of a '::' sourceId")
+
+      same(rows.size, accepted, 'no refusal wrote a row')
+
+      // ── the existing rows are untouched and still addressable ───────────
+      const again = await send({ key: 'kith.com::s1::US', country: 'US', requestedCurrency: 'USD',
+        contentHash: 'h2' })
+      same(again.updated, 1, 'a valid row is still readable and updatable after the refusals')
+      same(rows.size, accepted, '  and still no new row')
+
+      // ── a refusal does not discard the rest of the batch ─────────────────
+      // writeCorpus catches everything, so throwing would lose 63 good rows and
+      // report one opaque failure. The batch lands; the count says what happened.
+      const mixed = await REAL_UPSERT(db, {
+        entries: [
+          entry({ sourceId: 'm1', key: 'kith.com::m1' }),
+          entry({ sourceId: 'm2', key: 'kith.com::m2::US', country: 'US' }),
+          entry({ sourceId: 'm3', key: 'kith.com::m3::GB::EUR', country: 'GB', requestedCurrency: 'EUR' }),
+        ],
+        serverSecret: 'stub-secret' })
+      same(mixed.rejected, 1, 'a mixed batch rejects only the bad entry')
+      same(mixed.inserted, 2, '  and still writes the two good ones')
+      same(rows.size, accepted + 2, '  the table grew by exactly two')
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1200,18 +1311,35 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
     const named = (a) => a.map(m => m.replace(/export\s+const\s+/, '').replace(/\s*=.*/, ''))
     same(mutations_.length, 1, 'products.ts exports exactly ONE mutation', named(mutations_).join(','))
     same(named(mutations_)[0], 'upsertMany', '  and it is upsertMany')
-    same(queries_.length, 1, 'and exactly ONE query — no more', named(queries_).join(','))
-    same(named(queries_)[0], 'inspect', '  and it is inspect')
+    // THE SET, NOT THE COUNT. This pinned `length === 1`, which is the weaker
+    // claim: it passes for any single query, including one a shopper could
+    // reach. Naming them means a new read has to be added here deliberately,
+    // and each is then held to the same four properties below.
+    same(named(queries_).join(','), 'inspect,census',
+      'and exactly TWO reads, both named', named(queries_).join(','))
 
-    // The query itself: gated, bounded, and not a payload exporter.
-    const inspectSrc = convexSrc.slice(convexSrc.indexOf('export const inspect'))
-    check(/verifyAdminSecret\(args\.adminSecret\)/.test(inspectSrc),
-      '  gated by the repository\'s own verifyAdminSecret convention')
-    check(/\.withIndex\("by_last_seen"\)/.test(inspectSrc), '  reads through the by_last_seen index')
+    // Each read: gated, bounded, read-only, and not a payload exporter.
+    for (const q of named(queries_)) {
+      const src = convexSrc.slice(convexSrc.indexOf(`export const ${q} = query(`))
+      const body = src.slice(0, src.indexOf('\n});') + 4)
+      check(/verifyAdminSecret\(args\.adminSecret\)/.test(body),
+        `  ${q}: gated by the repository's own verifyAdminSecret convention`)
+      check(!/\.collect\(\)/.test(body), `  ${q}: never collects the table unbounded`)
+      check(!/\bpayload:\s*r\.payload\b/.test(body), `  ${q}: never returns payload`)
+      check(!/ctx\.db\.(insert|patch|replace|delete)/.test(body), `  ${q}: read-only, it writes nothing`)
+    }
+    // Each is bounded, but by its own mechanism: inspect stops at a fixed cap,
+    // the census stops at a page and hands back a cursor. Asserting one shape
+    // for both would force the wrong design on whichever came second.
+    const inspectSrc = convexSrc.slice(convexSrc.indexOf('export const inspect = query('))
+    check(/\.withIndex\("by_last_seen"\)/.test(inspectSrc), '  inspect reads through by_last_seen')
     check(/\.take\(INSPECT_SCAN_CAP\)/.test(inspectSrc), '  and stops at a finite scan cap')
-    check(!/\.collect\(\)/.test(inspectSrc), '  never collects the table unbounded')
-    check(!/\bpayload:\s*r\.payload\b/.test(inspectSrc), '  and never returns payload')
-    check(!/ctx\.db\.(insert|patch|replace|delete)/.test(inspectSrc), '  read-only: it writes nothing')
+    const censusSrc = convexSrc.slice(convexSrc.indexOf('export const census = query('))
+    check(/\.paginate\(\{/.test(censusSrc), '  census is bounded by pagination instead')
+    check(/const numItems = Math\.max\(1, Math\.min\(args\.pageSize \?\? CENSUS_PAGE, CENSUS_PAGE\)\)/.test(censusSrc),
+      '  with a page size clamped to CENSUS_PAGE, which a caller cannot talk upward')
+    check(!/withIndex\("by_last_seen"\)/.test(censusSrc),
+      '  and it does NOT walk a mutable index — lastSeenAt moves under a writer')
 
     // And nothing a shopper's request can reach may name it. A filesystem walk
     // rather than a grep of one directory, because "unreachable" is a property

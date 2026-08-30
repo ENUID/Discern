@@ -62,7 +62,7 @@ const C = build('.vt/corpus-inspect-entry.ts', 'corpus-inspect')
 // ── a database, just enough of one ──────────────────────────────────────────
 /** Records how the query actually read, so "bounded and index-based" is an
  *  observation rather than a claim about the source. */
-const reads = { withIndex: [], order: [], take: [], fullScans: 0 }
+const reads = { withIndex: [], order: [], take: [], paginate: [], fullScans: 0 }
 
 function makeDb(rows) {
   return {
@@ -75,6 +75,18 @@ function makeDb(rows) {
           // by_last_seen, newest first — the same order the index gives.
           const sorted = [...rows].sort((a, b) => b.lastSeenAt - a.lastSeenAt)
           return sorted.slice(0, n)
+        },
+        // Convex's own pagination: no index, so _creationTime ascending — the
+        // immutable order. The cursor is an offset here because the fixture is
+        // an array; what it stands in for is opaque to the query either way,
+        // which is the property under test.
+        paginate: async ({ numItems, cursor }) => {
+          reads.paginate.push(numItems)
+          const ordered = [...rows].sort((x, y) => (x._creationTime ?? 0) - (y._creationTime ?? 0))
+          const start = cursor === null || cursor === undefined ? 0 : Number(cursor)
+          const slice = ordered.slice(start, start + numItems)
+          const next = start + slice.length
+          return { page: slice, isDone: next >= ordered.length, continueCursor: String(next) }
         },
         // Anything that collects without a bound is a full scan, and the query
         // must never reach for one.
@@ -91,8 +103,12 @@ const DAY = 24 * 60 * 60 * 1000
 
 /** One corpus row. Everything not named takes a plausible default so a test
  *  only has to say what it is actually about. */
+let seq = 0
 const row = (o) => ({
   _id: `r-${o.key}`,
+  // Convex stamps this and never changes it. The census paginates over it for
+  // exactly that reason, so the fixture has to carry a real one.
+  _creationTime: o._creationTime ?? ++seq,
   key: o.key,
   merchant: o.merchant ?? 'kith.com',
   sourceId: o.sourceId ?? `gid://shopify/Product/${o.key}`,
@@ -135,6 +151,44 @@ const row = (o) => ({
     'the REAL products.inspect handler is what these tests run', handler ? '' : 'not reachable')
   if (typeof handler !== 'function') { console.log(`\n${bad} FAILED\n`); process.exit(1) }
   const run = (rows, args = {}) => handler({ db: makeDb(rows) }, { adminSecret: ADMIN, ...args })
+
+  const censusHandler = C.PRODUCTS && C.PRODUCTS.census && C.PRODUCTS.census._handler
+  check(typeof censusHandler === 'function',
+    'the REAL products.census handler is what the census tests run',
+    censusHandler ? '' : 'not reachable')
+  const runCensus = (rows, args = {}) =>
+    censusHandler({ db: makeDb(rows) }, { adminSecret: ADMIN, ...args })
+
+  /** Walk the whole table the way an operator would, and add the pages up.
+   *  Bounded per call; the loop is the caller's, which is the design. */
+  const walkCensus = async (rows, pageSize) => {
+    const merged = {
+      pages: 0, scanned: 0, keysSeen: [], wouldDelete: 0,
+      byCountry: {}, byRequestedCurrency: {}, byKeyShape: {},
+      legacyKeyedButCountryScoped: 0, candidatesCarryingRequestedCurrency: 0,
+      sampleKeys: [], isDone: false,
+    }
+    let cursor = null
+    // Bounded so a broken cursor cannot spin forever — a runaway loop would
+    // otherwise look like a passing test that simply never returned.
+    for (let guard = 0; guard < 100; guard++) {
+      const r = await runCensus(rows, { cursor, pageSize })
+      merged.pages++
+      merged.scanned += r.page.scanned
+      merged.wouldDelete += r.legacy.wouldDelete
+      merged.legacyKeyedButCountryScoped += r.legacy.legacyKeyedButCountryScoped
+      merged.candidatesCarryingRequestedCurrency += r.legacy.candidatesCarryingRequestedCurrency
+      for (const k of r.legacy.sampleKeys) merged.sampleKeys.push(k)
+      for (const [dim, src] of [['byCountry', r.counts.byCountry],
+                                ['byRequestedCurrency', r.counts.byRequestedCurrency],
+                                ['byKeyShape', r.counts.byKeyShape]]) {
+        for (const [k, n] of Object.entries(src)) merged[dim][k] = (merged[dim][k] ?? 0) + n
+      }
+      if (r.page.isDone) { merged.isDone = true; merged.lastCursor = r.page.cursor; break }
+      cursor = r.page.cursor
+    }
+    return merged
+  }
 
   // ── the gate ──────────────────────────────────────────────────────────────
   console.log('── who may look ' + '─'.repeat(58))
@@ -353,19 +407,157 @@ const row = (o) => ({
     .filter(d => fs.existsSync(path.join(WEB, d)))
     .flatMap(d => walk(path.join(WEB, d)))
   const namesInspect = productionFiles.filter(f =>
-    /products\.inspect|['"`]inspect['"`]\s*[,)]/.test(fs.readFileSync(f, 'utf8')))
+    /products\.(inspect|census)|['"`](inspect|census)['"`]\s*[,)]/.test(fs.readFileSync(f, 'utf8')))
   same(namesInspect.length, 0,
-    'no file under app/, lib/, features/ or components/ names the inspection query',
+    'no file under app/, lib/, features/ or components/ names an inspection query',
     namesInspect.map(f => path.relative(WEB, f)).join(', ') || 'none')
 
   const writer = fs.readFileSync(path.join(WEB, 'lib/services/corpusWriter.ts'), 'utf8')
   check(/anyApi\.products\.upsertMany/.test(writer), 'the writer still calls upsertMany')
   check(!/products\.inspect/.test(writer), 'and the writer does NOT call inspect')
 
+
+  // ── F. the census: exact counts, one bounded page at a time ───────────────
+  // `inspect` above is a window and says so. This is the read that can answer
+  // "how many rows are there", and the only thing that licenses calling a
+  // running total a census is isDone.
+  console.log('\n── F. an exact census, paginated ' + '─'.repeat(41))
+  {
+    same(await censusHandler({ db: makeDb([]) }, { adminSecret: 'wrong' }), null,
+      'the census refuses a wrong operator secret too')
+
+    // A corpus with all three key shapes and a known composition.
+    const corpus = [
+      ...Array.from({ length: 40 }, (_, i) =>
+        row({ key: `kith.com::L${i}`, sourceId: `L${i}` })),                       // legacy
+      ...Array.from({ length: 25 }, (_, i) =>
+        row({ key: `kith.com::U${i}::US`, sourceId: `U${i}`, country: 'US',
+              requestedCurrency: 'USD' })),                                        // scoped
+      ...Array.from({ length: 12 }, (_, i) =>
+        row({ key: `kith.com::I${i}::IN`, sourceId: `I${i}`, country: 'IN',
+              requestedCurrency: 'USD' })),                                        // scoped
+      ...Array.from({ length: 7 }, (_, i) =>
+        row({ key: `kith.com::E${i}::US::EUR`, sourceId: `E${i}`, country: 'US',
+              requestedCurrency: 'EUR' })),                                        // scoped+currency
+    ]
+    const TRUE_TOTAL = 40 + 25 + 12 + 7
+
+    // 1. a first page
+    const p1 = await runCensus(corpus, { pageSize: 30 })
+    same(p1.page.scanned, 30, 'the first page is bounded to what was asked')
+    same(p1.page.isDone, false, '  and reports it is not done')
+    check(typeof p1.page.cursor === 'string' && p1.page.cursor.length > 0,
+      '  handing back a cursor for the next one')
+
+    // 2. a subsequent page, from that cursor
+    const p2 = await runCensus(corpus, { cursor: p1.page.cursor, pageSize: 30 })
+    same(p2.page.scanned, 30, 'the second page continues from the cursor')
+    check(p2.page.cursor !== p1.page.cursor, '  and the cursor advances')
+
+    // 3 + 4. a full traversal ends, and visits every row exactly once
+    const walk = await walkCensus(corpus, 30)
+    same(walk.isDone, true, 'the traversal reports done')
+    same(walk.lastCursor, null, '  and the final cursor is null')
+    same(walk.scanned, TRUE_TOTAL, 'every row was scanned exactly once, across pages')
+    same(walk.pages, Math.ceil(TRUE_TOTAL / 30), '  in the expected number of pages')
+
+    // 5. the aggregate equals the true corpus
+    const sum = (m) => Object.values(m).reduce((a, b) => a + b, 0)
+    same(sum(walk.byCountry), TRUE_TOTAL, 'byCountry summed across pages equals the corpus')
+    same(sum(walk.byRequestedCurrency), TRUE_TOTAL, '  and so does byRequestedCurrency')
+    same(sum(walk.byKeyShape), TRUE_TOTAL, '  and so does byKeyShape')
+    same(walk.byCountry.US, 25 + 7, '  US counted across both currency contexts')
+    same(walk.byCountry.IN, 12, '  IN')
+    same(walk.byCountry.unscoped, 40, '  and the legacy rows as unscoped')
+    same(walk.byRequestedCurrency.USD, 25 + 12, '  USD')
+    same(walk.byRequestedCurrency.EUR, 7, '  EUR')
+    same(walk.byRequestedCurrency.unrecorded, 40, '  and the legacy rows as unrecorded')
+
+    // 6. legacy rows counted EXACTLY — the number a deletion would act on
+    same(walk.byKeyShape.legacy, 40, 'legacy two-segment rows counted exactly')
+    same(walk.byKeyShape.scoped, 25 + 12, '  three-segment rows')
+    same(walk.byKeyShape['scoped-currency'], 7, '  four-segment rows')
+    same(walk.byKeyShape.malformed, 0, '  and nothing malformed')
+
+    // The page size cannot be talked upward past the bound.
+    const huge = await runCensus(corpus, { pageSize: 1e9 })
+    check(huge.page.scanned <= 1000, 'a caller cannot ask for an unbounded page',
+      String(huge.page.scanned))
+    same(huge.page.isDone, true, '  and a corpus smaller than one page finishes in one')
+
+    // A page size of one still terminates and still totals correctly — the
+    // cursor, not the size, is what makes the walk complete.
+    const slow = await walkCensus(corpus.slice(0, 9), 1)
+    same(slow.pages, 9, 'a one-row page size still traverses everything')
+    same(slow.scanned, 9, '  and counts each row once')
+  }
+
+  // ── G. the dry run: what a cleanup WOULD take, and nothing else ───────────
+  // Counted, sampled, and not acted on. The rule needs both conditions, and
+  // the two cross-checks below are the ones that would catch a mis-specified
+  // predicate before it ever reached a delete.
+  console.log('\n── G. a deletion that is not performed ' + '─'.repeat(35))
+  {
+    const mixed = [
+      ...Array.from({ length: 6 }, (_, i) =>
+        row({ key: `kith.com::L${i}`, sourceId: `L${i}` })),
+      ...Array.from({ length: 4 }, (_, i) =>
+        row({ key: `kith.com::U${i}::US`, sourceId: `U${i}`, country: 'US', requestedCurrency: 'USD' })),
+      ...Array.from({ length: 3 }, (_, i) =>
+        row({ key: `kith.com::E${i}::US::EUR`, sourceId: `E${i}`, country: 'US', requestedCurrency: 'EUR' })),
+      // A row whose sourceId CONTAINS '::'. Under naive segment counting its
+      // three-segment key reads as four and it would be miscounted; anchored on
+      // the row's own merchant and sourceId it is simply scoped.
+      row({ key: 'kith.com::od::d::US', sourceId: 'od::d', country: 'US', requestedCurrency: 'USD' }),
+    ]
+    const dry = await walkCensus(mixed, 5)
+    same(dry.isDone, true, 'the dry run traverses the whole table')
+    same(dry.wouldDelete, 6, 'exactly the six legacy rows would be deleted')
+    same(dry.byKeyShape.legacy, 6, '  and exactly six are legacy-shaped')
+    same(dry.byKeyShape.malformed, 0, '  a sourceId containing :: is not malformed')
+    same(dry.byKeyShape['scoped-currency'], 3, '  nor is it counted as currency-scoped')
+
+    // The two cross-checks. Both must be zero or the rule is wrong.
+    same(dry.legacyKeyedButCountryScoped, 0, 'no country-scoped row matches the rule')
+    same(dry.candidatesCarryingRequestedCurrency, 0, 'no candidate carries a requested currency')
+
+    // Bounded evidence of WHICH rows, without exporting them.
+    check(dry.sampleKeys.length > 0 && dry.sampleKeys.length <= 6 * 5,
+      'the dry run names candidate keys', dry.sampleKeys.slice(0, 3).join(', '))
+    check(dry.sampleKeys.every(k => k.startsWith('kith.com::L')),
+      '  and every one of them is a legacy key')
+    const firstPage = await runCensus(mixed, { pageSize: 5 })
+    check(firstPage.legacy.sampleKeys.length <= 5, '  a page samples at most five keys')
+    check(!JSON.stringify(firstPage).includes('payload'),
+      'the dry run never returns payload contents')
+
+    // A corpus with no legacy rows answers zero rather than nothing.
+    const clean = await walkCensus(mixed.filter(r => r.country !== undefined), 5)
+    same(clean.wouldDelete, 0, 'a corpus with nothing to delete says zero')
+    same(clean.isDone, true, '  and still completes')
+  }
+
   const convexSrc = fs.readFileSync(path.join(WEB, 'convex/products.ts'), 'utf8')
   const exported = (convexSrc.match(/export\s+const\s+(\w+)\s*=\s*(query|mutation)\(/g) || [])
     .map(m => m.replace(/export\s+const\s+/, '').replace(/\s*=\s*/, ' = '))
-  same(exported.length, 2, 'products.ts exports exactly two functions', exported.join(' · '))
+  // THE SET, NOT THE COUNT. This asserted `length === 2` and a count is the
+  // weaker claim: it passes for any two functions, including a read a shopper
+  // could reach. Naming them means a new export has to be added here on
+  // purpose, and the two reads are separately proven admin-gated below.
+  same(exported.join(' · '),
+    'upsertMany = mutation( · inspect = query( · census = query(',
+    'products.ts exports exactly these three functions')
+
+  // Every query is behind the admin gate. `upsertMany` has its own server
+  // secret; what must never happen is a READ that has neither.
+  const queryNames = (convexSrc.match(/export\s+const\s+(\w+)\s*=\s*query\(/g) || [])
+    .map(m => m.replace(/export\s+const\s+/, '').replace(/\s*=\s*query\($/, ''))
+  same(queryNames.join(','), 'inspect,census', '  both reads are queries, named')
+  for (const q of queryNames) {
+    const body = convexSrc.slice(convexSrc.indexOf(`export const ${q} = query(`))
+    check(/verifyAdminSecret\(args\.adminSecret\)/.test(body.slice(0, 1200)),
+      `  ${q} is guarded by the admin secret`)
+  }
   check(/adminSecret/.test(convexSrc), 'and the read one is behind the operator secret')
 
   console.log(bad === 0

@@ -104,10 +104,26 @@ export const upsertMany = mutation({
       return { ok: false, inserted: 0, updated: 0, unchanged: 0, refreshed: 0 };
     }
 
-    let inserted = 0, updated = 0, unchanged = 0, refreshed = 0;
+    let inserted = 0, updated = 0, unchanged = 0, refreshed = 0, rejected = 0;
     const now = Date.now();
 
     for (const e of args.entries.slice(0, 64)) {
+      // A SHAPE, OR NOTHING. The writer cannot produce a legacy key —
+      // corpusRowKey always appends at least a country segment — so this
+      // refuses a shape no current caller can send, which is the point: it
+      // makes "no new two-segment rows" a property of the database rather than
+      // of one module staying correct. A future writer, a replayed payload or
+      // a caller holding the server secret all meet the same refusal.
+      //
+      // SKIPPED AND COUNTED, not thrown. writeCorpus catches everything, so
+      // throwing would discard the other 63 good rows in the batch and report
+      // one opaque failure. The batch lands and the count says what happened.
+      const shape = keyShape(e.key, e.merchant, e.sourceId);
+      if (shape !== "scoped" && shape !== "scoped-currency") {
+        rejected++;
+        continue;
+      }
+
       const held = await ctx.db
         .query("products")
         .withIndex("by_key", (q) => q.eq("key", e.key))
@@ -182,9 +198,44 @@ export const upsertMany = mutation({
       updated++;
     }
 
-    return { ok: true, inserted, updated, unchanged, refreshed };
+    return { ok: true, inserted, updated, unchanged, refreshed, rejected };
   },
 });
+
+// ── Key shape ───────────────────────────────────────────────────────────────
+/**
+ * WHAT A CORPUS KEY IS ALLOWED TO LOOK LIKE, decided here rather than trusted
+ * from the caller.
+ *
+ *   merchant::sourceId::COUNTRY              a country-scoped observation
+ *   merchant::sourceId::COUNTRY::CURRENCY    ...requested in a non-default one
+ *
+ * ANCHORED ON THE ROW'S OWN merchant AND sourceId, never on counting "::".
+ * parseProduct copies `raw.id` VERBATIM from 458 independent UCP endpoints
+ * with no validation of shape, so a sourceId containing "::" is not forbidden
+ * by anything — and under naive segment counting such a row's three-segment
+ * key would read as four and a legacy key would read as three. Both mistakes
+ * disappear if the prefix is checked against the values the row actually
+ * carries, which the mutation already receives beside the key.
+ *
+ * 'legacy' is the pre-scoping shape: exactly merchant::sourceId, no country
+ * segment at all. 1,082 of them exist and nothing can write another; this
+ * function is what makes that structural rather than merely true today.
+ */
+type KeyShape = "legacy" | "scoped" | "scoped-currency" | "malformed";
+
+function keyShape(key: string, merchant: string, sourceId: string): KeyShape {
+  const stem = `${merchant}::${sourceId}`;
+  if (key === stem) return "legacy";
+  if (!key.startsWith(`${stem}::`)) return "malformed";
+  const rest = key.slice(stem.length + 2);
+  if (rest.length === 0) return "malformed";
+  const parts = rest.split("::");
+  if (parts.some((x) => x.length === 0)) return "malformed";
+  if (parts.length === 1) return "scoped";
+  if (parts.length === 2) return "scoped-currency";
+  return "malformed";
+}
 
 // ── Inspection ──────────────────────────────────────────────────────────────
 
@@ -202,6 +253,13 @@ const SAMPLE_CAP = 100;
  *  JSON per row — so it happens for the sample alone and the proportions it
  *  yields are labelled as sample-derived rather than passed off as corpus-wide. */
 const PAYLOAD_SAMPLE = SAMPLE_CAP;
+
+/** One census page. Bounded like every other admin read here; a caller walks
+ *  the table with the cursor rather than asking for a bigger number. */
+const CENSUS_PAGE = 1000;
+/** Enough candidate keys to see WHICH rows a cleanup would take, far too few
+ *  to be a data export. */
+const CENSUS_SAMPLE_KEYS = 5;
 
 function idShapeOf(id: string): "gid" | "numeric" | "other" {
   if (id.startsWith("gid://")) return "gid";
@@ -383,6 +441,121 @@ export const inspect = query({
         firstSeenAt: r.firstSeenAt, lastSeenAt: r.lastSeenAt, lastChangedAt: r.lastChangedAt,
         contentHash: r.contentHash, status: r.status,
       })),
+    };
+  },
+});
+
+/**
+ * AN EXACT CENSUS, ONE BOUNDED PAGE AT A TIME.
+ *
+ * `inspect` above is a rich diagnostic over the most recently seen
+ * INSPECT_SCAN_CAP rows and says `capped` when that was the reason it stopped.
+ * It cannot answer "how many rows are there", and raising its cap would only
+ * move the wall — the corpus grows by roughly one full generation for every
+ * new (country, requested currency) context observed. This is the read that
+ * answers it, by traversing rather than sampling.
+ *
+ * PAGINATED BY _creationTime, NOT BY lastSeenAt, and that choice is
+ * load-bearing. `inspect` walks by_last_seen because it wants the freshest
+ * rows first, but lastSeenAt MUTATES: a re-observation moves a row, and a row
+ * that moves during a traversal can be handed out twice or skipped entirely.
+ * _creationTime is immutable and rows are never deleted, so a walk over it
+ * visits every row exactly once. Rows inserted mid-walk land after the cursor
+ * and are simply counted by a later page.
+ *
+ * ONLY MERGEABLE COUNTERS. Everything here is a sum or a min/max, so an
+ * operator can add pages together and the arithmetic is honest. The set-shaped
+ * statistics `inspect` reports — distinctMerchants, duplicateImageUrls,
+ * duplicateTitles, duplicateSourceIdsAcrossMerchants — are DELIBERATELY absent:
+ * they cannot be merged across pages without carrying every value seen so far,
+ * which is the unbounded read this query exists to avoid. Asking for them here
+ * would produce a number that looks like an answer and is not one.
+ *
+ * `scanned` is this page. `isDone` is the only thing that licenses calling a
+ * running total a census: until it is true, every sum is a lower bound.
+ */
+export const census = query({
+  args: {
+    adminSecret: v.string(),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    if (!verifyAdminSecret(args.adminSecret)) return null;
+
+    const numItems = Math.max(1, Math.min(args.pageSize ?? CENSUS_PAGE, CENSUS_PAGE));
+    const { page, isDone, continueCursor } = await ctx.db
+      .query("products")
+      .paginate({ numItems, cursor: args.cursor ?? null });
+
+    const byCountry: Record<string, number> = {};
+    const byRequestedCurrency: Record<string, number> = {};
+    const byKeyShape: Record<string, number> = {
+      legacy: 0, scoped: 0, "scoped-currency": 0, malformed: 0,
+    };
+    const byStatus: Record<string, number> = {};
+
+    // ── the dry run ──────────────────────────────────────────────────────
+    // The future cleanup rule, evaluated and counted but NEVER acted on. Both
+    // conditions are required and each alone would be sufficient; asking for
+    // both means a row has to be legacy by its key AND by its recorded country
+    // before it could ever be a candidate, so a single wrong predicate cannot
+    // select a live row.
+    let candidates = 0;
+    // What a mis-specified rule would have caught. Both must stay 0: a country
+    // scoped row can never be legacy-keyed, and a legacy row can never carry a
+    // requested currency, because neither field existed when they were written.
+    let scopedMatchingRule = 0;
+    let candidatesWithRequestedCurrency = 0;
+    const sampleKeys: string[] = [];
+
+    let firstSeenMin = Infinity, firstSeenMax = -Infinity;
+    let lastSeenMin = Infinity, lastSeenMax = -Infinity;
+
+    for (const r of page) {
+      const shape = keyShape(r.key, r.merchant, r.sourceId);
+      bump(byKeyShape, shape);
+      bump(byCountry, r.country === undefined ? "unscoped" : r.country);
+      bump(byRequestedCurrency, r.requestedCurrency === undefined ? "unrecorded" : r.requestedCurrency);
+      bump(byStatus, r.status);
+
+      const isCandidate = shape === "legacy" && r.country === undefined;
+      if (isCandidate) {
+        candidates++;
+        // Keys only. A dry run needs to prove WHICH rows it would touch, not
+        // to hand back their contents; payload never leaves the server here.
+        if (sampleKeys.length < CENSUS_SAMPLE_KEYS) sampleKeys.push(r.key);
+        if (r.requestedCurrency !== undefined) candidatesWithRequestedCurrency++;
+      }
+      if (shape === "legacy" && r.country !== undefined) scopedMatchingRule++;
+
+      if (r.firstSeenAt < firstSeenMin) firstSeenMin = r.firstSeenAt;
+      if (r.firstSeenAt > firstSeenMax) firstSeenMax = r.firstSeenAt;
+      if (r.lastSeenAt < lastSeenMin) lastSeenMin = r.lastSeenAt;
+      if (r.lastSeenAt > lastSeenMax) lastSeenMax = r.lastSeenAt;
+    }
+
+    return {
+      page: {
+        scanned: page.length,
+        sampleReturned: sampleKeys.length,
+        isDone,
+        // Hand straight back as `cursor` to get the next page. Null when done.
+        cursor: isDone ? null : continueCursor,
+      },
+      counts: { byCountry, byRequestedCurrency, byKeyShape, byStatus },
+      // The deletion that is NOT being performed. `wouldDelete` is this page's
+      // contribution; it is a corpus-wide answer only once isDone is true.
+      legacy: {
+        wouldDelete: candidates,
+        sampleKeys,
+        legacyKeyedButCountryScoped: scopedMatchingRule,
+        candidatesCarryingRequestedCurrency: candidatesWithRequestedCurrency,
+      },
+      seenAt: page.length
+        ? { firstSeen: { min: firstSeenMin, max: firstSeenMax },
+            lastSeen: { min: lastSeenMin, max: lastSeenMax } }
+        : null,
     };
   },
 });
