@@ -502,6 +502,16 @@ export const census = query({
       legacy: 0, scoped: 0, "scoped-currency": 0, malformed: 0,
     };
     const byStatus: Record<string, number> = {};
+    // THE ONE MAP-SHAPED COUNTER THIS QUERY RETURNS, and it earns the exception
+    // the header note carves out. distinctMerchants cannot be SUMMED across
+    // pages — two pages seeing the same merchant would double-count it — but
+    // perMerchant merges perfectly, because merging two records unions their
+    // keys and adds their values. So the corpus-wide answer is
+    // Object.keys(mergedPerMerchant).length, computed by whoever walks the
+    // pages, and `distinctMerchants` below is THIS PAGE only. The set-shaped
+    // statistics inspect reports stay absent for the reason they always were:
+    // duplicate image URLs and titles need every value seen so far.
+    const perMerchant: Record<string, number> = {};
 
     // ── the dry run ──────────────────────────────────────────────────────
     // The future cleanup rule, evaluated and counted but NEVER acted on. Both
@@ -523,6 +533,7 @@ export const census = query({
     for (const r of page) {
       const shape = keyShape(r.key, r.merchant, r.sourceId);
       bump(byKeyShape, shape);
+      bump(perMerchant, r.merchant);
       bump(byCountry, r.country === undefined ? "unscoped" : r.country);
       bump(byRequestedCurrency, r.requestedCurrency === undefined ? "unrecorded" : r.requestedCurrency);
       bump(byStatus, r.status);
@@ -551,7 +562,13 @@ export const census = query({
         // Hand straight back as `cursor` to get the next page. Null when done.
         cursor: isDone ? null : continueCursor,
       },
-      counts: { byCountry, byRequestedCurrency, byKeyShape, byStatus },
+      counts: {
+        byCountry, byRequestedCurrency, byKeyShape, byStatus,
+        perMerchant,
+        // This page's distinct merchants. NOT the corpus's — that is the key
+        // count of every page's perMerchant merged together.
+        distinctMerchants: Object.keys(perMerchant).length,
+      },
       // The deletion that is NOT being performed. `wouldDelete` is this page's
       // contribution; it is a corpus-wide answer only once isDone is true.
       legacy: {

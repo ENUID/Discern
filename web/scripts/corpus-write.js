@@ -249,7 +249,10 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
   fs.writeFileSync(entryFile,
     `export { GlobalCatalogService } from ${JSON.stringify(path.join(WEB, 'lib/services/GlobalCatalogService'))}\n` +
     `export * as W from ${JSON.stringify(path.join(WEB, 'lib/services/corpusWriter'))}\n` +
-    `export * as PRODUCTS from ${JSON.stringify(path.join(WEB, 'convex/products'))}\n`)
+    `export * as PRODUCTS from ${JSON.stringify(path.join(WEB, 'convex/products'))}\n` +
+    `export * as FILL from ${JSON.stringify(path.join(WEB, 'lib/services/corpusFill'))}\n` +
+    `export * as FILLROUTE from ${JSON.stringify(path.join(WEB, 'app/api/cron/corpus-fill/route'))}\n` +
+    `export { bestBrandDomains } from ${JSON.stringify(path.join(WEB, 'lib/stores'))}\n`)
 
   await new Promise(r => server.listen(0, r))
   const port = server.address().port
@@ -1097,6 +1100,190 @@ const nextQuery = () => `linen shirt corpus write ${++run}`
       same(mixed.rejected, 1, 'a mixed batch rejects only the bad entry')
       same(mixed.inserted, 2, '  and still writes the two good ones')
       same(rows.size, accepted + 2, '  the table grew by exactly two')
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 6g. FILLING THE CORPUS ON PURPOSE
+    // ══════════════════════════════════════════════════════════════════════
+    // Every scoped row in the live corpus came from shopper traffic on
+    // /api/featured page 0: 18 merchants of a 458-brand registry. Not because
+    // the fan-out is narrow — because page 0 is the only page anyone loaded.
+    //
+    // The featured route CANNOT be walked to fix that. It re-seeds its shuffle
+    // per page, so its seven pages are windows over seven different
+    // permutations: they overlap, they leave 49 of 172 brands unreachable by
+    // any page, and page 7 wraps to 0. A fixed slice of the same pool
+    // partitions it instead, which is what the first assertions below pin.
+    //
+    // The helpers live in lib/services/corpusFill.ts, not in the route: a
+    // Next.js route file may export only its handler and a fixed set of config
+    // fields, and exporting them from route.ts fails the production build with
+    // "fillSliceCount is not a valid Route export field".
+    console.log('\n── filling the corpus on purpose ' + '─'.repeat(41))
+    {
+      const F = C.FILL                 // the pure helpers
+      const RGET = C.FILLROUTE.GET     // the route handler
+      const pool = C.bestBrandDomains()
+      const N = F.fillSliceCount(pool)
+
+      // ── A–C. seven fixed slices partition the pool ──────────────────────
+      const slices = []
+      for (let i = 0; i < N; i++) slices.push(F.fillBrands(i * F.FILL_SLICE, pool))
+      const sizes = slices.map(x => x.length)
+      same(N, Math.ceil(pool.length / F.FILL_SLICE), 'the slice count is ceil(pool / 28)', String(N))
+      same(sizes.reduce((a, b) => a + b, 0), pool.length,
+        'the slices cover the pool exactly', sizes.join('+'))
+      const seenBrand = new Set(); let overlaps = 0
+      for (const sl of slices) for (const d of sl) { if (seenBrand.has(d)) overlaps++; seenBrand.add(d) }
+      same(overlaps, 0, 'no brand appears in two slices')
+      same(seenBrand.size, pool.length, 'the union of the slices IS the pool')
+      check(pool.every(d => seenBrand.has(d)), 'every brand in the pool is reachable by some slice')
+
+      // ── D–E. the offset is deterministic and wraps ──────────────────────
+      same(F.fillOffset(new Date(Date.UTC(2026, 7, 30)), pool),
+        F.fillOffset(new Date(Date.UTC(2026, 7, 30)), pool),
+        'the same date always selects the same offset')
+      const offsets = new Set()
+      for (let i = 0; i < 366; i++) offsets.add(F.fillOffset(new Date(Date.UTC(2026, 0, 1 + i)), pool))
+      same(offsets.size, N, 'a year of dates produces exactly the slice count of offsets')
+      check([...offsets].every(o => o % F.FILL_SLICE === 0 && o < pool.length + F.FILL_SLICE),
+        '  and every offset is a slice boundary inside the pool')
+      same(F.fillOffset(new Date(Date.UTC(2026, 0, 1)), pool),
+        F.fillOffset(new Date(Date.UTC(2026, 0, 1 + N)), pool),
+        'the offset wraps after a full rotation')
+
+      // Comment-stripped: the docstring NAMES seededShuffle to explain why it
+      // is not used, and an assertion that cannot tell an explanation from a
+      // call is the same defect this suite caught once before.
+      const strip = (f) => fs.readFileSync(path.join(WEB, f), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      const fillSrc = strip('lib/services/corpusFill.ts')
+      const routeSrc = strip('app/api/cron/corpus-fill/route.ts')
+      check(!/seededShuffle/.test(fillSrc + routeSrc),
+        'the fill path does NOT use the featured page shuffle')
+      check(/pool\.slice\(offset, offset \+ FILL_SLICE\)/.test(fillSrc),
+        '  it takes a fixed slice instead')
+      const routeExports = [...routeSrc.matchAll(/^export\s+(?:async\s+function|const|function)\s+(\w+)/gm)]
+        .map(m => m[1]).sort()
+      same(routeExports.join(','), 'GET,maxDuration,runtime',
+        'the route exports ONLY valid Next.js route fields', routeExports.join(','))
+      check(!/^export\s+(const|function)\s+(FILL_SLICE|fillOffset|fillBrands|fillSliceCount)/m.test(routeSrc),
+        '  no helper is exposed as a route export')
+
+      // ── O–P. the gate, and that it gates before any fan-out ─────────────
+      const savedSecret = process.env.CRON_SECRET
+      process.env.CRON_SECRET = 'fill-secret'
+      const reqWith = (auth) => ({ headers: { get: (k) => (k === 'authorization' ? auth : null) } })
+
+      let mcpCalls = 0
+      const XF = 'gid://shopify/Product/XFILL'
+      const slice = F.fillBrands(F.fillOffset(new Date(), pool), pool)
+      const answering = slice[0]
+      installFetch((d) => (d === answering ? [product({ id: XF, host: d })] : []), convexBase)
+      const inner = global.fetch
+      const bodies = []
+      global.fetch = async (u, init) => {
+        if (/\/api\/mcp$/.test(String(u))) { mcpCalls++; try { bodies.push(JSON.parse(init.body)) } catch {} }
+        return inner(u, init)
+      }
+
+      for (const [label, auth] of [['missing', null], ['empty', ''], ['wrong', 'Bearer nope'],
+                                   ['unprefixed', 'fill-secret']]) {
+        mcpCalls = 0
+        const res = await RGET(reqWith(auth))
+        same(res.status, 401, `a ${label} bearer token is refused`)
+        same(mcpCalls, 0, '  and not one merchant was contacted')
+      }
+      {
+        process.env.CRON_SECRET = ''
+        mcpCalls = 0
+        const res = await RGET(reqWith('Bearer '))
+        same(res.status, 401, 'an unconfigured CRON_SECRET refuses rather than opens')
+        same(mcpCalls, 0, '  and contacts nobody')
+        process.env.CRON_SECRET = 'fill-secret'
+      }
+
+      // ── F–K. the authorised run, and the context it uses ────────────────
+      mcpCalls = 0; bodies.length = 0
+      const before = store.size
+      const res = await RGET(reqWith('Bearer fill-secret'))
+      await settle()
+      same(res.status, 200, 'the right token runs the slice')
+      const body = await res.json()
+      same(body.ok, true, '  and reports ok')
+      same(body.country, 'US', 'the run declares country US')
+      same(body.requestedCurrency, 'USD', '  and requested currency USD')
+      same(body.brands, slice.length, '  over exactly this slice')
+      check(mcpCalls > 0 && mcpCalls <= 28, 'at most 28 stores were contacted', String(mcpCalls))
+
+      const ctxs = bodies.map(b => b?.params?.arguments?.catalog?.context ?? {})
+      check(ctxs.length > 0 && ctxs.every(c => c.address_country === 'US'),
+        'every store call declared address_country US')
+      check(ctxs.every(c => c.currency === 'USD'), '  and currency USD')
+      check(ctxs.every(c => c.intent === undefined), '  and NO intent')
+      check(bodies.every(b => b?.params?.arguments?.catalog?.filters === undefined),
+        '  and NO price filter')
+      check(bodies.every(b => b?.params?.arguments?.catalog?.query === undefined),
+        '  and no query — a browse, so STORE_BROWSE_LIMIT applies')
+
+      const kFill = `${answering}::${XF}::US`
+      check(store.size > before, 'the run wrote to the corpus — the context is nameable')
+      const row = store.get(kFill)
+      check(!!row, 'the garment is filed under a three-segment ::US key', kFill)
+      same(row.key.split('::').length, 3 + (XF.match(/::/g) || []).length,
+        '  no fourth segment for the default currency')
+      same(row.country, 'US', '  country recorded')
+      same(row.requestedCurrency, 'USD', '  requested currency recorded')
+
+      // ── L. repeating the slice adds nothing, by TWO different mechanisms ─
+      const afterFirst = store.size
+      const hash1 = row.contentHash, changed1 = row.lastChangedAt
+      const inKeysBefore = store.keys().filter(k => k.endsWith('::IN')).sort()
+
+      mcpCalls = 0
+      await RGET(reqWith('Bearer fill-secret')); await settle()
+      same(mcpCalls, 0, 'a repeat inside the cache TTL contacts no merchant at all')
+      same(store.size, afterFirst, '  and adds ZERO rows')
+
+      const F2 = build('.vt/corpus-write-entry.ts', 'corpus-fill-cold').FILLROUTE
+      mcpCalls = 0
+      await F2.GET(reqWith('Bearer fill-secret')); await settle()
+      check(mcpCalls > 0, 'a cold instance really does re-fetch the slice', String(mcpCalls))
+      same(store.size, afterFirst, '  and STILL adds zero rows — the key is reused')
+      same(store.get(kFill).contentHash, hash1, '  the hash is unchanged')
+      same(store.get(kFill).lastChangedAt, changed1, '  and lastChangedAt does not move')
+
+      // ── Q. a dead merchant does not abort the slice ─────────────────────
+      const XD = 'gid://shopify/Product/XDEAD'
+      const other = slice.find(d => d !== answering)
+      installFetch((d) => {
+        if (d === answering) throw new Error('this store is down')
+        if (d === other) return [product({ id: XD, host: d })]
+        return []
+      }, convexBase)
+      const inner2 = global.fetch
+      global.fetch = async (u, init) => {
+        if (/\/api\/mcp$/.test(String(u))) mcpCalls++
+        return inner2(u, init)
+      }
+      const F3 = build('.vt/corpus-write-entry.ts', 'corpus-fill-dead').FILLROUTE
+      const res2 = await F3.GET(reqWith('Bearer fill-secret')); await settle()
+      same(res2.status, 200, 'a dead merchant does not fail the run')
+      check(!!store.get(`${other}::${XD}::US`),
+        '  and the surviving merchants in the slice are still filed')
+
+      // ── M–N. nothing else in the corpus is disturbed ────────────────────
+      same(store.get(kFill).country, 'US', 'the fill run only ever writes US rows')
+      same(store.keys().filter(k => k.endsWith('::IN')).sort().join(','),
+        inKeysBefore.join(','), '  and the existing IN rows are exactly as they were')
+      installFetch((d) => (d === answering ? [product({ id: XF, host: d })] : []), convexBase)
+      const page = await search(nextQuery(), [answering])
+      check(page.every(p => String(p.key).split('::').length === 2 + (String(p.id).match(/::/g) || []).length),
+        'CanonicalProduct.key is still merchant::sourceId after a fill run')
+
+      process.env.CRON_SECRET = savedSecret
+      restore()
+      installFetch(() => [], convexBase)
     }
 
     // ══════════════════════════════════════════════════════════════════════

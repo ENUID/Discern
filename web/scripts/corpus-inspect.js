@@ -184,7 +184,8 @@ const row = (o) => ({
   const walkCensus = async (rows, pageSize) => {
     const merged = {
       pages: 0, scanned: 0, keysSeen: [], wouldDelete: 0,
-      byCountry: {}, byRequestedCurrency: {}, byKeyShape: {},
+      byCountry: {}, byRequestedCurrency: {}, byKeyShape: {}, perMerchant: {},
+      distinctMerchantsPerPage: [],
       legacyKeyedButCountryScoped: 0, candidatesCarryingRequestedCurrency: 0,
       sampleKeys: [], isDone: false,
     }
@@ -199,9 +200,11 @@ const row = (o) => ({
       merged.legacyKeyedButCountryScoped += r.legacy.legacyKeyedButCountryScoped
       merged.candidatesCarryingRequestedCurrency += r.legacy.candidatesCarryingRequestedCurrency
       for (const k of r.legacy.sampleKeys) merged.sampleKeys.push(k)
+      merged.distinctMerchantsPerPage.push(r.counts.distinctMerchants)
       for (const [dim, src] of [['byCountry', r.counts.byCountry],
                                 ['byRequestedCurrency', r.counts.byRequestedCurrency],
-                                ['byKeyShape', r.counts.byKeyShape]]) {
+                                ['byKeyShape', r.counts.byKeyShape],
+                                ['perMerchant', r.counts.perMerchant]]) {
         for (const [k, n] of Object.entries(src)) merged[dim][k] = (merged[dim][k] ?? 0) + n
       }
       if (r.page.isDone) { merged.isDone = true; merged.lastCursor = r.page.cursor; break }
@@ -498,6 +501,46 @@ const row = (o) => ({
     same(walk.byKeyShape.scoped, 25 + 12, '  three-segment rows')
     same(walk.byKeyShape['scoped-currency'], 7, '  four-segment rows')
     same(walk.byKeyShape.malformed, 0, '  and nothing malformed')
+
+    // ── R + S. per-merchant coverage, merged across the whole traversal ──
+    // The counter the coverage work needs. distinctMerchants cannot be SUMMED
+    // across pages — a merchant on two pages would count twice — but
+    // perMerchant merges exactly, because merging two records unions their keys
+    // and adds their values. So the corpus-wide answer is the KEY COUNT of the
+    // merged map, and that is what these assertions pin.
+    same(sum(walk.perMerchant), TRUE_TOTAL, 'perMerchant summed across pages equals the corpus')
+    same(Object.keys(walk.perMerchant).length, 1,
+      'distinct merchants across the traversal', Object.keys(walk.perMerchant).join(','))
+    same(walk.perMerchant['kith.com'], TRUE_TOTAL, '  and every row belongs to it')
+
+    // Several merchants, deliberately split across page boundaries so the
+    // merge is doing real work rather than reading one page twice.
+    {
+      const many = []
+      const brands = ['kith.com', 'aloyoga.com', 'staud.clothing', 'onia.com']
+      brands.forEach((m, bi) => {
+        for (let i = 0; i < 11 + bi; i++) {
+          many.push(row({ key: `${m}::m${bi}_${i}::US`, merchant: m, sourceId: `m${bi}_${i}`,
+                          country: 'US', requestedCurrency: 'USD' }))
+        }
+      })
+      const total = 11 + 12 + 13 + 14
+      const w = await walkCensus(many, 5)          // 5 per page -> merchants straddle pages
+      same(w.isDone, true, 'a multi-merchant corpus traverses to done')
+      same(w.scanned, total, '  scanning every row once')
+      same(sum(w.perMerchant), total, 'perMerchant sums EXACTLY to the census total')
+      same(Object.keys(w.perMerchant).length, 4, 'distinctMerchants equals the merchants represented')
+      same(w.perMerchant['kith.com'], 11, '  kith.com')
+      same(w.perMerchant['aloyoga.com'], 12, '  aloyoga.com')
+      same(w.perMerchant['staud.clothing'], 13, '  staud.clothing')
+      same(w.perMerchant['onia.com'], 14, '  onia.com')
+      // The per-page number is NOT the corpus number, and the harness proves it
+      // rather than trusting the field name.
+      check(Math.max(...w.distinctMerchantsPerPage) <= 4, 'a page reports only its own merchants')
+      check(w.distinctMerchantsPerPage.reduce((a, b) => a + b, 0) > 4,
+        '  and summing those page counts would OVER-count — hence the key merge',
+        w.distinctMerchantsPerPage.join('+'))
+    }
 
     // The page size cannot be talked upward past the bound.
     const huge = await runCensus(corpus, { pageSize: 1e9 })
